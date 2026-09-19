@@ -140,9 +140,14 @@ verified without a physical keyboard; `run-vga` accepts live keyboard input.
 The current userspace milestone registers process records with distinct user
 stacks, loads FSH from FAT12, selects its ring-3 entry, and exercises syscall
 numbers `1` through `7` through `int 0x80`. It proves the privilege boundary,
-disk-to-userspace loading, and register-based syscall dispatch, but it is not
-yet a scheduler or general process model. Address spaces are now isolated at
-the page-table level, while process switching remains a later scheduler task.
+disk-to-userspace loading, and register-based syscall dispatch. The first
+scheduler foundation is also present: process records have explicit `READY`,
+`RUNNING`, `BLOCKED`, and `EXITED` states, the PIT periodically selects a
+ready PID, and a blocking TTY read records a TTY wait reason that keyboard
+input wakes. This is intentionally an intermediate stage: the PIT does not
+yet replace the hardware interrupt return frame, so full preemptive register
+context switching remains the next scheduler milestone. Address spaces are
+isolated at the page-table level.
 
 The initial page-fault handler is intentionally fail-closed. It is the
 extension point for demand-zero heap pages, stack growth, and process-specific

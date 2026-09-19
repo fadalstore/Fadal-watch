@@ -48,6 +48,9 @@ typedef unsigned int u32;
 #define PROCESS_READY 1
 #define PROCESS_RUNNING 2
 #define PROCESS_EXITED 3
+#define PROCESS_BLOCKED 4
+#define WAIT_NONE 0
+#define WAIT_TTY 1
 #define MAX_HEAP_ALLOCS 32
 #define TTY_BUFFER_SIZE 256
 
@@ -69,6 +72,8 @@ static volatile u8 write_reported;
 static volatile u8 open_reported;
 static volatile u8 exec_reported;
 static volatile u8 page_fault_reported;
+static u32 scheduler_ticks;
+static u32 scheduler_ready_pid;
 static u32 page_directory[1024] __attribute__((aligned(PAGE_SIZE)));
 static u32 page_tables[PAGE_TABLE_COUNT][1024] __attribute__((aligned(PAGE_SIZE)));
 static u8 page_state[PHYSICAL_PAGE_COUNT];
@@ -176,6 +181,7 @@ struct process {
     u32 entry;
     u32 user_stack_top;
     struct address_space *address_space;
+    u32 wait_reason;
 };
 
 struct heap_allocation {
@@ -438,12 +444,15 @@ static void process_manager_init(void) {
             process_table[index]->entry = 0;
             process_table[index]->user_stack_top = 0;
             process_table[index]->address_space = (struct address_space *)0;
+            process_table[index]->wait_reason = WAIT_NONE;
         }
     }
     next_pid = 1;
     current_pid = 0;
     process_total = 0;
     active_processes = 0;
+    scheduler_ticks = 0;
+    scheduler_ready_pid = 0;
 }
 
 static u32 process_create(u32 entry, u32 user_stack_top) {
@@ -472,6 +481,7 @@ static u32 process_create(u32 entry, u32 user_stack_top) {
         process->entry = entry;
         process->user_stack_top = USER_STACK_ADDRESS + PAGE_SIZE;
         process->address_space = space;
+        process->wait_reason = WAIT_NONE;
         process_total++;
         active_processes++;
         return process->pid;
@@ -883,6 +893,47 @@ static void shell_write_bytes(const u8 *data, u32 size) {
     }
 }
 
+static struct process *process_by_pid(u32 pid) {
+    for (u32 index = 0; index < MAX_PROCESSES; index++) {
+        struct process *process = process_table[index];
+        if (process != (struct process *)0 && process->pid == pid &&
+            process->state != PROCESS_UNUSED) {
+            return process;
+        }
+    }
+    return (struct process *)0;
+}
+
+static void scheduler_block_current(u32 reason) {
+    struct process *process = process_by_pid(current_pid);
+    if (process != (struct process *)0 && process->state == PROCESS_RUNNING) {
+        process->state = PROCESS_BLOCKED;
+        process->wait_reason = reason;
+    }
+}
+
+static void scheduler_wake_reason(u32 reason) {
+    for (u32 index = 0; index < MAX_PROCESSES; index++) {
+        struct process *process = process_table[index];
+        if (process != (struct process *)0 && process->state == PROCESS_BLOCKED &&
+            process->wait_reason == reason) {
+            process->state = process->pid == current_pid ? PROCESS_RUNNING : PROCESS_READY;
+            process->wait_reason = WAIT_NONE;
+        }
+    }
+}
+
+static void scheduler_select_ready(void) {
+    scheduler_ready_pid = 0;
+    for (u32 index = 0; index < MAX_PROCESSES; index++) {
+        struct process *process = process_table[index];
+        if (process != (struct process *)0 && process->state == PROCESS_READY) {
+            scheduler_ready_pid = process->pid;
+            return;
+        }
+    }
+}
+
 static char keyboard_ascii(u8 scancode) {
     switch (scancode) {
         case 0x02: return '1';
@@ -944,12 +995,15 @@ static void tty_enqueue(char value) {
     tty_buffer[tty_write_index] = value;
     tty_write_index = (tty_write_index + 1) % TTY_BUFFER_SIZE;
     tty_count++;
+    scheduler_wake_reason(WAIT_TTY);
 }
 
 static u32 tty_read_blocking(u8 *output, u32 capacity) {
     while (tty_count == 0) {
+        scheduler_block_current(WAIT_TTY);
         __asm__ volatile ("sti\n hlt" : : : "memory");
     }
+    scheduler_wake_reason(WAIT_TTY);
     __asm__ volatile ("cli" : : : "memory");
     u32 amount = tty_count < capacity ? tty_count : capacity;
     for (u32 index = 0; index < amount; index++) {
@@ -1015,6 +1069,10 @@ void keyboard_interrupt_handler(void) {
 
 void timer_interrupt_handler(void) {
     timer_ticks++;
+    scheduler_ticks++;
+    if ((scheduler_ticks % 10) == 0) {
+        scheduler_select_ready();
+    }
 }
 
 void syscall_interrupt_handler(struct syscall_frame *frame) {

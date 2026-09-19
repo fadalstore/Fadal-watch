@@ -65,6 +65,12 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     user-writable. IDT vector `0x0e` is connected to a page-fault ISR that
     reads `CR2`, reports the CPU error code, and fails closed after an
     unhandled kernel or user fault.
+22. Each process now owns a page directory and private page-table storage. The
+    kernel mappings are cloned as supervisor mappings, the FSH code page is
+    shared read-only, and each process receives a distinct physical user stack
+    mapped at the same virtual address. Selecting a process loads its page
+    directory into `CR3`; boot verifies that the two initial processes cannot
+    share their user stack page.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible
@@ -135,7 +141,8 @@ The current userspace milestone registers process records with distinct user
 stacks, loads FSH from FAT12, selects its ring-3 entry, and exercises syscall
 numbers `1` through `7` through `int 0x80`. It proves the privilege boundary,
 disk-to-userspace loading, and register-based syscall dispatch, but it is not
-yet a scheduler or general process model.
+yet a scheduler or general process model. Address spaces are now isolated at
+the page-table level, while process switching remains a later scheduler task.
 
 The initial page-fault handler is intentionally fail-closed. It is the
 extension point for demand-zero heap pages, stack growth, and process-specific

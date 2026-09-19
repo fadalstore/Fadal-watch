@@ -163,11 +163,19 @@ struct syscall_frame {
     u32 eax;
 };
 
+struct address_space {
+    u32 *page_directory;
+    u32 *page_tables;
+    u32 stack_physical;
+    u32 refcount;
+};
+
 struct process {
     u32 pid;
     u32 state;
     u32 entry;
     u32 user_stack_top;
+    struct address_space *address_space;
 };
 
 struct heap_allocation {
@@ -180,6 +188,11 @@ static struct idt_entry idt[IDT_ENTRIES];
 static struct gdt_entry gdt[6];
 static struct tss_entry tss;
 static struct process *process_table[MAX_PROCESSES];
+static u32 process_page_directories[MAX_PROCESSES][1024]
+    __attribute__((aligned(PAGE_SIZE)));
+static u32 process_page_tables[MAX_PROCESSES][PAGE_TABLE_COUNT * 1024]
+    __attribute__((aligned(PAGE_SIZE)));
+static struct address_space process_address_spaces[MAX_PROCESSES];
 static u32 next_pid = 1;
 static u32 current_pid;
 static u32 process_total;
@@ -223,6 +236,7 @@ static inline void halt(void) {
 
 static void kernel_write(const char *text);
 static void serial_write(const char *text);
+static void *page_alloc(void);
 
 static void write_u32(u32 value) {
     char digits[11];
@@ -314,6 +328,55 @@ static void paging_init(void) {
         : "eax", "memory");
 }
 
+static void load_address_space(struct address_space *space) {
+    u32 directory = (u32)space->page_directory;
+    __asm__ volatile ("mov %0, %%cr3" : : "r"(directory) : "memory");
+}
+
+static struct address_space *address_space_create(u32 slot, u32 stack_physical) {
+    if (slot >= MAX_PROCESSES) {
+        return (struct address_space *)0;
+    }
+    struct address_space *space = &process_address_spaces[slot];
+    space->page_directory = process_page_directories[slot];
+    space->page_tables = process_page_tables[slot];
+    space->stack_physical = stack_physical;
+    space->refcount = 1;
+    for (u32 index = 0; index < 1024; index++) {
+        space->page_directory[index] = 0;
+    }
+    for (u32 table = 0; table < PAGE_TABLE_COUNT; table++) {
+        u32 *source = page_tables[table];
+        u32 *target = space->page_tables + table * 1024;
+        for (u32 index = 0; index < 1024; index++) {
+            target[index] = source[index];
+        }
+        space->page_directory[table] = (u32)target | PAGE_KERNEL_FLAGS;
+    }
+    space->page_tables[USER_STACK_PAGE] = stack_physical | PAGE_USER_RW_FLAGS;
+    space->page_tables[USER_STACK_2_PAGE] = USER_STACK_2_ADDRESS | PAGE_KERNEL_FLAGS;
+    space->page_directory[USER_CODE_PAGE / 1024] |= PAGE_USER;
+    space->page_directory[USER_STACK_PAGE / 1024] |= PAGE_USER;
+    return space;
+}
+
+static u8 address_spaces_isolated(struct address_space *first,
+                                  struct address_space *second) {
+    if (first == (struct address_space *)0 || second == (struct address_space *)0) {
+        return 0;
+    }
+    u32 first_stack = first->page_tables[USER_STACK_PAGE];
+    u32 second_stack = second->page_tables[USER_STACK_PAGE];
+    u32 first_code = first->page_tables[USER_CODE_PAGE];
+    u32 second_code = second->page_tables[USER_CODE_PAGE];
+    return (first_stack & ~0xfff) != (second_stack & ~0xfff) &&
+        (first_stack & PAGE_USER_RW_FLAGS) == PAGE_USER_RW_FLAGS &&
+        (second_stack & PAGE_USER_RW_FLAGS) == PAGE_USER_RW_FLAGS &&
+        (first_code & ~0xfff) == (second_code & ~0xfff) &&
+        (first->page_directory[USER_STACK_PAGE / 1024] & PAGE_USER) != 0 &&
+        (second->page_directory[USER_STACK_PAGE / 1024] & PAGE_USER) != 0;
+}
+
 static u8 memory_map_covers_page(u32 page) {
     u32 page_start = page * PAGE_SIZE;
     u32 page_end = page_start + PAGE_SIZE;
@@ -374,6 +437,7 @@ static void process_manager_init(void) {
             process_table[index]->state = PROCESS_UNUSED;
             process_table[index]->entry = 0;
             process_table[index]->user_stack_top = 0;
+            process_table[index]->address_space = (struct address_space *)0;
         }
     }
     next_pid = 1;
@@ -383,6 +447,7 @@ static void process_manager_init(void) {
 }
 
 static u32 process_create(u32 entry, u32 user_stack_top) {
+    (void)user_stack_top;
     for (u32 index = 0; index < MAX_PROCESSES; index++) {
         struct process *process = process_table[index];
         if (process == (struct process *)0) {
@@ -391,10 +456,22 @@ static u32 process_create(u32 entry, u32 user_stack_top) {
         if (process->state != PROCESS_UNUSED) {
             continue;
         }
+        u32 stack_physical = index == 0 ? USER_STACK_ADDRESS : USER_STACK_2_ADDRESS;
+        if (index > 1) {
+            stack_physical = (u32)page_alloc();
+        }
+        if (stack_physical == 0) {
+            continue;
+        }
+        struct address_space *space = address_space_create(index, stack_physical);
+        if (space == (struct address_space *)0) {
+            continue;
+        }
         process->pid = next_pid++;
         process->state = PROCESS_READY;
         process->entry = entry;
-        process->user_stack_top = user_stack_top;
+        process->user_stack_top = USER_STACK_ADDRESS + PAGE_SIZE;
+        process->address_space = space;
         process_total++;
         active_processes++;
         return process->pid;
@@ -414,6 +491,7 @@ static u8 process_set_running(u32 pid) {
         if (process->pid == pid && process->state != PROCESS_UNUSED) {
             process->state = PROCESS_RUNNING;
             current_pid = pid;
+            load_address_space(process->address_space);
             return 1;
         }
     }
@@ -1184,13 +1262,21 @@ void kernel_main(void) {
     }
     tss_init();
     gdt_init();
+    idt_init();
     process_manager_init();
     u32 init_pid = process_create(USER_CODE_ADDRESS, USER_STACK_ADDRESS + PAGE_SIZE);
     u32 worker_pid = process_create(USER_CODE_ADDRESS, USER_STACK_2_ADDRESS + PAGE_SIZE);
+    kernel_write("memory: process address spaces allocated\n");
     if (init_pid == 0 || worker_pid == 0 || !process_set_running(init_pid)) {
         kernel_write("process: process table initialization failed\n");
     } else {
         kernel_write("process: dynamic PID allocator online; 2 processes ready\n");
+        if (address_spaces_isolated(process_table[0]->address_space,
+                                    process_table[1]->address_space)) {
+            kernel_write("memory: per-process address-space isolation verified\n");
+        } else {
+            kernel_write("memory: per-process address-space isolation failed\n");
+        }
     }
     kernel_write("memory: 16 MiB identity paging online\n");
     if (memory_map_valid) {
@@ -1205,7 +1291,6 @@ void kernel_main(void) {
     } else {
         kernel_write("memory: page allocation self-test failed\n");
     }
-    idt_init();
     pic_init();
     timer_init();
     kernel_write("interrupts: IDT + PIC online\n");

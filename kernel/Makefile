@@ -102,7 +102,8 @@ check: independence $(OUT)/fadal-kernel.img
 	@grep -q "memory: page allocation self-test passed" $(OUT)/smoke.log
 	@grep -q "timer: PIT IRQ0 online at 100 Hz" $(OUT)/smoke.log
 	@grep -q "syscalls: int 0x80 ABI gate online" $(OUT)/smoke.log
-		@grep -q "process: dynamic PID allocator online; 2 processes ready" $(OUT)/smoke.log
+				@grep -q "process: dynamic PID allocator online; 2 processes ready" $(OUT)/smoke.log
+				@grep -q "memory: per-process address-space isolation verified" $(OUT)/smoke.log
 			@grep -q "keyboard: PS/2 IRQ1 interactive shell online" $(OUT)/smoke.log
 				@grep -q "userspace: FSH.BIN loaded from FAT12; ring-3 entry ready" $(OUT)/smoke.log
 				@grep -q "memory: kernel/user page flags verified" $(OUT)/smoke.log

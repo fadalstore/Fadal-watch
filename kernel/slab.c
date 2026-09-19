@@ -33,7 +33,7 @@ void slab_system_init(void) {
     slab_ready_flag = cache_init(
         &process_slab_cache,
         "process",
-        16,
+        20,
         SLAB_PROCESS_CAPACITY);
     slab_ready_flag = slab_ready_flag && cache_init(
         &fat12_dirent_slab_cache,

@@ -119,10 +119,12 @@ memory-management milestones.
 
 The TTY input boundary is driven by the kernel's PS/2 IRQ1 handler and supports
 scancode-to-ASCII translation, Shift letters, Backspace, Enter, and a bounded
-line buffer. `FSH.BIN` is now a separate ring-3 disk executable loaded by the
-kernel, not a parser linked into `kernel.c`. Its current bootstrap validates
-the syscall path and exits; interactive command parsing will be added inside
-the executable once TTY `read` blocks and a scheduler can keep FSH alive.
+ring buffer. Syscall `read` blocks with interrupts enabled until the queue has
+input, then copies a bounded chunk into the validated ring-3 buffer. `FSH.BIN`
+is a separate ring-3 disk executable loaded by the kernel, not a parser linked
+into `kernel.c`; it loops over `read`, parses commands, and writes responses.
+The headless smoke test seeds one `help` line so the blocking path can be
+verified without a physical keyboard; `run-vga` accepts live keyboard input.
 
 The current userspace milestone registers process records with distinct user
 stacks, loads FSH from FAT12, selects its ring-3 entry, and exercises syscall

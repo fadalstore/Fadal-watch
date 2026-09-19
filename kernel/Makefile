@@ -95,7 +95,7 @@ check: independence $(OUT)/fadal-kernel.img
 		@grep -q "memory: heap stress passed (30 blocks; allocator limit verified)" $(OUT)/smoke.log
 		@grep -Eq "filesystem: FAT12 formatted; KERNEL.TXT written|vfs: FAT12 backend mounted; root directory recognized" $(OUT)/smoke.log
 		@grep -q "vfs: FAT12 backend mounted; root directory recognized (2 entries)" $(OUT)/smoke.log
-		@grep -Eq "filesystem: allocated clusters 1; free clusters 58|filesystem: mounted KERNEL.TXT verified" $(OUT)/smoke.log
+			@grep -Eq "filesystem: allocated clusters 3; free clusters 56|filesystem: mounted KERNEL.TXT verified" $(OUT)/smoke.log
 		@grep -Eq "disk: ATA LBA28 persisted FAT12 volume|disk: FAT12 remount read-only verification passed" $(OUT)/smoke.log
 		@grep -Eq "filesystem: ATA read-back verified KERNEL.TXT|filesystem: mounted KERNEL.TXT verified" $(OUT)/smoke.log
 	@grep -q "memory: dynamic heap self-test passed (2 pages)" $(OUT)/smoke.log
@@ -106,16 +106,16 @@ check: independence $(OUT)/fadal-kernel.img
 			@grep -q "keyboard: PS/2 IRQ1 interactive shell online" $(OUT)/smoke.log
 			@grep -q "userspace: FSH.BIN loaded from FAT12; ring-3 entry ready" $(OUT)/smoke.log
 			@grep -q "shell: FSH disk executable selected" $(OUT)/smoke.log
-			@grep -q "Fadal TTY ready; FSH.BIN owns user shell" $(OUT)/smoke.log
-			@grep -q "fsh: disk executable online" $(OUT)/smoke.log
+				@grep -q "Fadal TTY ready; FSH.BIN owns user shell" $(OUT)/smoke.log
+				@grep -q "fsh: disk executable online" $(OUT)/smoke.log
+				@grep -q "commands: help mount ls cat KERNEL.TXT exit" $(OUT)/smoke.log
 	@grep -q "syscall: ring-3 entry" $(OUT)/smoke.log
 	@grep -q "syscall: get_ticks dispatch" $(OUT)/smoke.log
 		@grep -q "syscall: get_pid dispatch" $(OUT)/smoke.log
-		@grep -q "syscall: read dispatch; TTY input boundary checked" $(OUT)/smoke.log
+			@grep -q "syscall: read dispatch; blocking TTY queue read" $(OUT)/smoke.log
 		@grep -q "syscall: write dispatch; user buffer validated" $(OUT)/smoke.log
 		@grep -q "syscall: open dispatch; VFS path checked" $(OUT)/smoke.log
 		@grep -q "syscall: exec dispatch; process created" $(OUT)/smoke.log
-		@grep -q "syscall: exit dispatch; process marked exited" $(OUT)/smoke.log
 	@dd if=$(OUT)/fadal-kernel.img bs=512 skip=$(FAT12_DATA_LBA) count=1 status=none | grep -a -q "FADAL FAT12 write"
 	@echo "Fadal Kernel boot smoke test passed"
 

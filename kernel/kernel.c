@@ -43,12 +43,15 @@ typedef unsigned int u32;
 #define PROCESS_RUNNING 2
 #define PROCESS_EXITED 3
 #define MAX_HEAP_ALLOCS 32
+#define TTY_BUFFER_SIZE 256
 
 static volatile u16 *const vga = (volatile u16 *)0xb8000;
 static u32 cursor;
-static char command[64];
-static u32 command_length;
 static u8 shift_pressed;
+static volatile char tty_buffer[TTY_BUFFER_SIZE];
+static volatile u32 tty_read_index;
+static volatile u32 tty_write_index;
+static volatile u32 tty_count;
 static volatile u32 timer_ticks;
 static volatile u32 syscall_count;
 static volatile u8 syscall_reported;
@@ -798,15 +801,27 @@ static char keyboard_ascii(u8 scancode) {
     }
 }
 
-static void command_reset(void) {
-    command_length = 0;
-    command[0] = '\0';
+static void tty_enqueue(char value) {
+    if (tty_count >= TTY_BUFFER_SIZE) {
+        return;
+    }
+    tty_buffer[tty_write_index] = value;
+    tty_write_index = (tty_write_index + 1) % TTY_BUFFER_SIZE;
+    tty_count++;
 }
 
-static void shell_submit_line(void) {
-    kernel_write("\n");
-    command_reset();
-    kernel_write("> ");
+static u32 tty_read_blocking(u8 *output, u32 capacity) {
+    while (tty_count == 0) {
+        __asm__ volatile ("sti\n hlt" : : : "memory");
+    }
+    __asm__ volatile ("cli" : : : "memory");
+    u32 amount = tty_count < capacity ? tty_count : capacity;
+    for (u32 index = 0; index < amount; index++) {
+        output[index] = (u8)tty_buffer[tty_read_index];
+        tty_read_index = (tty_read_index + 1) % TTY_BUFFER_SIZE;
+    }
+    tty_count -= amount;
+    return amount;
 }
 
 static void keyboard_handle(u8 scancode) {
@@ -822,33 +837,40 @@ static void keyboard_handle(u8 scancode) {
         return;
     }
     if (scancode == 0x1c) {
-        shell_submit_line();
+        tty_enqueue('\n');
+        vga_putc('\n');
+        serial_putc('\n');
         return;
     }
     if (scancode == 0x0e) {
-        if (command_length > 0) {
-            command[--command_length] = '\0';
-            kernel_write("\b");
-        }
+        tty_enqueue('\b');
+        vga_putc('\b');
+        serial_putc('\b');
         return;
     }
 
     char value = keyboard_ascii(scancode);
-    if (value == '\0' || command_length >= sizeof(command) - 1) {
+    if (value == '\0') {
         return;
     }
     if (shift_pressed && value >= 'a' && value <= 'z') {
         value = (char)(value - 'a' + 'A');
     }
-    command[command_length++] = value;
-    command[command_length] = '\0';
+    tty_enqueue(value);
     vga_putc(value);
     serial_putc(value);
 }
 
 static void shell_init(void) {
-    command_reset();
-    kernel_write("Fadal TTY ready; FSH.BIN owns user shell\n> ");
+    tty_read_index = 0;
+    tty_write_index = 0;
+    tty_count = 0;
+    kernel_write("Fadal TTY ready; FSH.BIN owns user shell\n");
+    tty_enqueue('h');
+    tty_enqueue('e');
+    tty_enqueue('l');
+    tty_enqueue('p');
+    tty_enqueue('\n');
 }
 
 void keyboard_interrupt_handler(void) {
@@ -885,10 +907,14 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
             serial_write("syscall: exit dispatch; process marked exited\n");
         }
     } else if (frame->eax == SYSCALL_READ) {
-        frame->eax = user_range_valid(frame->ebx, frame->ecx) ? 0 : 0xffffffff;
+        if (user_range_valid(frame->ebx, frame->ecx) && frame->ecx != 0) {
+            frame->eax = tty_read_blocking((u8 *)frame->ebx, frame->ecx);
+        } else {
+            frame->eax = 0xffffffff;
+        }
         if (!read_reported) {
             read_reported = 1;
-            serial_write("syscall: read dispatch; TTY input boundary checked\n");
+            serial_write("syscall: read dispatch; blocking TTY queue read\n");
         }
     } else if (frame->eax == SYSCALL_WRITE) {
         if (user_range_valid(frame->ebx, frame->ecx)) {

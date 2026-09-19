@@ -75,6 +75,11 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     the process descriptor to `UNUSED`, and permits PID-slot reuse. Boot creates
     and exits a probe process, verifies that its page returns to the allocator,
     and then confirms that the slot can be allocated again.
+24. Syscall `8` is a cooperative `yield` point. It asks the ready selector for
+    the next eligible PID and returns that PID to userspace; `FSH.BIN` calls it
+    while retrying an empty TTY read. It deliberately does not claim to switch
+    CPU registers yet; the later context-switch implementation will consume
+    this established ABI point.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

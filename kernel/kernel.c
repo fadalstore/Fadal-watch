@@ -43,6 +43,7 @@ typedef unsigned int u32;
 #define SYSCALL_WRITE 5
 #define SYSCALL_OPEN 6
 #define SYSCALL_EXEC 7
+#define SYSCALL_YIELD 8
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
 #define PROCESS_READY 1
@@ -71,6 +72,7 @@ static volatile u8 read_reported;
 static volatile u8 write_reported;
 static volatile u8 open_reported;
 static volatile u8 exec_reported;
+static volatile u8 yield_reported;
 static volatile u8 page_fault_reported;
 static u32 scheduler_ticks;
 static u32 scheduler_ready_pid;
@@ -469,6 +471,7 @@ static void process_manager_init(void) {
     active_processes = 0;
     scheduler_ticks = 0;
     scheduler_ready_pid = 0;
+    yield_reported = 0;
 }
 
 static u32 process_create(u32 entry, u32 user_stack_top) {
@@ -1164,6 +1167,13 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
         if (!exec_reported) {
             exec_reported = 1;
             serial_write("syscall: exec dispatch; process created\n");
+        }
+    } else if (frame->eax == SYSCALL_YIELD) {
+        scheduler_select_ready();
+        frame->eax = scheduler_ready_pid;
+        if (!yield_reported) {
+            yield_reported = 1;
+            serial_write("syscall: yield dispatch; cooperative scheduler point\n");
         }
     } else {
         frame->eax = 0xffffffff;

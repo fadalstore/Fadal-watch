@@ -8,6 +8,7 @@ typedef unsigned int u32;
 #define SYSCALL_WRITE 5
 #define SYSCALL_OPEN 6
 #define SYSCALL_EXEC 7
+#define SYSCALL_YIELD 8
 
 static u32 fsh_syscall3(u32 number, u32 first, u32 second, u32 third) {
     u32 result;
@@ -83,6 +84,7 @@ void fsh_entry(void) {
         }
         u32 count = fsh_syscall3(SYSCALL_READ, (u32)input, sizeof(input) - 1, 0);
         if (count == 0xffffffff) {
+            fsh_syscall3(SYSCALL_YIELD, 0, 0, 0);
             continue;
         }
         u32 line_length = 0;

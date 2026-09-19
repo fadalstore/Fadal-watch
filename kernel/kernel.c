@@ -17,6 +17,12 @@ typedef unsigned int u32;
 #define FAT12_DISK_LBA 113
 #define TIMER_FREQUENCY 100
 #define PAGE_SIZE 4096
+#define PAGE_PRESENT 0x001
+#define PAGE_WRITE 0x002
+#define PAGE_USER 0x004
+#define PAGE_KERNEL_FLAGS (PAGE_PRESENT | PAGE_WRITE)
+#define PAGE_USER_RO_FLAGS (PAGE_PRESENT | PAGE_USER)
+#define PAGE_USER_RW_FLAGS (PAGE_PRESENT | PAGE_WRITE | PAGE_USER)
 #define IDENTITY_MAP_BYTES (16 * 1024 * 1024)
 #define PHYSICAL_PAGE_COUNT (IDENTITY_MAP_BYTES / PAGE_SIZE)
 #define PAGE_TABLE_COUNT (IDENTITY_MAP_BYTES / (PAGE_SIZE * 1024))
@@ -62,6 +68,7 @@ static volatile u8 read_reported;
 static volatile u8 write_reported;
 static volatile u8 open_reported;
 static volatile u8 exec_reported;
+static volatile u8 page_fault_reported;
 static u32 page_directory[1024] __attribute__((aligned(PAGE_SIZE)));
 static u32 page_tables[PAGE_TABLE_COUNT][1024] __attribute__((aligned(PAGE_SIZE)));
 static u8 page_state[PHYSICAL_PAGE_COUNT];
@@ -186,6 +193,7 @@ extern void gdt_flush(const struct gdt_pointer *pointer);
 extern void timer_isr(void);
 extern void keyboard_isr(void);
 extern void syscall_isr(void);
+extern void page_fault_isr(void);
 
 static inline void outb(u16 port, u8 value) {
     __asm__ volatile ("outb %0, %1" : : "a"(value), "Nd"(port));
@@ -214,6 +222,7 @@ static inline void halt(void) {
 }
 
 static void kernel_write(const char *text);
+static void serial_write(const char *text);
 
 static void write_u32(u32 value) {
     char digits[11];
@@ -276,13 +285,20 @@ static void paging_init(void) {
     }
     for (u32 table = 0; table < PAGE_TABLE_COUNT; table++) {
         for (u32 index = 0; index < 1024; index++) {
-            page_tables[table][index] = ((table * 1024 + index) * PAGE_SIZE) | 0x03;
+            page_tables[table][index] =
+                ((table * 1024 + index) * PAGE_SIZE) | PAGE_KERNEL_FLAGS;
         }
-        page_directory[table] = ((u32)page_tables[table]) | 0x07;
+        page_directory[table] = ((u32)page_tables[table]) | PAGE_KERNEL_FLAGS;
     }
-    page_tables[USER_CODE_PAGE / 1024][USER_CODE_PAGE % 1024] |= 0x04;
-    page_tables[USER_STACK_PAGE / 1024][USER_STACK_PAGE % 1024] |= 0x04;
-    page_tables[USER_STACK_2_PAGE / 1024][USER_STACK_2_PAGE % 1024] |= 0x04;
+    page_tables[USER_CODE_PAGE / 1024][USER_CODE_PAGE % 1024] =
+        USER_CODE_ADDRESS | PAGE_USER_RO_FLAGS;
+    page_tables[USER_STACK_PAGE / 1024][USER_STACK_PAGE % 1024] =
+        USER_STACK_ADDRESS | PAGE_USER_RW_FLAGS;
+    page_tables[USER_STACK_2_PAGE / 1024][USER_STACK_2_PAGE % 1024] =
+        USER_STACK_2_ADDRESS | PAGE_USER_RW_FLAGS;
+    page_directory[USER_CODE_PAGE / 1024] |= PAGE_USER;
+    page_directory[USER_STACK_PAGE / 1024] |= PAGE_USER;
+    page_directory[USER_STACK_2_PAGE / 1024] |= PAGE_USER;
 
     u32 directory = (u32)page_directory;
     __asm__ volatile (
@@ -610,12 +626,54 @@ static void idt_set_gate(u8 vector, void (*handler)(void), u8 attributes) {
     idt[vector].offset_high = (u16)(address >> 16);
 }
 
+static u32 read_cr2(void) {
+    u32 address;
+    __asm__ volatile ("mov %%cr2, %0" : "=r"(address));
+    return address;
+}
+
+static __attribute__((noreturn)) void page_fault_halt(void) {
+    __asm__ volatile ("cli");
+    for (;;) {
+        halt();
+    }
+}
+
+void page_fault_interrupt_handler(const u32 *register_frame) {
+    u32 error_code = register_frame[8];
+    u32 address = read_cr2();
+    serial_write("page fault: int 0x0e address ");
+    write_u32(address);
+    serial_write(" error ");
+    write_u32(error_code);
+    serial_write((error_code & 0x4) != 0 ? " user\n" : " kernel\n");
+    if (!page_fault_reported) {
+        page_fault_reported = 1;
+        serial_write("memory: page fault handler fail-closed\n");
+    }
+    page_fault_halt();
+}
+
+static u8 paging_flags_valid(void) {
+    u32 kernel_entry = page_tables[0][0x100000 / PAGE_SIZE];
+    u32 code_entry = page_tables[USER_CODE_PAGE / 1024][USER_CODE_PAGE % 1024];
+    u32 stack_entry = page_tables[USER_STACK_PAGE / 1024][USER_STACK_PAGE % 1024];
+    u32 code_directory = page_directory[USER_CODE_PAGE / 1024];
+    return (kernel_entry & PAGE_USER) == 0 &&
+        (code_entry & (PAGE_PRESENT | PAGE_USER)) == (PAGE_PRESENT | PAGE_USER) &&
+        (code_entry & PAGE_WRITE) == 0 &&
+        (stack_entry & (PAGE_PRESENT | PAGE_WRITE | PAGE_USER)) ==
+            (PAGE_PRESENT | PAGE_WRITE | PAGE_USER) &&
+        (code_directory & PAGE_USER) != 0;
+}
+
 static void idt_init(void) {
     for (u32 vector = 0; vector < IDT_ENTRIES; vector++) {
         idt_set_gate((u8)vector, default_isr, 0x8e);
     }
     idt_set_gate(TIMER_VECTOR, timer_isr, 0x8e);
     idt_set_gate(KEYBOARD_VECTOR, keyboard_isr, 0x8e);
+    idt_set_gate(0x0e, page_fault_isr, 0x8e);
     /* DPL 3 makes the ABI callable by a future user process. */
     idt_set_gate(SYSCALL_VECTOR, syscall_isr, 0xee);
 
@@ -1119,6 +1177,11 @@ void kernel_main(void) {
         kernel_write("userspace: FSH.BIN load failed\n");
     }
     paging_init();
+    if (paging_flags_valid()) {
+        kernel_write("memory: kernel/user page flags verified\n");
+    } else {
+        kernel_write("memory: kernel/user page flags invalid\n");
+    }
     tss_init();
     gdt_init();
     process_manager_init();

@@ -59,4 +59,17 @@ syscall_isr:
     iret
 .size syscall_isr, .-syscall_isr
 
+.global page_fault_isr
+.type page_fault_isr, @function
+page_fault_isr:
+    cli
+    pusha
+    pushl %esp
+    call page_fault_interrupt_handler
+    addl $4, %esp
+    popa
+    addl $4, %esp
+    iret
+.size page_fault_isr, .-page_fault_isr
+
 .section .note.GNU-stack,"",@progbits

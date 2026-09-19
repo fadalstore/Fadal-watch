@@ -60,6 +60,11 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     its entry point in ring 3. The disk executable exercises `read`, `write`,
     `open`, `exec`, `get_ticks`, `get_pid`, and `exit` through `int 0x80`.
     Kernel handlers validate user buffers and VFS paths before accessing them.
+21. Paging now uses named x86 flags: kernel mappings are present/writable but
+    supervisor-only, the FSH code page is user-readable, and user stacks are
+    user-writable. IDT vector `0x0e` is connected to a page-fault ISR that
+    reads `CR2`, reports the CPU error code, and fails closed after an
+    unhandled kernel or user fault.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible
@@ -114,7 +119,7 @@ intentionally bounded until an x86_64 paging layer is added.
 The kernel heap is currently bounded by the identity-mapped 16 MiB window and
 allocates whole contiguous pages. It is suitable for kernel metadata and early
 filesystem buffers. Slab allocation for process and FAT12 metadata is now
-available; virtual address expansion and demand paging remain future
+available; virtual address expansion and demand-zero paging remain future
 memory-management milestones.
 
 The TTY input boundary is driven by the kernel's PS/2 IRQ1 handler and supports
@@ -131,6 +136,10 @@ stacks, loads FSH from FAT12, selects its ring-3 entry, and exercises syscall
 numbers `1` through `7` through `int 0x80`. It proves the privilege boundary,
 disk-to-userspace loading, and register-based syscall dispatch, but it is not
 yet a scheduler or general process model.
+
+The initial page-fault handler is intentionally fail-closed. It is the
+extension point for demand-zero heap pages, stack growth, and process-specific
+address spaces; it does not yet allocate missing pages automatically.
 
 ## Design boundary
 

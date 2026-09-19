@@ -53,7 +53,7 @@ $(OUT)/fsh.bin: $(OUT)/fsh.elf
 $(OUT)/fsh_blob.o: $(OUT)/fsh.bin
 	$(OBJCOPY) -I binary -O elf32-i386 -B i386 $< $@
 
-$(OUT)/interrupts.o: interrupts.S | $(OUT)
+$(OUT)/interrupts.o: interrupts.S kernel.c | $(OUT)
 	$(AS) --32 -o $@ $<
 
 $(OUT)/kernel.elf: $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o linker.ld
@@ -104,8 +104,9 @@ check: independence $(OUT)/fadal-kernel.img
 	@grep -q "syscalls: int 0x80 ABI gate online" $(OUT)/smoke.log
 		@grep -q "process: dynamic PID allocator online; 2 processes ready" $(OUT)/smoke.log
 			@grep -q "keyboard: PS/2 IRQ1 interactive shell online" $(OUT)/smoke.log
-			@grep -q "userspace: FSH.BIN loaded from FAT12; ring-3 entry ready" $(OUT)/smoke.log
-			@grep -q "shell: FSH disk executable selected" $(OUT)/smoke.log
+				@grep -q "userspace: FSH.BIN loaded from FAT12; ring-3 entry ready" $(OUT)/smoke.log
+				@grep -q "memory: kernel/user page flags verified" $(OUT)/smoke.log
+				@grep -q "shell: FSH disk executable selected" $(OUT)/smoke.log
 				@grep -q "Fadal TTY ready; FSH.BIN owns user shell" $(OUT)/smoke.log
 				@grep -q "fsh: disk executable online" $(OUT)/smoke.log
 				@grep -q "commands: help mount ls cat KERNEL.TXT exit" $(OUT)/smoke.log

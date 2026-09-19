@@ -35,6 +35,7 @@ typedef unsigned int u32;
 #define PROCESS_READY 1
 #define PROCESS_RUNNING 2
 #define PROCESS_EXITED 3
+#define MAX_HEAP_ALLOCS 32
 
 static volatile u16 *const vga = (volatile u16 *)0xb8000;
 static u32 cursor;
@@ -148,6 +149,12 @@ struct process {
     u32 user_stack_top;
 };
 
+struct heap_allocation {
+    void *address;
+    u32 pages;
+    u32 bytes;
+};
+
 static struct idt_entry idt[IDT_ENTRIES];
 static struct gdt_entry gdt[6];
 static struct tss_entry tss;
@@ -156,6 +163,9 @@ static u32 next_pid = 1;
 static u32 current_pid;
 static u32 process_total;
 static u32 active_processes;
+static struct heap_allocation heap_allocations[MAX_HEAP_ALLOCS];
+static u32 heap_allocation_count;
+static u32 heap_used_bytes;
 
 extern void default_isr(void);
 extern void gdt_flush(const struct gdt_pointer *pointer);
@@ -471,6 +481,82 @@ static void page_free(void *address) {
     }
 }
 
+static void heap_init(void) {
+    for (u32 index = 0; index < MAX_HEAP_ALLOCS; index++) {
+        heap_allocations[index].address = (void *)0;
+        heap_allocations[index].pages = 0;
+        heap_allocations[index].bytes = 0;
+    }
+    heap_allocation_count = 0;
+    heap_used_bytes = 0;
+}
+
+static void *kmalloc(u32 bytes) {
+    if (bytes == 0 || heap_allocation_count >= MAX_HEAP_ALLOCS) {
+        return (void *)0;
+    }
+    u32 pages = (bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+    for (u32 first = FIRST_USABLE_PAGE; first + pages <= PHYSICAL_PAGE_COUNT; first++) {
+        u8 available = 1;
+        for (u32 offset = 0; offset < pages; offset++) {
+            if (page_state[first + offset] != 0) {
+                available = 0;
+                break;
+            }
+        }
+        if (!available) {
+            continue;
+        }
+        for (u32 offset = 0; offset < pages; offset++) {
+            page_state[first + offset] = 1;
+            free_page_count--;
+            u32 *page = (u32 *)((first + offset) * PAGE_SIZE);
+            for (u32 word = 0; word < PAGE_SIZE / sizeof(u32); word++) {
+                page[word] = 0;
+            }
+        }
+        void *address = (void *)(first * PAGE_SIZE);
+        for (u32 index = 0; index < MAX_HEAP_ALLOCS; index++) {
+            if (heap_allocations[index].address == (void *)0) {
+                heap_allocations[index].address = address;
+                heap_allocations[index].pages = pages;
+                heap_allocations[index].bytes = bytes;
+                heap_allocation_count++;
+                heap_used_bytes += bytes;
+                return address;
+            }
+        }
+        for (u32 offset = 0; offset < pages; offset++) {
+            page_free((void *)((first + offset) * PAGE_SIZE));
+        }
+        return (void *)0;
+    }
+    return (void *)0;
+}
+
+static u8 kfree(void *address) {
+    if (address == (void *)0) {
+        return 0;
+    }
+    for (u32 index = 0; index < MAX_HEAP_ALLOCS; index++) {
+        struct heap_allocation *allocation = &heap_allocations[index];
+        if (allocation->address != address) {
+            continue;
+        }
+        u32 first_page = (u32)address / PAGE_SIZE;
+        for (u32 offset = 0; offset < allocation->pages; offset++) {
+            page_free((void *)((first_page + offset) * PAGE_SIZE));
+        }
+        heap_used_bytes -= allocation->bytes;
+        heap_allocation_count--;
+        allocation->address = (void *)0;
+        allocation->pages = 0;
+        allocation->bytes = 0;
+        return 1;
+    }
+    return 0;
+}
+
 static void idt_set_gate(u8 vector, void (*handler)(void), u8 attributes) {
     u32 address = (u32)handler;
     idt[vector].offset_low = (u16)(address & 0xffff);
@@ -684,6 +770,11 @@ static void print_memory_stats(void) {
     kernel_write("memory map: ");
     write_u32(memory_map_count);
     kernel_write(" BIOS entries\n");
+    kernel_write("heap: ");
+    write_u32(heap_used_bytes);
+    kernel_write(" bytes in ");
+    write_u32(heap_allocation_count);
+    kernel_write(" allocations\n");
 }
 
 static void command_reset(void) {
@@ -867,6 +958,22 @@ void kernel_main(void) {
     reserve_page(USER_CODE_ADDRESS);
     reserve_page(USER_STACK_ADDRESS);
     reserve_page(USER_STACK_2_ADDRESS);
+    heap_init();
+    u32 heap_free_before = free_page_count;
+    u8 *heap_test = (u8 *)kmalloc(PAGE_SIZE + 17);
+    u8 heap_ok = heap_test != (u8 *)0;
+    if (heap_ok) {
+        heap_test[0] = 0xa5;
+        heap_test[PAGE_SIZE + 16] = 0x5a;
+        heap_ok = heap_test[0] == 0xa5 && heap_test[PAGE_SIZE + 16] == 0x5a;
+    }
+    heap_ok = heap_ok && kfree(heap_test) && free_page_count == heap_free_before &&
+        heap_used_bytes == 0 && heap_allocation_count == 0;
+    if (heap_ok) {
+        kernel_write("memory: dynamic heap self-test passed (2 pages)\n");
+    } else {
+        kernel_write("memory: dynamic heap self-test failed\n");
+    }
     paging_init();
     tss_init();
     gdt_init();

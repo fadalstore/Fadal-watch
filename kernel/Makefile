@@ -68,6 +68,7 @@ check: $(OUT)/fadal-kernel.img
 	@grep -q "filesystem: allocated clusters 1; free clusters 59" $(OUT)/smoke.log
 	@grep -q "disk: ATA LBA28 persisted FAT12 volume" $(OUT)/smoke.log
 	@grep -q "filesystem: ATA read-back verified KERNEL.TXT" $(OUT)/smoke.log
+	@grep -q "memory: dynamic heap self-test passed (2 pages)" $(OUT)/smoke.log
 	@grep -q "memory: page allocation self-test passed" $(OUT)/smoke.log
 	@grep -q "timer: PIT IRQ0 online at 100 Hz" $(OUT)/smoke.log
 	@grep -q "syscalls: int 0x80 ABI gate online" $(OUT)/smoke.log

@@ -34,6 +34,10 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     writes `KERNEL.TXT` during boot. The ATA PIO LBA28 driver then persists
     that volume at LBA 113 in the raw disk image and reads it back to verify
     the FAT12 directory, cluster chain, and file bytes.
+15. The memory manager provides a page-backed kernel heap with contiguous
+    `kmalloc`/`kfree` allocations, zeroed pages, reuse after release, and an
+    allocation table for up to 32 live blocks. Boot validates a two-page
+    allocation and release cycle.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible
@@ -68,6 +72,11 @@ the BIOS for E820 entries, and only pages reported as usable are released to
 Fadal's allocator. If the BIOS does not provide a map, the kernel uses a
 conservative 4 MiB fallback and reports that state on the console. This remains
 intentionally bounded until an x86_64 paging layer is added.
+
+The kernel heap is currently bounded by the identity-mapped 4 MiB window and
+allocates whole contiguous pages. It is suitable for kernel metadata and early
+filesystem buffers; virtual address expansion, slab allocation, and demand
+paging are future memory-management milestones.
 
 The console commands are `help`, `info`, `mem`, `uptime`, `status`, and
 `clear`. Timer interrupts wake the idle loop and make the uptime signal

@@ -21,6 +21,7 @@ typedef unsigned int u32;
 #define USER_STACK_ADDRESS 0x00300000
 #define USER_CODE_PAGE (USER_CODE_ADDRESS / PAGE_SIZE)
 #define USER_STACK_PAGE (USER_STACK_ADDRESS / PAGE_SIZE)
+#define SYSCALL_GET_TICKS 1
 
 static volatile u16 *const vga = (volatile u16 *)0xb8000;
 static u32 cursor;
@@ -30,6 +31,7 @@ static u8 shift_pressed;
 static volatile u32 timer_ticks;
 static volatile u32 syscall_count;
 static volatile u8 syscall_reported;
+static volatile u8 get_ticks_reported;
 static u32 page_directory[1024] __attribute__((aligned(PAGE_SIZE)));
 static u32 page_table[1024] __attribute__((aligned(PAGE_SIZE)));
 static u8 page_state[PHYSICAL_PAGE_COUNT];
@@ -108,6 +110,21 @@ struct tss_entry {
     u16 trap;
     u16 iomap_base;
 } __attribute__((packed));
+
+/*
+ * pusha stores registers in this order at the current stack pointer:
+ * edi, esi, ebp, original_esp, ebx, edx, ecx, eax.
+ */
+struct syscall_frame {
+    u32 edi;
+    u32 esi;
+    u32 ebp;
+    u32 original_esp;
+    u32 ebx;
+    u32 edx;
+    u32 ecx;
+    u32 eax;
+};
 
 static struct idt_entry idt[IDT_ENTRIES];
 static struct gdt_entry gdt[6];
@@ -654,11 +671,21 @@ void timer_interrupt_handler(void) {
     timer_ticks++;
 }
 
-void syscall_interrupt_handler(void) {
+void syscall_interrupt_handler(struct syscall_frame *frame) {
     syscall_count++;
     if (!syscall_reported) {
         syscall_reported = 1;
         serial_write("syscall: ring-3 entry\n");
+    }
+
+    if (frame->eax == SYSCALL_GET_TICKS) {
+        frame->eax = timer_ticks;
+        if (!get_ticks_reported) {
+            get_ticks_reported = 1;
+            serial_write("syscall: get_ticks dispatch\n");
+        }
+    } else {
+        frame->eax = 0xffffffff;
     }
 }
 

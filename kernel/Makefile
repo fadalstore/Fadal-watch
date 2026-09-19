@@ -59,6 +59,7 @@ check: $(OUT)/fadal-kernel.img
 	@grep -q "timer: PIT IRQ0 online at 100 Hz" $(OUT)/smoke.log
 	@grep -q "syscalls: int 0x80 ABI gate online" $(OUT)/smoke.log
 	@grep -q "syscall: ring-3 entry" $(OUT)/smoke.log
+	@grep -q "syscall: get_ticks dispatch" $(OUT)/smoke.log
 	@echo "Fadal Kernel boot smoke test passed"
 
 run: $(OUT)/fadal-kernel.img

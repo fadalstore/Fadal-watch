@@ -52,7 +52,9 @@ timer_isr:
 .type syscall_isr, @function
 syscall_isr:
     pusha
+    pushl %esp
     call syscall_interrupt_handler
+    addl $4, %esp
     popa
     iret
 .size syscall_isr, .-syscall_isr

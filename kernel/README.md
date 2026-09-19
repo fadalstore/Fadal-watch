@@ -19,6 +19,8 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
    future userspace does not need to depend on a host operating system.
 10. The kernel maps a small ring-3 test process with a private user code page,
     user stack, TSS kernel stack, and a first syscall transition.
+11. The syscall ABI passes a `pusha` register frame to the kernel; syscall
+    number `1` returns the current PIT tick count in `EAX`.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible
@@ -55,9 +57,11 @@ The console commands are `help`, `info`, `mem`, `uptime`, `status`, and
 `clear`. Timer interrupts wake the idle loop and make the uptime signal
 independent from the dashboard or any host userspace.
 
-The current userspace milestone is intentionally tiny: its test program calls
-`int 0x80` repeatedly and returns to ring 3. It proves the privilege boundary
-and syscall entry path, but it is not yet a scheduler or general process model.
+The current userspace milestone is intentionally tiny: its test program puts
+syscall number `1` in `EAX`, calls `int 0x80` repeatedly, receives the PIT
+tick count back in `EAX`, and returns to ring 3. It proves the privilege
+boundary and a register-based syscall dispatch path, but it is not yet a
+scheduler or general process model.
 
 ## Design boundary
 

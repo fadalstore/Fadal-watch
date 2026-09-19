@@ -50,13 +50,17 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     descriptor, FAT header, and root-directory geometry before scanning root
     entries. Boot mounts an existing volume and verifies `KERNEL.TXT`; only a
     blank or invalid volume takes the first-time format path.
+19. The VFS layer defines filesystem-independent mount, root-entry, read-file,
+    and write-file operations. FAT12 is the first backend and is mounted as
+    the root filesystem through a VFS operation table, leaving room for ext2,
+    FadalFS, or another backend without changing kernel callers.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible
 userspace are intentionally staged after the bootable foundation. FAT12 write
 support now persists, mounts, and reads the volume through the ATA
-primary-master PIO path; partition discovery and a general block-device
-abstraction remain future work.
+primary-master PIO path behind VFS operations; partition discovery and a
+general block-device abstraction remain future work.
 
 ## Build and run
 

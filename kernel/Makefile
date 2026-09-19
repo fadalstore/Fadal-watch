@@ -26,7 +26,7 @@ $(OUT):
 $(OUT)/boot.o: boot.S | $(OUT)
 	$(AS) --32 -o $@ $<
 
-$(OUT)/kernel.o: kernel.c fat12.h ata.h slab.h | $(OUT)
+$(OUT)/kernel.o: kernel.c fat12.h ata.h slab.h vfs.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(OUT)/fat12.o: fat12.c fat12.h | $(OUT)
@@ -38,11 +38,14 @@ $(OUT)/ata.o: ata.c ata.h | $(OUT)
 $(OUT)/slab.o: slab.c slab.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+$(OUT)/vfs.o: vfs.c vfs.h fat12.h | $(OUT)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 $(OUT)/interrupts.o: interrupts.S | $(OUT)
 	$(AS) --32 -o $@ $<
 
-$(OUT)/kernel.elf: $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/slab.o $(OUT)/interrupts.o linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/slab.o $(OUT)/interrupts.o
+$(OUT)/kernel.elf: $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/interrupts.o linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/interrupts.o
 
 $(OUT)/kernel.bin: $(OUT)/kernel.elf
 	$(OBJCOPY) -O binary $< $@
@@ -78,8 +81,8 @@ check: independence $(OUT)/fadal-kernel.img
 		@grep -q "memory: slab allocation/reuse self-test passed" $(OUT)/smoke.log
 		@grep -q "memory: process slab exhausted cleanly at 8 objects" $(OUT)/smoke.log
 		@grep -q "memory: heap stress passed (30 blocks; allocator limit verified)" $(OUT)/smoke.log
-		@grep -Eq "filesystem: FAT12 formatted; KERNEL.TXT written|filesystem: FAT12 mounted; root directory recognized" $(OUT)/smoke.log
-		@grep -Eq "filesystem: FAT12 root directory recognized \(1 entries\)|filesystem: FAT12 mounted; root directory recognized \(1 entries\)" $(OUT)/smoke.log
+		@grep -Eq "filesystem: FAT12 formatted; KERNEL.TXT written|vfs: FAT12 backend mounted; root directory recognized" $(OUT)/smoke.log
+		@grep -q "vfs: FAT12 backend mounted; root directory recognized (1 entries)" $(OUT)/smoke.log
 		@grep -Eq "filesystem: allocated clusters 1; free clusters 59|filesystem: mounted KERNEL.TXT verified" $(OUT)/smoke.log
 		@grep -Eq "disk: ATA LBA28 persisted FAT12 volume|disk: FAT12 remount read-only verification passed" $(OUT)/smoke.log
 		@grep -Eq "filesystem: ATA read-back verified KERNEL.TXT|filesystem: mounted KERNEL.TXT verified" $(OUT)/smoke.log

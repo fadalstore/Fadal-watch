@@ -1,6 +1,7 @@
 #include "fat12.h"
 #include "ata.h"
 #include "slab.h"
+#include "vfs.h"
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -1014,17 +1015,18 @@ void kernel_main(void) {
         kernel_write("memory: heap stress test failed\n");
     }
     static const fat12_u8 first_file[] = "FADAL FAT12 write\n";
+    vfs_init();
     fat12_u8 existing_volume = ata_read_sectors(
         FAT12_DISK_LBA,
         fat12_volume_buffer(),
-        fat12_volume_sectors()) && fat12_mount();
+        fat12_volume_sectors()) && vfs_mount_fat12();
     if (existing_volume) {
-        kernel_write("filesystem: FAT12 mounted; root directory recognized (");
-        write_u32(fat12_root_entry_count());
+        kernel_write("vfs: FAT12 backend mounted; root directory recognized (");
+        write_u32(vfs_root_entries());
         kernel_write(" entries)\n");
         fat12_u8 mounted_file[32];
         fat12_u32 mounted_size = 0;
-        if (fat12_read_file("KERNEL.TXT", mounted_file, sizeof(mounted_file), &mounted_size) &&
+        if (vfs_read_file("KERNEL.TXT", mounted_file, sizeof(mounted_file), &mounted_size) &&
             mounted_size == sizeof(first_file) - 1) {
             kernel_write("filesystem: mounted KERNEL.TXT verified\n");
         } else {
@@ -1033,8 +1035,9 @@ void kernel_main(void) {
         kernel_write("disk: FAT12 remount read-only verification passed\n");
     } else {
         fat12_format();
+        vfs_mount_fat12();
         kernel_write("filesystem: FAT12 mount probe empty; formatting new volume\n");
-        if (fat12_write_file("KERNEL.TXT", first_file, sizeof(first_file) - 1) != 0) {
+        if (vfs_write_file("KERNEL.TXT", first_file, sizeof(first_file) - 1) != 0) {
         kernel_write("filesystem: FAT12 formatted; KERNEL.TXT written\n");
         kernel_write("filesystem: allocated clusters ");
         write_u32(fat12_last_allocated_clusters());
@@ -1049,7 +1052,7 @@ void kernel_main(void) {
                 FAT12_DISK_LBA,
                 fat12_volume_buffer(),
                 fat12_volume_sectors());
-            fat12_u8 file_ok = readback_ok && fat12_read_file(
+            fat12_u8 file_ok = readback_ok && vfs_read_file(
                 "KERNEL.TXT",
                 readback,
                 sizeof(readback),
@@ -1075,8 +1078,8 @@ void kernel_main(void) {
     } else {
         kernel_write("filesystem: FAT12 write failed\n");
     }
-        kernel_write("filesystem: FAT12 root directory recognized (");
-        write_u32(fat12_root_entry_count());
+        kernel_write("vfs: FAT12 backend mounted; root directory recognized (");
+        write_u32(vfs_root_entries());
         kernel_write(" entries)\n");
     }
     paging_init();

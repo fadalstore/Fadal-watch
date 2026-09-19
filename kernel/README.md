@@ -20,8 +20,9 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
 10. The kernel maps a small ring-3 test process with a private user code page,
     user stack, TSS kernel stack, and a first syscall transition.
 11. The syscall ABI passes a `pusha` register frame to the kernel; syscall
-    number `1` returns the current PIT tick count in `EAX`, while syscall
-    number `2` returns the current test process ID (`1`).
+    numbers `1` and `2` return PIT ticks and the current process ID. Syscalls
+    `4` through `7` provide bounded `read`, `write`, `open`, and `exec`
+    services for the FSH ring-3 bootstrap, while syscall `3` remains `exit`.
 12. The kernel owns an eight-slot process table with dynamic PID allocation,
     `READY`/`RUNNING` states, and two registered process records. The first
     process is selected as the current ring-3 process; a preemptive scheduler
@@ -54,6 +55,9 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     and write-file operations. FAT12 is the first backend and is mounted as
     the root filesystem through a VFS operation table, leaving room for ext2,
     FadalFS, or another backend without changing kernel callers.
+20. The FSH bootstrap now executes from ring 3 and exercises `read`, `write`,
+    `open`, `exec`, `get_ticks`, `get_pid`, and `exit` through `int 0x80`.
+    Kernel handlers validate user buffers and VFS paths before accessing them.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

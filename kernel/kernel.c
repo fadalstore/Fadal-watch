@@ -31,9 +31,14 @@ typedef unsigned int u32;
 #define USER_CODE_PAGE (USER_CODE_ADDRESS / PAGE_SIZE)
 #define USER_STACK_PAGE (USER_STACK_ADDRESS / PAGE_SIZE)
 #define USER_STACK_2_PAGE (USER_STACK_2_ADDRESS / PAGE_SIZE)
+#define USER_DATA_ADDRESS (USER_CODE_ADDRESS + 128)
 #define SYSCALL_GET_TICKS 1
 #define SYSCALL_GET_PID 2
 #define SYSCALL_EXIT 3
+#define SYSCALL_READ 4
+#define SYSCALL_WRITE 5
+#define SYSCALL_OPEN 6
+#define SYSCALL_EXEC 7
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
 #define PROCESS_READY 1
@@ -52,6 +57,10 @@ static volatile u8 syscall_reported;
 static volatile u8 get_ticks_reported;
 static volatile u8 get_pid_reported;
 static volatile u8 exit_reported;
+static volatile u8 read_reported;
+static volatile u8 write_reported;
+static volatile u8 open_reported;
+static volatile u8 exec_reported;
 static u32 page_directory[1024] __attribute__((aligned(PAGE_SIZE)));
 static u32 page_tables[PAGE_TABLE_COUNT][1024] __attribute__((aligned(PAGE_SIZE)));
 static u8 page_state[PHYSICAL_PAGE_COUNT];
@@ -415,32 +424,68 @@ static u8 process_exit_current(void) {
     return 0;
 }
 
+static u8 user_range_valid(u32 address, u32 length) {
+    u32 end = address + length;
+    return address >= USER_CODE_ADDRESS && end >= address &&
+        end <= USER_CODE_ADDRESS + PAGE_SIZE;
+}
+
+static u8 user_path_is_kernel(const char *path, u32 length) {
+    static const char expected[] = "KERNEL.TXT";
+    if (length != sizeof(expected) - 1 || !user_range_valid((u32)path, length)) {
+        return 0;
+    }
+    for (u32 index = 0; index < sizeof(expected) - 1; index++) {
+        if (path[index] != expected[index]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void emit_syscall(volatile u8 *code, u32 *offset, u32 number) {
+    code[(*offset)++] = 0xb8;
+    code[(*offset)++] = (u8)number;
+    code[(*offset)++] = (u8)(number >> 8);
+    code[(*offset)++] = (u8)(number >> 16);
+    code[(*offset)++] = (u8)(number >> 24);
+    code[(*offset)++] = 0xcd;
+    code[(*offset)++] = 0x80;
+}
+
+static void emit_mov_register(volatile u8 *code, u32 *offset, u8 opcode, u32 value) {
+    code[(*offset)++] = opcode;
+    code[(*offset)++] = (u8)value;
+    code[(*offset)++] = (u8)(value >> 8);
+    code[(*offset)++] = (u8)(value >> 16);
+    code[(*offset)++] = (u8)(value >> 24);
+}
+
 static void user_program_init(void) {
     volatile u8 *code = (volatile u8 *)USER_CODE_ADDRESS;
-    /* get_ticks; get_pid; exit; spin until a scheduler is available */
-    code[0] = 0xb8;
-    code[1] = 0x01;
-    code[2] = 0x00;
-    code[3] = 0x00;
-    code[4] = 0x00;
-    code[5] = 0xcd;
-    code[6] = 0x80;
-    code[7] = 0xb8;
-    code[8] = 0x02;
-    code[9] = 0x00;
-    code[10] = 0x00;
-    code[11] = 0x00;
-    code[12] = 0xcd;
-    code[13] = 0x80;
-    code[14] = 0xb8;
-    code[15] = 0x03;
-    code[16] = 0x00;
-    code[17] = 0x00;
-    code[18] = 0x00;
-    code[19] = 0xcd;
-    code[20] = 0x80;
-    code[21] = 0xeb;
-    code[22] = 0xfe;
+    volatile u8 *data = (volatile u8 *)USER_DATA_ADDRESS;
+    static const char test_data[] = "FSH\nKERNEL.TXT";
+    u32 offset = 0;
+    for (u32 index = 0; index < sizeof(test_data) - 1; index++) {
+        data[index] = (u8)test_data[index];
+    }
+    /* FSH bootstrap: read, write, open, exec, get_ticks, get_pid, exit. */
+    emit_mov_register(code, &offset, 0xbb, USER_DATA_ADDRESS);
+    emit_mov_register(code, &offset, 0xb9, 4);
+    emit_syscall(code, &offset, SYSCALL_READ);
+    emit_mov_register(code, &offset, 0xbb, USER_DATA_ADDRESS);
+    emit_mov_register(code, &offset, 0xb9, 4);
+    emit_syscall(code, &offset, SYSCALL_WRITE);
+    emit_mov_register(code, &offset, 0xbb, USER_DATA_ADDRESS + 4);
+    emit_mov_register(code, &offset, 0xb9, 10);
+    emit_syscall(code, &offset, SYSCALL_OPEN);
+    emit_mov_register(code, &offset, 0xbb, USER_CODE_ADDRESS);
+    emit_syscall(code, &offset, SYSCALL_EXEC);
+    emit_syscall(code, &offset, SYSCALL_GET_TICKS);
+    emit_syscall(code, &offset, SYSCALL_GET_PID);
+    emit_syscall(code, &offset, SYSCALL_EXIT);
+    code[offset++] = 0xeb;
+    code[offset] = 0xfe;
 }
 
 __attribute__((noreturn))
@@ -959,6 +1004,37 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
         if (!exit_reported) {
             exit_reported = 1;
             serial_write("syscall: exit dispatch; process marked exited\n");
+        }
+    } else if (frame->eax == SYSCALL_READ) {
+        frame->eax = user_range_valid(frame->ebx, frame->ecx) ? 0 : 0xffffffff;
+        if (!read_reported) {
+            read_reported = 1;
+            serial_write("syscall: read dispatch; TTY input boundary checked\n");
+        }
+    } else if (frame->eax == SYSCALL_WRITE) {
+        if (user_range_valid(frame->ebx, frame->ecx)) {
+            shell_write_bytes((const u8 *)frame->ebx, frame->ecx);
+            frame->eax = frame->ecx;
+        } else {
+            frame->eax = 0xffffffff;
+        }
+        if (!write_reported) {
+            write_reported = 1;
+            serial_write("syscall: write dispatch; user buffer validated\n");
+        }
+    } else if (frame->eax == SYSCALL_OPEN) {
+        frame->eax = user_path_is_kernel((const char *)frame->ebx, frame->ecx) &&
+            vfs_is_mounted() ? 1 : 0xffffffff;
+        if (!open_reported) {
+            open_reported = 1;
+            serial_write("syscall: open dispatch; VFS path checked\n");
+        }
+    } else if (frame->eax == SYSCALL_EXEC) {
+        frame->eax = frame->ebx == USER_CODE_ADDRESS ?
+            process_create(USER_CODE_ADDRESS, USER_STACK_2_ADDRESS + PAGE_SIZE) : 0xffffffff;
+        if (!exec_reported) {
+            exec_reported = 1;
+            serial_write("syscall: exec dispatch; process created\n");
         }
     } else {
         frame->eax = 0xffffffff;

@@ -14,6 +14,10 @@ _start:
     movw %ax, %ds
     movb %dl, boot_drive
 
+    # Ask the BIOS for the physical memory map before entering protected mode.
+    # The map lives below 64 KiB so the first identity map can inspect it.
+    call detect_memory
+
     # Read the fixed kernel budget from sector 2 into physical address 0x10000.
     movw $0x1000, %ax
     movw %ax, %es
@@ -38,6 +42,34 @@ disk_error:
 1:
     hlt
     jmp 1b
+
+detect_memory:
+    xorw %ax, %ax
+    movw %ax, %es
+    movw $0x4ffc, %si
+    movw $0, %es:(%si)
+    movw $0x5000, %di
+    xorl %ebx, %ebx
+1:
+    movl $0xe820, %eax
+    movl $0x534d4150, %edx
+    movl $24, %ecx
+    int $0x15
+    jc 2f
+    cmpl $0x534d4150, %eax
+    jne 2f
+
+    movw $0x4ffc, %si
+    movw %es:(%si), %ax
+    incw %ax
+    movw %ax, %es:(%si)
+    addw $24, %di
+    cmpw $32, %ax
+    jae 2f
+    testl %ebx, %ebx
+    jnz 1b
+2:
+    ret
 
 .code32
 protected_mode:

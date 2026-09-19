@@ -12,7 +12,8 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
    IRQ handler.
 6. The kernel exposes a small PS/2 console with `help`, `info`, and `clear`
    commands.
-7. The kernel enables a bounded 4 MiB identity map and its own page allocator.
+7. The kernel reads the BIOS E820 map and uses it to bound its page allocator
+   inside the first 4 MiB identity-mapped window.
 8. The kernel programs the PIT at 100 Hz and owns timer IRQ0 for uptime.
 9. The kernel reserves an `int 0x80` syscall gate with a ring-3 descriptor so
    future userspace does not need to depend on a host operating system.
@@ -42,9 +43,11 @@ own IRQ1 handler; no Linux, Ubuntu, or external userspace is involved in the
 boot or input path.
 
 The first memory milestone maps physical addresses 0 through 4 MiB and
-reserves the lower 1 MiB for firmware/kernel structures. Pages from 1 MiB
-through 4 MiB are managed by Fadal's allocator. This is intentionally bounded
-until a BIOS memory map and x86_64 paging layer are added.
+reserves the lower 1 MiB for firmware/kernel structures. The boot sector asks
+the BIOS for E820 entries, and only pages reported as usable are released to
+Fadal's allocator. If the BIOS does not provide a map, the kernel uses a
+conservative 4 MiB fallback and reports that state on the console. This remains
+intentionally bounded until an x86_64 paging layer is added.
 
 The console commands are `help`, `info`, `mem`, `uptime`, `status`, and
 `clear`. Timer interrupts wake the idle loop and make the uptime signal

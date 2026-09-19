@@ -14,6 +14,9 @@ typedef unsigned int u32;
 #define IDENTITY_MAP_BYTES (4 * 1024 * 1024)
 #define PHYSICAL_PAGE_COUNT (IDENTITY_MAP_BYTES / PAGE_SIZE)
 #define FIRST_USABLE_PAGE (0x100000 / PAGE_SIZE)
+#define E820_MAP_ADDRESS 0x5000
+#define E820_COUNT_ADDRESS 0x4ffc
+#define E820_MAX_ENTRIES 32
 
 static volatile u16 *const vga = (volatile u16 *)0xb8000;
 static u32 cursor;
@@ -25,6 +28,23 @@ static volatile u32 syscall_count;
 static u32 page_directory[1024] __attribute__((aligned(PAGE_SIZE)));
 static u8 page_state[PHYSICAL_PAGE_COUNT];
 static u32 free_page_count;
+static u32 managed_page_count;
+static u32 memory_map_count;
+static u8 memory_map_valid;
+
+struct e820_entry {
+    u32 base_low;
+    u32 base_high;
+    u32 length_low;
+    u32 length_high;
+    u32 type;
+    u32 attributes;
+} __attribute__((packed));
+
+static volatile struct e820_entry *const bios_memory_map =
+    (volatile struct e820_entry *)E820_MAP_ADDRESS;
+static volatile u16 *const bios_memory_map_count =
+    (volatile u16 *)E820_COUNT_ADDRESS;
 
 struct idt_entry {
     u16 offset_low;
@@ -115,15 +135,47 @@ static void paging_init(void) {
         : "eax", "memory");
 }
 
+static u8 memory_map_covers_page(u32 page) {
+    u32 page_start = page * PAGE_SIZE;
+    u32 page_end = page_start + PAGE_SIZE;
+
+    for (u32 index = 0; index < memory_map_count; index++) {
+        volatile struct e820_entry *entry = &bios_memory_map[index];
+        if (entry->type != 1 || entry->base_high != 0 || entry->length_high != 0) {
+            continue;
+        }
+
+        u32 base = entry->base_low;
+        u32 end = base + entry->length_low;
+        if (end < base) {
+            end = 0xffffffff;
+        }
+        if (base <= page_start && end >= page_end) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void memory_init(void) {
+    memory_map_count = *bios_memory_map_count;
+    if (memory_map_count > E820_MAX_ENTRIES) {
+        memory_map_count = E820_MAX_ENTRIES;
+    }
+    memory_map_valid = memory_map_count > 0;
+
     for (u32 page = 0; page < PHYSICAL_PAGE_COUNT; page++) {
         page_state[page] = 1;
     }
 
     free_page_count = 0;
+    managed_page_count = 0;
     for (u32 page = FIRST_USABLE_PAGE; page < PHYSICAL_PAGE_COUNT; page++) {
-        page_state[page] = 0;
-        free_page_count++;
+        if (!memory_map_valid || memory_map_covers_page(page)) {
+            page_state[page] = 0;
+            free_page_count++;
+            managed_page_count++;
+        }
     }
 }
 
@@ -366,8 +418,11 @@ static void print_memory_stats(void) {
     kernel_write("memory: ");
     write_u32(free_page_count);
     kernel_write(" / ");
-    write_u32(PHYSICAL_PAGE_COUNT - FIRST_USABLE_PAGE);
+    write_u32(managed_page_count);
     kernel_write(" usable pages free\n");
+    kernel_write("memory map: ");
+    write_u32(memory_map_count);
+    kernel_write(" BIOS entries\n");
 }
 
 static void command_reset(void) {
@@ -385,7 +440,7 @@ static void command_run(void) {
     } else if (text_equal(command, "info")) {
         kernel_write("fadal kernel: 32-bit protected mode\n");
         kernel_write("console: VGA text + PS/2 IRQ1\n");
-        kernel_write("memory: 4 MiB identity map + page allocator\n");
+        kernel_write("memory: BIOS E820 map + bounded identity allocator\n");
         kernel_write("timer: PIT IRQ0 at 100 Hz\n");
         kernel_write("syscalls: int 0x80 ABI gate online\n");
     } else if (text_equal(command, "mem")) {
@@ -474,6 +529,11 @@ void kernel_main(void) {
     memory_init();
     paging_init();
     kernel_write("memory: 4 MiB identity paging online\n");
+    if (memory_map_valid) {
+        kernel_write("memory: BIOS E820 map accepted\n");
+    } else {
+        kernel_write("memory: E820 unavailable; safe 4 MiB fallback\n");
+    }
     void *test_page = page_alloc();
     if (test_page != (void *)0) {
         page_free(test_page);

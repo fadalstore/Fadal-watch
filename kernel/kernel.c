@@ -15,8 +15,9 @@ typedef unsigned int u32;
 #define FAT12_DISK_LBA 113
 #define TIMER_FREQUENCY 100
 #define PAGE_SIZE 4096
-#define IDENTITY_MAP_BYTES (4 * 1024 * 1024)
+#define IDENTITY_MAP_BYTES (16 * 1024 * 1024)
 #define PHYSICAL_PAGE_COUNT (IDENTITY_MAP_BYTES / PAGE_SIZE)
+#define PAGE_TABLE_COUNT (IDENTITY_MAP_BYTES / (PAGE_SIZE * 1024))
 #define FIRST_USABLE_PAGE (0x100000 / PAGE_SIZE)
 #define E820_MAP_ADDRESS 0x5000
 #define E820_COUNT_ADDRESS 0x4ffc
@@ -49,7 +50,7 @@ static volatile u8 get_ticks_reported;
 static volatile u8 get_pid_reported;
 static volatile u8 exit_reported;
 static u32 page_directory[1024] __attribute__((aligned(PAGE_SIZE)));
-static u32 page_table[1024] __attribute__((aligned(PAGE_SIZE)));
+static u32 page_tables[PAGE_TABLE_COUNT][1024] __attribute__((aligned(PAGE_SIZE)));
 static u8 page_state[PHYSICAL_PAGE_COUNT];
 static u32 free_page_count;
 static u32 managed_page_count;
@@ -259,16 +260,16 @@ static void gdt_init(void) {
 static void paging_init(void) {
     for (u32 index = 0; index < 1024; index++) {
         page_directory[index] = 0;
-        page_table[index] = (index * PAGE_SIZE) | 0x03;
     }
-    /*
-     * A 4 KiB table keeps supervisor pages private while allowing the first
-     * user process to own one code page and one stack page.
-    */
-    page_table[USER_CODE_PAGE] |= 0x04;
-    page_table[USER_STACK_PAGE] |= 0x04;
-    page_table[USER_STACK_2_PAGE] |= 0x04;
-    page_directory[0] = ((u32)page_table) | 0x07;
+    for (u32 table = 0; table < PAGE_TABLE_COUNT; table++) {
+        for (u32 index = 0; index < 1024; index++) {
+            page_tables[table][index] = ((table * 1024 + index) * PAGE_SIZE) | 0x03;
+        }
+        page_directory[table] = ((u32)page_tables[table]) | 0x07;
+    }
+    page_tables[USER_CODE_PAGE / 1024][USER_CODE_PAGE % 1024] |= 0x04;
+    page_tables[USER_STACK_PAGE / 1024][USER_STACK_PAGE % 1024] |= 0x04;
+    page_tables[USER_STACK_2_PAGE / 1024][USER_STACK_2_PAGE % 1024] |= 0x04;
 
     u32 directory = (u32)page_directory;
     __asm__ volatile (
@@ -986,11 +987,11 @@ void kernel_main(void) {
         kernel_write("process: dynamic PID allocator online; 2 processes ready\n");
     }
     user_program_init();
-    kernel_write("memory: 4 MiB identity paging online\n");
+    kernel_write("memory: 16 MiB identity paging online\n");
     if (memory_map_valid) {
         kernel_write("memory: BIOS E820 map accepted\n");
     } else {
-        kernel_write("memory: E820 unavailable; safe 4 MiB fallback\n");
+        kernel_write("memory: E820 unavailable; safe 16 MiB fallback\n");
     }
     void *test_page = page_alloc();
     if (test_page != (void *)0) {

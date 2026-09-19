@@ -13,7 +13,7 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
 6. The kernel exposes a small PS/2 console with `help`, `info`, and `clear`
    commands.
 7. The kernel reads the BIOS E820 map and uses it to bound its page allocator
-   inside the first 4 MiB identity-mapped window.
+   inside the first 16 MiB identity-mapped window.
 8. The kernel programs the PIT at 100 Hz and owns timer IRQ0 for uptime.
 9. The kernel reserves an `int 0x80` syscall gate with a ring-3 descriptor so
    future userspace does not need to depend on a host operating system.
@@ -58,25 +58,26 @@ make -C kernel run
 ```
 
 `make run` boots `kernel/out/fadal-kernel.img` in QEMU, sends serial output to
-the terminal, and stops after the smoke-test timeout. The image is intentionally
-small and uses a fixed 48-sector kernel budget for the first boot stage.
+the terminal, and stops after the smoke-test timeout. The image uses a fixed
+112-sector kernel budget for the first boot stage.
 
 When running with a VGA display, the console accepts keyboard input after the
 `Fadal console ready` prompt. Keyboard input is delivered through the kernel's
 own IRQ1 handler; no Linux, Ubuntu, or external userspace is involved in the
 boot or input path.
 
-The first memory milestone maps physical addresses 0 through 4 MiB and
-reserves the lower 1 MiB for firmware/kernel structures. The boot sector asks
+The current memory milestone maps physical addresses 0 through 16 MiB and
+reserves the lower 1 MiB for firmware/kernel structures. Four page tables
+cover the expanded identity-mapped range. The boot sector asks
 the BIOS for E820 entries, and only pages reported as usable are released to
 Fadal's allocator. If the BIOS does not provide a map, the kernel uses a
-conservative 4 MiB fallback and reports that state on the console. This remains
+conservative 16 MiB fallback and reports that state on the console. This remains
 intentionally bounded until an x86_64 paging layer is added.
 
-The kernel heap is currently bounded by the identity-mapped 4 MiB window and
+The kernel heap is currently bounded by the identity-mapped 16 MiB window and
 allocates whole contiguous pages. It is suitable for kernel metadata and early
-filesystem buffers; virtual address expansion, slab allocation, and demand
-paging are future memory-management milestones.
+filesystem buffers; slab allocation and demand paging are future
+memory-management milestones.
 
 The console commands are `help`, `info`, `mem`, `uptime`, `status`, and
 `clear`. Timer interrupts wake the idle loop and make the uptime signal

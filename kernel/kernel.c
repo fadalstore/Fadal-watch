@@ -2,7 +2,6 @@
 #include "ata.h"
 #include "slab.h"
 #include "vfs.h"
-#include "fsh.h"
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -31,7 +30,6 @@ typedef unsigned int u32;
 #define USER_CODE_PAGE (USER_CODE_ADDRESS / PAGE_SIZE)
 #define USER_STACK_PAGE (USER_STACK_ADDRESS / PAGE_SIZE)
 #define USER_STACK_2_PAGE (USER_STACK_2_ADDRESS / PAGE_SIZE)
-#define USER_DATA_ADDRESS (USER_CODE_ADDRESS + 128)
 #define SYSCALL_GET_TICKS 1
 #define SYSCALL_GET_PID 2
 #define SYSCALL_EXIT 3
@@ -426,8 +424,16 @@ static u8 process_exit_current(void) {
 
 static u8 user_range_valid(u32 address, u32 length) {
     u32 end = address + length;
-    return address >= USER_CODE_ADDRESS && end >= address &&
-        end <= USER_CODE_ADDRESS + PAGE_SIZE;
+    if (end < address) {
+        return 0;
+    }
+    if (address >= USER_CODE_ADDRESS && end <= USER_CODE_ADDRESS + PAGE_SIZE) {
+        return 1;
+    }
+    if (address >= USER_STACK_ADDRESS && end <= USER_STACK_ADDRESS + PAGE_SIZE) {
+        return 1;
+    }
+    return address >= USER_STACK_2_ADDRESS && end <= USER_STACK_2_ADDRESS + PAGE_SIZE;
 }
 
 static u8 user_path_is_kernel(const char *path, u32 length) {
@@ -443,49 +449,21 @@ static u8 user_path_is_kernel(const char *path, u32 length) {
     return 1;
 }
 
-static void emit_syscall(volatile u8 *code, u32 *offset, u32 number) {
-    code[(*offset)++] = 0xb8;
-    code[(*offset)++] = (u8)number;
-    code[(*offset)++] = (u8)(number >> 8);
-    code[(*offset)++] = (u8)(number >> 16);
-    code[(*offset)++] = (u8)(number >> 24);
-    code[(*offset)++] = 0xcd;
-    code[(*offset)++] = 0x80;
+extern const u8 _binary_out_fsh_bin_start[];
+extern const u8 _binary_out_fsh_bin_end[];
+
+static u32 fsh_image_size(void) {
+    return (u32)(_binary_out_fsh_bin_end - _binary_out_fsh_bin_start);
 }
 
-static void emit_mov_register(volatile u8 *code, u32 *offset, u8 opcode, u32 value) {
-    code[(*offset)++] = opcode;
-    code[(*offset)++] = (u8)value;
-    code[(*offset)++] = (u8)(value >> 8);
-    code[(*offset)++] = (u8)(value >> 16);
-    code[(*offset)++] = (u8)(value >> 24);
-}
-
-static void user_program_init(void) {
-    volatile u8 *code = (volatile u8 *)USER_CODE_ADDRESS;
-    volatile u8 *data = (volatile u8 *)USER_DATA_ADDRESS;
-    static const char test_data[] = "FSH\nKERNEL.TXT";
-    u32 offset = 0;
-    for (u32 index = 0; index < sizeof(test_data) - 1; index++) {
-        data[index] = (u8)test_data[index];
+static u8 fsh_load_from_disk(void) {
+    u32 size = 0;
+    if (fsh_image_size() == 0 || fsh_image_size() > PAGE_SIZE ||
+        !vfs_read_file("FSH.BIN", (u8 *)USER_CODE_ADDRESS, PAGE_SIZE, &size) ||
+        size != fsh_image_size()) {
+        return 0;
     }
-    /* FSH bootstrap: read, write, open, exec, get_ticks, get_pid, exit. */
-    emit_mov_register(code, &offset, 0xbb, USER_DATA_ADDRESS);
-    emit_mov_register(code, &offset, 0xb9, 4);
-    emit_syscall(code, &offset, SYSCALL_READ);
-    emit_mov_register(code, &offset, 0xbb, USER_DATA_ADDRESS);
-    emit_mov_register(code, &offset, 0xb9, 4);
-    emit_syscall(code, &offset, SYSCALL_WRITE);
-    emit_mov_register(code, &offset, 0xbb, USER_DATA_ADDRESS + 4);
-    emit_mov_register(code, &offset, 0xb9, 10);
-    emit_syscall(code, &offset, SYSCALL_OPEN);
-    emit_mov_register(code, &offset, 0xbb, USER_CODE_ADDRESS);
-    emit_syscall(code, &offset, SYSCALL_EXEC);
-    emit_syscall(code, &offset, SYSCALL_GET_TICKS);
-    emit_syscall(code, &offset, SYSCALL_GET_PID);
-    emit_syscall(code, &offset, SYSCALL_EXIT);
-    code[offset++] = 0xeb;
-    code[offset] = 0xfe;
+    return 1;
 }
 
 __attribute__((noreturn))
@@ -820,112 +798,13 @@ static char keyboard_ascii(u8 scancode) {
     }
 }
 
-static void print_memory_stats(void) {
-    kernel_write("memory: ");
-    write_u32(free_page_count);
-    kernel_write(" / ");
-    write_u32(managed_page_count);
-    kernel_write(" usable pages free\n");
-    kernel_write("memory map: ");
-    write_u32(memory_map_count);
-    kernel_write(" BIOS entries\n");
-    kernel_write("heap: ");
-    write_u32(heap_used_bytes);
-    kernel_write(" bytes in ");
-    write_u32(heap_allocation_count);
-    kernel_write(" allocations\n");
-}
-
 static void command_reset(void) {
     command_length = 0;
     command[0] = '\0';
 }
 
-static void shell_info(void) {
-    kernel_write("fadal kernel: 32-bit protected mode\n");
-    kernel_write("console: VGA text + PS/2 IRQ1\n");
-    kernel_write("memory: BIOS E820 map + bounded identity allocator\n");
-    kernel_write("timer: PIT IRQ0 at 100 Hz\n");
-    kernel_write("syscalls: int 0x80 ABI gate online\n");
-    kernel_write("shell: FSH user-space command parser\n");
-}
-
-static void shell_uptime(void) {
-    kernel_write("uptime: ");
-    write_u32(timer_ticks / TIMER_FREQUENCY);
-    kernel_write("s (");
-    write_u32(timer_ticks);
-    kernel_write(" ticks)\n");
-}
-
-static void shell_status(void) {
-    kernel_write("status: kernel online; IRQ0 + IRQ1 active\n");
-    kernel_write("status: syscall count ");
-    write_u32(syscall_count);
-    kernel_write("\n");
-    kernel_write("processes: ");
-    write_u32(process_total);
-    kernel_write(" total; active ");
-    write_u32(active_processes);
-    kernel_write("; current pid ");
-    write_u32(current_pid);
-    kernel_write("\n");
-    print_memory_stats();
-}
-
-static void shell_mount(void) {
-    if (vfs_is_mounted()) {
-        kernel_write("vfs: ");
-        kernel_write(vfs_filesystem_name());
-        kernel_write(" mounted as root; ");
-        write_u32(vfs_root_entries());
-        kernel_write(" root entries\n");
-    } else {
-        kernel_write("vfs: no root filesystem mounted\n");
-    }
-}
-
-static void shell_list(void) {
-    if (vfs_is_mounted()) {
-        kernel_write("root: ");
-        write_u32(vfs_root_entries());
-        kernel_write(" entries\n");
-        kernel_write("KERNEL.TXT\n");
-    } else {
-        kernel_write("ls: no root filesystem mounted\n");
-    }
-}
-
-static void shell_cat_kernel(void) {
-    u8 file[128];
-    u32 file_size = 0;
-    if (vfs_read_file("KERNEL.TXT", file, sizeof(file), &file_size)) {
-        shell_write_bytes(file, file_size);
-    } else {
-        kernel_write("cat: KERNEL.TXT not found\n");
-    }
-}
-
-static void shell_clear(void) {
-    vga_clear();
-}
-
-static const struct fsh_context shell_context = {
-    .write = kernel_write,
-    .info = shell_info,
-    .mem = print_memory_stats,
-    .uptime = shell_uptime,
-    .status = shell_status,
-    .mount = shell_mount,
-    .list = shell_list,
-    .cat_kernel = shell_cat_kernel,
-    .clear = shell_clear,
-};
-
 static void shell_submit_line(void) {
     kernel_write("\n");
-    fsh_run_line(&shell_context, command, command_length);
-
     command_reset();
     kernel_write("> ");
 }
@@ -969,7 +848,7 @@ static void keyboard_handle(u8 scancode) {
 
 static void shell_init(void) {
     command_reset();
-    kernel_write("Fadal shell ready\n> ");
+    kernel_write("Fadal TTY ready; FSH.BIN owns user shell\n> ");
 }
 
 void keyboard_interrupt_handler(void) {
@@ -1161,6 +1040,9 @@ void kernel_main(void) {
         vfs_mount_fat12();
         kernel_write("filesystem: FAT12 mount probe empty; formatting new volume\n");
         if (vfs_write_file("KERNEL.TXT", first_file, sizeof(first_file) - 1) != 0) {
+        if (vfs_write_file("FSH.BIN", _binary_out_fsh_bin_start, fsh_image_size()) == 0) {
+            kernel_write("filesystem: FSH.BIN write failed\n");
+        }
         kernel_write("filesystem: FAT12 formatted; KERNEL.TXT written\n");
         kernel_write("filesystem: allocated clusters ");
         write_u32(fat12_last_allocated_clusters());
@@ -1205,6 +1087,11 @@ void kernel_main(void) {
         write_u32(vfs_root_entries());
         kernel_write(" entries)\n");
     }
+    if (fsh_load_from_disk()) {
+        kernel_write("userspace: FSH.BIN loaded from FAT12; ring-3 entry ready\n");
+    } else {
+        kernel_write("userspace: FSH.BIN load failed\n");
+    }
     paging_init();
     tss_init();
     gdt_init();
@@ -1216,7 +1103,6 @@ void kernel_main(void) {
     } else {
         kernel_write("process: dynamic PID allocator online; 2 processes ready\n");
     }
-    user_program_init();
     kernel_write("memory: 16 MiB identity paging online\n");
     if (memory_map_valid) {
         kernel_write("memory: BIOS E820 map accepted\n");
@@ -1238,7 +1124,7 @@ void kernel_main(void) {
     kernel_write("syscalls: int 0x80 ABI gate online\n");
     kernel_write("userspace: ring-3 test process armed\n");
     kernel_write("keyboard: PS/2 IRQ1 interactive shell online\n");
-    kernel_write("shell: FSH parser module loaded outside kernel command parser\n");
+    kernel_write("shell: FSH disk executable selected\n");
     shell_init();
     enable_interrupts();
     enter_user_mode();

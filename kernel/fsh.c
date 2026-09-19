@@ -1,44 +1,37 @@
-#include "fsh.h"
+typedef unsigned char u8;
+typedef unsigned int u32;
 
-static fsh_u8 line_equal(const char *line, fsh_u32 length, const char *command) {
-    fsh_u32 command_length = 0;
-    while (command[command_length] != '\0') {
-        command_length++;
-    }
-    if (length != command_length) {
-        return 0;
-    }
-    for (fsh_u32 index = 0; index < length; index++) {
-        if (line[index] != command[index]) {
-            return 0;
-        }
-    }
-    return 1;
+#define SYSCALL_EXIT 3
+#define SYSCALL_GET_TICKS 1
+#define SYSCALL_GET_PID 2
+#define SYSCALL_READ 4
+#define SYSCALL_WRITE 5
+#define SYSCALL_OPEN 6
+#define SYSCALL_EXEC 7
+
+static u32 fsh_syscall3(u32 number, u32 first, u32 second, u32 third) {
+    u32 result;
+    __asm__ volatile (
+        "int $0x80"
+        : "=a"(result)
+        : "a"(number), "b"(first), "c"(second), "d"(third)
+        : "memory");
+    return result;
 }
 
-void fsh_run_line(const struct fsh_context *context, const char *line, fsh_u32 length) {
-    if (length == 0) {
-        return;
-    }
-    if (line_equal(line, length, "help")) {
-        context->write("commands: help info mem uptime status mount ls cat KERNEL.TXT clear\n");
-    } else if (line_equal(line, length, "info")) {
-        context->info();
-    } else if (line_equal(line, length, "mem")) {
-        context->mem();
-    } else if (line_equal(line, length, "uptime")) {
-        context->uptime();
-    } else if (line_equal(line, length, "status")) {
-        context->status();
-    } else if (line_equal(line, length, "mount")) {
-        context->mount();
-    } else if (line_equal(line, length, "ls")) {
-        context->list();
-    } else if (line_equal(line, length, "cat KERNEL.TXT")) {
-        context->cat_kernel();
-    } else if (line_equal(line, length, "clear")) {
-        context->clear();
-    } else {
-        context->write("unknown command; try help\n");
+__attribute__((section(".text.entry"), used, noreturn))
+void fsh_entry(void) {
+    static const char banner[] = "fsh: disk executable online\n";
+    static const char path[] = "KERNEL.TXT";
+    char input[32];
+    fsh_syscall3(SYSCALL_READ, (u32)input, sizeof(input), 0);
+    fsh_syscall3(SYSCALL_WRITE, (u32)banner, sizeof(banner) - 1, 0);
+    fsh_syscall3(SYSCALL_OPEN, (u32)path, sizeof(path) - 1, 0);
+    fsh_syscall3(SYSCALL_EXEC, 0x00200000, 0, 0);
+    fsh_syscall3(SYSCALL_GET_TICKS, 0, 0, 0);
+    fsh_syscall3(SYSCALL_GET_PID, 0, 0, 0);
+    fsh_syscall3(SYSCALL_EXIT, 0, 0, 0);
+    for (;;) {
+        __asm__ volatile ("hlt");
     }
 }

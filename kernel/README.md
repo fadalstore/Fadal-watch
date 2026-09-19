@@ -31,10 +31,10 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     current PID, and decrements the active-process count. The test process
     calls it after the observation syscalls and spins until scheduling exists.
 14. The first FAT12 layer formats a 64-sector in-memory volume, mirrors both
-    FAT copies, allocates 12-bit clusters, creates an 8.3 root entry, and
-    writes `KERNEL.TXT` during boot. The ATA PIO LBA28 driver then persists
-    that volume at LBA 113 in the raw disk image and reads it back to verify
-    the FAT12 directory, cluster chain, and file bytes.
+    FAT copies, allocates 12-bit clusters, creates 8.3 root entries, and
+    writes `KERNEL.TXT` plus the standalone `FSH.BIN` executable during boot.
+    The ATA PIO LBA28 driver persists that volume at LBA 113 in the raw disk
+    image and reads it back to verify the FAT12 directory and file bytes.
 15. The memory manager provides a page-backed kernel heap with contiguous
     `kmalloc`/`kfree` allocations, zeroed pages, reuse after release, and an
     allocation table for up to 32 live blocks. Boot validates a two-page
@@ -55,7 +55,9 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     and write-file operations. FAT12 is the first backend and is mounted as
     the root filesystem through a VFS operation table, leaving room for ext2,
     FadalFS, or another backend without changing kernel callers.
-20. The FSH bootstrap now executes from ring 3 and exercises `read`, `write`,
+20. `fsh.c` is linked into its own fixed-address `fsh.elf`/`fsh.bin`; the
+    kernel stores `FSH.BIN` in FAT12, loads it through VFS at boot, and enters
+    its entry point in ring 3. The disk executable exercises `read`, `write`,
     `open`, `exec`, `get_ticks`, `get_pid`, and `exit` through `int 0x80`.
     Kernel handlers validate user buffers and VFS paths before accessing them.
 
@@ -115,23 +117,18 @@ filesystem buffers. Slab allocation for process and FAT12 metadata is now
 available; virtual address expansion and demand paging remain future
 memory-management milestones.
 
-The interactive shell is driven by the kernel's PS/2 IRQ1 handler, while its
-command parser lives in the separately compiled `fsh.c`/`fsh.h` Fadal Shell
-module. The kernel exports service callbacks for memory, uptime, status, VFS,
-and screen clearing; FSH performs command matching and dispatch. It supports
-scancode-to-ASCII translation, Shift letters, Backspace, Enter, a bounded line
-buffer, and the commands `help`, `info`, `mem`, `uptime`, `status`, `mount`,
-`ls`, `cat KERNEL.TXT`, and `clear`. The current image links FSH as a
-freestanding shell module; moving it to a separate ring-3 executable is the
-next step after `read`, `write`, and `exec` syscalls are available.
+The TTY input boundary is driven by the kernel's PS/2 IRQ1 handler and supports
+scancode-to-ASCII translation, Shift letters, Backspace, Enter, and a bounded
+line buffer. `FSH.BIN` is now a separate ring-3 disk executable loaded by the
+kernel, not a parser linked into `kernel.c`. Its current bootstrap validates
+the syscall path and exits; interactive command parsing will be added inside
+the executable once TTY `read` blocks and a scheduler can keep FSH alive.
 
-The current userspace milestone is intentionally tiny: the kernel registers
-two process records with distinct user stacks, selects PID 1, and its test
-program puts
-syscall numbers `1`, `2`, and `3` in `EAX`, calls `int 0x80`, receives the
-PIT tick count and the dynamic current process ID, then marks itself exited.
-It proves the privilege boundary and a register-based syscall dispatch path,
-but it is not yet a scheduler or general process model.
+The current userspace milestone registers process records with distinct user
+stacks, loads FSH from FAT12, selects its ring-3 entry, and exercises syscall
+numbers `1` through `7` through `int 0x80`. It proves the privilege boundary,
+disk-to-userspace loading, and register-based syscall dispatch, but it is not
+yet a scheduler or general process model.
 
 ## Design boundary
 

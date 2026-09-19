@@ -17,6 +17,10 @@ typedef unsigned int u32;
 #define E820_MAP_ADDRESS 0x5000
 #define E820_COUNT_ADDRESS 0x4ffc
 #define E820_MAX_ENTRIES 32
+#define USER_CODE_ADDRESS 0x00200000
+#define USER_STACK_ADDRESS 0x00300000
+#define USER_CODE_PAGE (USER_CODE_ADDRESS / PAGE_SIZE)
+#define USER_STACK_PAGE (USER_STACK_ADDRESS / PAGE_SIZE)
 
 static volatile u16 *const vga = (volatile u16 *)0xb8000;
 static u32 cursor;
@@ -25,7 +29,9 @@ static u32 command_length;
 static u8 shift_pressed;
 static volatile u32 timer_ticks;
 static volatile u32 syscall_count;
+static volatile u8 syscall_reported;
 static u32 page_directory[1024] __attribute__((aligned(PAGE_SIZE)));
+static u32 page_table[1024] __attribute__((aligned(PAGE_SIZE)));
 static u8 page_state[PHYSICAL_PAGE_COUNT];
 static u32 free_page_count;
 static u32 managed_page_count;
@@ -59,9 +65,56 @@ struct idt_pointer {
     u32 base;
 } __attribute__((packed));
 
+struct gdt_entry {
+    u16 limit_low;
+    u16 base_low;
+    u8 base_middle;
+    u8 access;
+    u8 granularity;
+    u8 base_high;
+} __attribute__((packed));
+
+struct gdt_pointer {
+    u16 limit;
+    u32 base;
+} __attribute__((packed));
+
+struct tss_entry {
+    u32 previous_task;
+    u32 esp0;
+    u32 ss0;
+    u32 esp1;
+    u32 ss1;
+    u32 esp2;
+    u32 ss2;
+    u32 cr3;
+    u32 eip;
+    u32 eflags;
+    u32 eax;
+    u32 ecx;
+    u32 edx;
+    u32 ebx;
+    u32 esp;
+    u32 ebp;
+    u32 esi;
+    u32 edi;
+    u32 es;
+    u32 cs;
+    u32 ss;
+    u32 ds;
+    u32 fs;
+    u32 gs;
+    u32 ldt;
+    u16 trap;
+    u16 iomap_base;
+} __attribute__((packed));
+
 static struct idt_entry idt[IDT_ENTRIES];
+static struct gdt_entry gdt[6];
+static struct tss_entry tss;
 
 extern void default_isr(void);
+extern void gdt_flush(const struct gdt_pointer *pointer);
 extern void timer_isr(void);
 extern void keyboard_isr(void);
 extern void syscall_isr(void);
@@ -81,7 +134,7 @@ static inline void io_wait(void) {
 }
 
 static inline void lidt(const struct idt_pointer *pointer) {
-    __asm__ volatile ("lidtl (%0)" : : "r"(pointer));
+    __asm__ volatile ("lidtl (%0)" : : "r"(pointer) : "memory");
 }
 
 static inline void enable_interrupts(void) {
@@ -114,12 +167,53 @@ static void write_u32(u32 value) {
     }
 }
 
+static void gdt_set_entry(u32 index, u32 base, u32 limit, u8 access) {
+    gdt[index].base_low = (u16)(base & 0xffff);
+    gdt[index].base_middle = (u8)((base >> 16) & 0xff);
+    gdt[index].base_high = (u8)((base >> 24) & 0xff);
+    gdt[index].limit_low = (u16)(limit & 0xffff);
+    gdt[index].granularity = (u8)((limit >> 16) & 0x0f);
+    gdt[index].granularity |= 0xcf;
+    gdt[index].access = access;
+}
+
+static void tss_init(void) {
+    for (u32 index = 0; index < sizeof(tss) / sizeof(u32); index++) {
+        ((u32 *)&tss)[index] = 0;
+    }
+    tss.esp0 = 0x90000;
+    tss.ss0 = 0x10;
+    tss.iomap_base = sizeof(tss);
+}
+
+static void gdt_init(void) {
+    gdt_set_entry(0, 0, 0, 0);
+    gdt_set_entry(1, 0, 0xffffffff, 0x9a);
+    gdt_set_entry(2, 0, 0xffffffff, 0x92);
+    gdt_set_entry(3, 0, 0xffffffff, 0xfa);
+    gdt_set_entry(4, 0, 0xffffffff, 0xf2);
+    gdt_set_entry(5, (u32)&tss, sizeof(tss) - 1, 0x89);
+
+    struct gdt_pointer pointer = {
+        .limit = (u16)(sizeof(gdt) - 1),
+        .base = (u32)gdt,
+    };
+    gdt_flush(&pointer);
+    __asm__ volatile ("ltr %0" : : "r"((u16)0x28));
+}
+
 static void paging_init(void) {
     for (u32 index = 0; index < 1024; index++) {
         page_directory[index] = 0;
+        page_table[index] = (index * PAGE_SIZE) | 0x03;
     }
-    /* One 4 MiB identity-mapped page keeps this first memory stage bounded. */
-    page_directory[0] = 0x00000083;
+    /*
+     * A 4 KiB table keeps supervisor pages private while allowing the first
+     * user process to own one code page and one stack page.
+     */
+    page_table[USER_CODE_PAGE] |= 0x04;
+    page_table[USER_STACK_PAGE] |= 0x04;
+    page_directory[0] = ((u32)page_table) | 0x07;
 
     u32 directory = (u32)page_directory;
     __asm__ volatile (
@@ -176,6 +270,54 @@ static void memory_init(void) {
             free_page_count++;
             managed_page_count++;
         }
+    }
+}
+
+static void reserve_page(u32 address) {
+    u32 page = address / PAGE_SIZE;
+    if (page < PHYSICAL_PAGE_COUNT && page_state[page] == 0) {
+        page_state[page] = 1;
+        free_page_count--;
+    }
+}
+
+static void user_program_init(void) {
+    volatile u8 *code = (volatile u8 *)USER_CODE_ADDRESS;
+
+    /* mov eax, 1; int 0x80; jmp 0x200000 */
+    code[0] = 0xb8;
+    code[1] = 0x01;
+    code[2] = 0x00;
+    code[3] = 0x00;
+    code[4] = 0x00;
+    code[5] = 0xcd;
+    code[6] = 0x80;
+    code[7] = 0xeb;
+    code[8] = 0xf7;
+}
+
+__attribute__((noreturn))
+static void enter_user_mode(void) {
+    __asm__ volatile (
+        "cli\n"
+        "movw $0x23, %%ax\n"
+        "movw %%ax, %%ds\n"
+        "movw %%ax, %%es\n"
+        "movw %%ax, %%fs\n"
+        "movw %%ax, %%gs\n"
+        "pushl $0x23\n"
+        "pushl %0\n"
+        "pushfl\n"
+        "orl $0x200, (%%esp)\n"
+        "pushl $0x1b\n"
+        "pushl %1\n"
+        "iret\n"
+        :
+        : "r"(USER_STACK_ADDRESS + PAGE_SIZE), "r"(USER_CODE_ADDRESS)
+        : "eax", "memory");
+
+    for (;;) {
+        halt();
     }
 }
 
@@ -514,6 +656,10 @@ void timer_interrupt_handler(void) {
 
 void syscall_interrupt_handler(void) {
     syscall_count++;
+    if (!syscall_reported) {
+        syscall_reported = 1;
+        serial_write("syscall: ring-3 entry\n");
+    }
 }
 
 __attribute__((section(".text.entry"), used))
@@ -527,7 +673,12 @@ void kernel_main(void) {
     kernel_write("origin: from-scratch, no Linux dependency\n");
     kernel_write("status: boot path verified\n");
     memory_init();
+    reserve_page(USER_CODE_ADDRESS);
+    reserve_page(USER_STACK_ADDRESS);
     paging_init();
+    tss_init();
+    gdt_init();
+    user_program_init();
     kernel_write("memory: 4 MiB identity paging online\n");
     if (memory_map_valid) {
         kernel_write("memory: BIOS E820 map accepted\n");
@@ -547,10 +698,7 @@ void kernel_main(void) {
     kernel_write("interrupts: IDT + PIC online\n");
     kernel_write("timer: PIT IRQ0 online at 100 Hz\n");
     kernel_write("syscalls: int 0x80 ABI gate online\n");
-    kernel_write("\nFadal console ready. Type help.\n> ");
+    kernel_write("userspace: ring-3 test process armed\n");
     enable_interrupts();
-
-    for (;;) {
-        halt();
-    }
+    enter_user_mode();
 }

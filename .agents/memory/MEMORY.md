@@ -2,3 +2,4 @@
 - [Guardian local setup](local-setup.md) — dependencies and development schema must be ready before data routes can serve.
 - [Fadal freestanding build](kernel-freestanding-build.md) — keep implicit SSE/MMX disabled until early CPU state is explicitly initialized.
 - [Kernel runtime roadmap](kernel-runtime-roadmap.md) — grow the independent runtime in bootable milestones before moving to long mode.
+- [Kernel descriptor-table assembly](kernel-descriptor-table-assembly.md) — inline IDT/GDT instructions must declare memory effects so the compiler preserves descriptor tables.

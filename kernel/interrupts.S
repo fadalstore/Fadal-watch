@@ -10,6 +10,22 @@ default_isr:
     jmp 1b
 .size default_isr, .-default_isr
 
+.global gdt_flush
+.type gdt_flush, @function
+gdt_flush:
+    movl 4(%esp), %eax
+    lgdt (%eax)
+    ljmp $0x08, $1f
+1:
+    movw $0x10, %ax
+    movw %ax, %ds
+    movw %ax, %es
+    movw %ax, %fs
+    movw %ax, %gs
+    movw %ax, %ss
+    ret
+.size gdt_flush, .-gdt_flush
+
 .global keyboard_isr
 .type keyboard_isr, @function
 keyboard_isr:

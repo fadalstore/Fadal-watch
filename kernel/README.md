@@ -17,6 +17,8 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
 8. The kernel programs the PIT at 100 Hz and owns timer IRQ0 for uptime.
 9. The kernel reserves an `int 0x80` syscall gate with a ring-3 descriptor so
    future userspace does not need to depend on a host operating system.
+10. The kernel maps a small ring-3 test process with a private user code page,
+    user stack, TSS kernel stack, and a first syscall transition.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible
@@ -52,6 +54,10 @@ intentionally bounded until an x86_64 paging layer is added.
 The console commands are `help`, `info`, `mem`, `uptime`, `status`, and
 `clear`. Timer interrupts wake the idle loop and make the uptime signal
 independent from the dashboard or any host userspace.
+
+The current userspace milestone is intentionally tiny: its test program calls
+`int 0x80` repeatedly and returns to ring 3. It proves the privilege boundary
+and syscall entry path, but it is not yet a scheduler or general process model.
 
 ## Design boundary
 

@@ -942,25 +942,6 @@ static void shell_write_bytes(const u8 *data, u32 size) {
     }
 }
 
-static struct process *process_by_pid(u32 pid) {
-    for (u32 index = 0; index < MAX_PROCESSES; index++) {
-        struct process *process = process_table[index];
-        if (process != (struct process *)0 && process->pid == pid &&
-            process->state != PROCESS_UNUSED) {
-            return process;
-        }
-    }
-    return (struct process *)0;
-}
-
-static void scheduler_block_current(u32 reason) {
-    struct process *process = process_by_pid(current_pid);
-    if (process != (struct process *)0 && process->state == PROCESS_RUNNING) {
-        process->state = PROCESS_BLOCKED;
-        process->wait_reason = reason;
-    }
-}
-
 static void scheduler_wake_reason(u32 reason) {
     for (u32 index = 0; index < MAX_PROCESSES; index++) {
         struct process *process = process_table[index];
@@ -1047,19 +1028,19 @@ static void tty_enqueue(char value) {
     scheduler_wake_reason(WAIT_TTY);
 }
 
-static u32 tty_read_blocking(u8 *output, u32 capacity) {
-    while (tty_count == 0) {
-        scheduler_block_current(WAIT_TTY);
-        __asm__ volatile ("sti\n hlt" : : : "memory");
-    }
-    scheduler_wake_reason(WAIT_TTY);
+static u32 tty_read_available(u8 *output, u32 capacity) {
     __asm__ volatile ("cli" : : : "memory");
+    if (tty_count == 0) {
+        __asm__ volatile ("sti" : : : "memory");
+        return 0xffffffff;
+    }
     u32 amount = tty_count < capacity ? tty_count : capacity;
     for (u32 index = 0; index < amount; index++) {
         output[index] = (u8)tty_buffer[tty_read_index];
         tty_read_index = (tty_read_index + 1) % TTY_BUFFER_SIZE;
     }
     tty_count -= amount;
+    __asm__ volatile ("sti" : : : "memory");
     return amount;
 }
 
@@ -1151,13 +1132,13 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
         }
     } else if (frame->eax == SYSCALL_READ) {
         if (user_range_valid(frame->ebx, frame->ecx) && frame->ecx != 0) {
-            frame->eax = tty_read_blocking((u8 *)frame->ebx, frame->ecx);
+            frame->eax = tty_read_available((u8 *)frame->ebx, frame->ecx);
         } else {
             frame->eax = 0xffffffff;
         }
         if (!read_reported) {
             read_reported = 1;
-            serial_write("syscall: read dispatch; blocking TTY queue read\n");
+            serial_write("syscall: read dispatch; nonblocking TTY queue read\n");
         }
     } else if (frame->eax == SYSCALL_WRITE) {
         if (user_range_valid(frame->ebx, frame->ecx)) {

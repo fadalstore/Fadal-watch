@@ -134,10 +134,14 @@ memory-management milestones.
 
 The TTY input boundary is driven by the kernel's PS/2 IRQ1 handler and supports
 scancode-to-ASCII translation, Shift letters, Backspace, Enter, and a bounded
-ring buffer. Syscall `read` blocks with interrupts enabled until the queue has
-input, then copies a bounded chunk into the validated ring-3 buffer. `FSH.BIN`
-is a separate ring-3 disk executable loaded by the kernel, not a parser linked
-into `kernel.c`; it loops over `read`, parses commands, and writes responses.
+ring buffer. Syscall `read` is now nonblocking: it copies a bounded chunk into
+the validated ring-3 buffer when input exists and returns `0xffffffff` as the
+EAGAIN result when the queue is empty. `FSH.BIN` is a separate ring-3 disk
+executable loaded by the kernel, not a parser linked into `kernel.c`; it
+retries EAGAIN without duplicating the prompt, parses commands, and writes
+responses. This removes the kernel-side `hlt` from the syscall path so a later
+timer scheduler can switch away from a userspace process without inheriting a
+blocked kernel continuation.
 The headless smoke test seeds one `help` line so the blocking path can be
 verified without a physical keyboard; `run-vga` accepts live keyboard input.
 

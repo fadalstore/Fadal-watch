@@ -70,13 +70,17 @@ void fsh_entry(void) {
     static const char prompt[] = "fadal> ";
     static const char path[] = "KERNEL.TXT";
     static char input[64];
+    u8 prompt_pending = 1;
     fsh_write(banner);
     fsh_syscall3(SYSCALL_OPEN, (u32)path, sizeof(path) - 1, 0);
     fsh_syscall3(SYSCALL_EXEC, 0x00200000, 0, 0);
     fsh_syscall3(SYSCALL_GET_TICKS, 0, 0, 0);
     fsh_syscall3(SYSCALL_GET_PID, 0, 0, 0);
     for (;;) {
-        fsh_write(prompt);
+        if (prompt_pending) {
+            fsh_write(prompt);
+            prompt_pending = 0;
+        }
         u32 count = fsh_syscall3(SYSCALL_READ, (u32)input, sizeof(input) - 1, 0);
         if (count == 0xffffffff) {
             continue;
@@ -94,6 +98,7 @@ void fsh_entry(void) {
             line_length++;
         }
         fsh_command(input, line_length);
+        prompt_pending = 1;
         if (fsh_equal(input, line_length, "exit")) {
             fsh_syscall3(SYSCALL_EXIT, 0, 0, 0);
             for (;;) {

@@ -243,6 +243,7 @@ static inline void halt(void) {
 static void kernel_write(const char *text);
 static void serial_write(const char *text);
 static void *page_alloc(void);
+static void page_free(void *address);
 
 static void write_u32(u32 value) {
     char digits[11];
@@ -383,6 +384,21 @@ static u8 address_spaces_isolated(struct address_space *first,
         (second->page_directory[USER_STACK_PAGE / 1024] & PAGE_USER) != 0;
 }
 
+static void address_space_destroy(u32 slot, struct address_space *space) {
+    if (space == (struct address_space *)0 || slot >= MAX_PROCESSES) {
+        return;
+    }
+    /* The first two bootstrap stacks are fixed boot mappings. Later process
+       stacks come from the page allocator and must be returned on exit. */
+    if (slot > 1 && space->stack_physical != 0) {
+        page_free((void *)space->stack_physical);
+    }
+    space->page_directory = (u32 *)0;
+    space->page_tables = (u32 *)0;
+    space->stack_physical = 0;
+    space->refcount = 0;
+}
+
 static u8 memory_map_covers_page(u32 page) {
     u32 page_start = page * PAGE_SIZE;
     u32 page_end = page_start + PAGE_SIZE;
@@ -518,15 +534,48 @@ static u8 process_exit_current(void) {
             continue;
         }
         process->state = PROCESS_EXITED;
+        address_space_destroy(index, process->address_space);
         if (active_processes > 0) {
             active_processes--;
         }
+        if (process_total > 0) {
+            process_total--;
+        }
         current_pid = 0;
-        slab_free(&process_slab_cache, process);
-        process_table[index] = (struct process *)0;
+        process->pid = 0;
+        process->state = PROCESS_UNUSED;
+        process->entry = 0;
+        process->user_stack_top = 0;
+        process->address_space = (struct address_space *)0;
+        process->wait_reason = WAIT_NONE;
         return 1;
     }
     return 0;
+}
+
+static u8 process_cleanup_self_test(u32 init_pid) {
+    u32 free_before = free_page_count;
+    u32 probe_pid = process_create(USER_CODE_ADDRESS, USER_STACK_ADDRESS + PAGE_SIZE);
+    if (probe_pid == 0) {
+        return 0;
+    }
+    /* Keep the boot CPU on the init address space while exercising teardown;
+       loading a probe CR3 is the job of the later context-switch path. */
+    current_pid = probe_pid;
+    if (!process_exit_current()) {
+        current_pid = init_pid;
+        return 0;
+    }
+    current_pid = init_pid;
+    u8 page_returned = free_page_count == free_before;
+    u32 reused_pid = process_create(USER_CODE_ADDRESS, USER_STACK_ADDRESS + PAGE_SIZE);
+    u8 slot_reused = reused_pid != 0;
+    if (slot_reused) {
+        current_pid = reused_pid;
+        slot_reused = process_exit_current();
+        current_pid = init_pid;
+    }
+    return page_returned && slot_reused;
 }
 
 static u8 user_range_valid(u32 address, u32 length) {
@@ -1334,6 +1383,11 @@ void kernel_main(void) {
             kernel_write("memory: per-process address-space isolation verified\n");
         } else {
             kernel_write("memory: per-process address-space isolation failed\n");
+        }
+        if (process_cleanup_self_test(init_pid)) {
+            kernel_write("process: address-space cleanup and PID-slot reuse passed\n");
+        } else {
+            kernel_write("process: address-space cleanup self-test failed\n");
         }
     }
     kernel_write("memory: 16 MiB identity paging online\n");

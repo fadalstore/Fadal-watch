@@ -71,6 +71,10 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     mapped at the same virtual address. Selecting a process loads its page
     directory into `CR3`; boot verifies that the two initial processes cannot
     share their user stack page.
+23. Process exit now tears down dynamically allocated process stacks, resets
+    the process descriptor to `UNUSED`, and permits PID-slot reuse. Boot creates
+    and exits a probe process, verifies that its page returns to the allocator,
+    and then confirms that the slot can be allocated again.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

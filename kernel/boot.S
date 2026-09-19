@@ -2,7 +2,7 @@
 .section .text
 .global _start
 
-.equ KERNEL_SECTORS, 48
+.equ KERNEL_SECTORS, 112
 .equ BOOT_BASE, 0x7c00
 
 _start:

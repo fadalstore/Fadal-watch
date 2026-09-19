@@ -299,6 +299,39 @@ function serviceName(port: number) {
   return ({ 22: "SSH", 53: "DNS", 80: "HTTP", 443: "HTTPS", 445: "SMB", 5432: "PostgreSQL", 8080: "HTTP alternate", 8443: "HTTPS alternate" } as Record<number, string>)[port] ?? `TCP ${port}`;
 }
 
+function coverageScore(zones: Array<{ monitored: number; discovered: number }>) {
+  const totals = zones.reduce(
+    (result, zone) => ({
+      monitored: result.monitored + zone.monitored,
+      discovered: result.discovered + zone.discovered,
+    }),
+    { monitored: 0, discovered: 0 },
+  );
+  if (!totals.discovered) return 0;
+  return Math.min(100, Math.round((totals.monitored / totals.discovered) * 100));
+}
+
+async function recordObservedServices(assetId: string, ports: number[], observedAt: Date) {
+  const existing = await db.select().from(guardianServices).where(eq(guardianServices.assetId, assetId));
+  const byPort = new Map(existing.map((service) => [service.port, service]));
+  for (const port of ports) {
+    const service = byPort.get(port);
+    if (service) {
+      await db.update(guardianServices).set({ lastObserved: observedAt }).where(eq(guardianServices.id, service.id));
+      continue;
+    }
+    await db.insert(guardianServices).values({
+      id: id("svc"),
+      assetId,
+      name: serviceName(port),
+      port,
+      state: "new",
+      lastObserved: observedAt,
+      note: "Observed during an authorized run",
+    });
+  }
+}
+
 router.get("/overview", async (_req, res) => {
   await ensureSeeded();
   const assets = await db.select().from(guardianAssets);
@@ -308,6 +341,7 @@ router.get("/overview", async (_req, res) => {
     ? assets.reduce((total, asset) => total + asset.risk, 0) / assets.length
     : 0;
   const recentScan = await db.select().from(guardianScanRuns).orderBy(desc(guardianScanRuns.startedAt)).limit(1);
+  const zones = await db.select({ monitored: guardianCoverageZones.monitored, discovered: guardianCoverageZones.discovered }).from(guardianCoverageZones);
   const counts = assets.reduce<Record<string, number>>((result, asset) => {
     result[asset.type] = (result[asset.type] ?? 0) + 1;
     return result;
@@ -319,7 +353,7 @@ router.get("/overview", async (_req, res) => {
     activeAlerts: alerts.filter((alert) => alert.state !== "resolved").length,
     newToday: activity.filter((item) => item.kind === "alert").length,
     exposedServices: assets.filter((asset) => asset.exposure >= 50).reduce((total, asset) => total + asset.services, 0),
-    coverage: 97,
+    coverage: coverageScore(zones),
     lastScan: iso(recentScan[0]?.startedAt),
     assetsByType: Object.entries(counts).map(([type, count]) => ({ type, count })),
     trend: [
@@ -439,6 +473,7 @@ router.post("/scan-runs", async (req, res) => {
         services: observation.ports.length,
         baselineState: existing.baselineState === "learning" ? "learning" : existing.baselineState,
       }).where(eq(guardianAssets.id, existing.id));
+      await recordObservedServices(existing.id, observation.ports, current);
       continue;
     }
     const observedAsset = {

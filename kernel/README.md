@@ -20,11 +20,27 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
 10. The kernel maps a small ring-3 test process with a private user code page,
     user stack, TSS kernel stack, and a first syscall transition.
 11. The syscall ABI passes a `pusha` register frame to the kernel; syscall
-    number `1` returns the current PIT tick count in `EAX`.
+    number `1` returns the current PIT tick count in `EAX`, while syscall
+    number `2` returns the current test process ID (`1`).
+12. The kernel owns an eight-slot process table with dynamic PID allocation,
+    `READY`/`RUNNING` states, and two registered process records. The first
+    process is selected as the current ring-3 process; a preemptive scheduler
+    is still a later milestone.
+13. Syscall number `3` marks the current process as `EXITED`, clears the
+    current PID, and decrements the active-process count. The test process
+    calls it after the observation syscalls and spins until scheduling exists.
+14. The first FAT12 layer formats a 64-sector in-memory volume, mirrors both
+    FAT copies, allocates 12-bit clusters, creates an 8.3 root entry, and
+    writes `KERNEL.TXT` during boot. The ATA PIO LBA28 driver then persists
+    that volume at LBA 113 in the raw disk image and reads it back to verify
+    the FAT12 directory, cluster chain, and file bytes.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible
-userspace are intentionally staged after the bootable foundation.
+userspace are intentionally staged after the bootable foundation. FAT12 write
+support now persists and reads the initial volume through the ATA primary-master
+PIO path; partition discovery and a general block-device abstraction remain
+future work.
 
 ## Build and run
 
@@ -57,11 +73,13 @@ The console commands are `help`, `info`, `mem`, `uptime`, `status`, and
 `clear`. Timer interrupts wake the idle loop and make the uptime signal
 independent from the dashboard or any host userspace.
 
-The current userspace milestone is intentionally tiny: its test program puts
-syscall number `1` in `EAX`, calls `int 0x80` repeatedly, receives the PIT
-tick count back in `EAX`, and returns to ring 3. It proves the privilege
-boundary and a register-based syscall dispatch path, but it is not yet a
-scheduler or general process model.
+The current userspace milestone is intentionally tiny: the kernel registers
+two process records with distinct user stacks, selects PID 1, and its test
+program puts
+syscall numbers `1`, `2`, and `3` in `EAX`, calls `int 0x80`, receives the
+PIT tick count and the dynamic current process ID, then marks itself exited.
+It proves the privilege boundary and a register-based syscall dispatch path,
+but it is not yet a scheduler or general process model.
 
 ## Design boundary
 

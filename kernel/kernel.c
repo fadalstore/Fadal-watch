@@ -1,3 +1,6 @@
+#include "fat12.h"
+#include "ata.h"
+
 typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned int u32;
@@ -9,6 +12,7 @@ typedef unsigned int u32;
 #define TIMER_VECTOR 0x20
 #define KEYBOARD_VECTOR 0x21
 #define SYSCALL_VECTOR 0x80
+#define FAT12_DISK_LBA 113
 #define TIMER_FREQUENCY 100
 #define PAGE_SIZE 4096
 #define IDENTITY_MAP_BYTES (4 * 1024 * 1024)
@@ -19,9 +23,18 @@ typedef unsigned int u32;
 #define E820_MAX_ENTRIES 32
 #define USER_CODE_ADDRESS 0x00200000
 #define USER_STACK_ADDRESS 0x00300000
+#define USER_STACK_2_ADDRESS 0x00301000
 #define USER_CODE_PAGE (USER_CODE_ADDRESS / PAGE_SIZE)
 #define USER_STACK_PAGE (USER_STACK_ADDRESS / PAGE_SIZE)
+#define USER_STACK_2_PAGE (USER_STACK_2_ADDRESS / PAGE_SIZE)
 #define SYSCALL_GET_TICKS 1
+#define SYSCALL_GET_PID 2
+#define SYSCALL_EXIT 3
+#define MAX_PROCESSES 8
+#define PROCESS_UNUSED 0
+#define PROCESS_READY 1
+#define PROCESS_RUNNING 2
+#define PROCESS_EXITED 3
 
 static volatile u16 *const vga = (volatile u16 *)0xb8000;
 static u32 cursor;
@@ -32,6 +45,8 @@ static volatile u32 timer_ticks;
 static volatile u32 syscall_count;
 static volatile u8 syscall_reported;
 static volatile u8 get_ticks_reported;
+static volatile u8 get_pid_reported;
+static volatile u8 exit_reported;
 static u32 page_directory[1024] __attribute__((aligned(PAGE_SIZE)));
 static u32 page_table[1024] __attribute__((aligned(PAGE_SIZE)));
 static u8 page_state[PHYSICAL_PAGE_COUNT];
@@ -126,9 +141,21 @@ struct syscall_frame {
     u32 eax;
 };
 
+struct process {
+    u32 pid;
+    u32 state;
+    u32 entry;
+    u32 user_stack_top;
+};
+
 static struct idt_entry idt[IDT_ENTRIES];
 static struct gdt_entry gdt[6];
 static struct tss_entry tss;
+static struct process process_table[MAX_PROCESSES];
+static u32 next_pid = 1;
+static u32 current_pid;
+static u32 process_total;
+static u32 active_processes;
 
 extern void default_isr(void);
 extern void gdt_flush(const struct gdt_pointer *pointer);
@@ -227,9 +254,10 @@ static void paging_init(void) {
     /*
      * A 4 KiB table keeps supervisor pages private while allowing the first
      * user process to own one code page and one stack page.
-     */
+    */
     page_table[USER_CODE_PAGE] |= 0x04;
     page_table[USER_STACK_PAGE] |= 0x04;
+    page_table[USER_STACK_2_PAGE] |= 0x04;
     page_directory[0] = ((u32)page_table) | 0x07;
 
     u32 directory = (u32)page_directory;
@@ -298,10 +326,70 @@ static void reserve_page(u32 address) {
     }
 }
 
+static void process_manager_init(void) {
+    for (u32 index = 0; index < MAX_PROCESSES; index++) {
+        process_table[index].pid = 0;
+        process_table[index].state = PROCESS_UNUSED;
+        process_table[index].entry = 0;
+        process_table[index].user_stack_top = 0;
+    }
+    next_pid = 1;
+    current_pid = 0;
+    process_total = 0;
+    active_processes = 0;
+}
+
+static u32 process_create(u32 entry, u32 user_stack_top) {
+    for (u32 index = 0; index < MAX_PROCESSES; index++) {
+        struct process *process = &process_table[index];
+        if (process->state != PROCESS_UNUSED) {
+            continue;
+        }
+        process->pid = next_pid++;
+        process->state = PROCESS_READY;
+        process->entry = entry;
+        process->user_stack_top = user_stack_top;
+        process_total++;
+        active_processes++;
+        return process->pid;
+    }
+    return 0;
+}
+
+static u8 process_set_running(u32 pid) {
+    for (u32 index = 0; index < MAX_PROCESSES; index++) {
+        struct process *process = &process_table[index];
+        if (process->state == PROCESS_RUNNING) {
+            process->state = PROCESS_READY;
+        }
+        if (process->pid == pid && process->state != PROCESS_UNUSED) {
+            process->state = PROCESS_RUNNING;
+            current_pid = pid;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static u8 process_exit_current(void) {
+    for (u32 index = 0; index < MAX_PROCESSES; index++) {
+        struct process *process = &process_table[index];
+        if (process->pid != current_pid || process->state == PROCESS_EXITED) {
+            continue;
+        }
+        process->state = PROCESS_EXITED;
+        if (active_processes > 0) {
+            active_processes--;
+        }
+        current_pid = 0;
+        return 1;
+    }
+    return 0;
+}
+
 static void user_program_init(void) {
     volatile u8 *code = (volatile u8 *)USER_CODE_ADDRESS;
-
-    /* mov eax, 1; int 0x80; jmp 0x200000 */
+    /* get_ticks; get_pid; exit; spin until a scheduler is available */
     code[0] = 0xb8;
     code[1] = 0x01;
     code[2] = 0x00;
@@ -309,8 +397,22 @@ static void user_program_init(void) {
     code[4] = 0x00;
     code[5] = 0xcd;
     code[6] = 0x80;
-    code[7] = 0xeb;
-    code[8] = 0xf7;
+    code[7] = 0xb8;
+    code[8] = 0x02;
+    code[9] = 0x00;
+    code[10] = 0x00;
+    code[11] = 0x00;
+    code[12] = 0xcd;
+    code[13] = 0x80;
+    code[14] = 0xb8;
+    code[15] = 0x03;
+    code[16] = 0x00;
+    code[17] = 0x00;
+    code[18] = 0x00;
+    code[19] = 0xcd;
+    code[20] = 0x80;
+    code[21] = 0xeb;
+    code[22] = 0xfe;
 }
 
 __attribute__((noreturn))
@@ -615,6 +717,13 @@ static void command_run(void) {
         kernel_write("status: syscall count ");
         write_u32(syscall_count);
         kernel_write("\n");
+        kernel_write("processes: ");
+        write_u32(process_total);
+        kernel_write(" total; active ");
+        write_u32(active_processes);
+        kernel_write("; current pid ");
+        write_u32(current_pid);
+        kernel_write("\n");
         print_memory_stats();
     } else if (text_equal(command, "clear")) {
         vga_clear();
@@ -684,6 +793,18 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
             get_ticks_reported = 1;
             serial_write("syscall: get_ticks dispatch\n");
         }
+    } else if (frame->eax == SYSCALL_GET_PID) {
+        frame->eax = current_pid;
+        if (!get_pid_reported) {
+            get_pid_reported = 1;
+            serial_write("syscall: get_pid dispatch\n");
+        }
+    } else if (frame->eax == SYSCALL_EXIT) {
+        frame->eax = process_exit_current() ? 0 : 0xffffffff;
+        if (!exit_reported) {
+            exit_reported = 1;
+            serial_write("syscall: exit dispatch; process marked exited\n");
+        }
     } else {
         frame->eax = 0xffffffff;
     }
@@ -699,12 +820,64 @@ void kernel_main(void) {
     kernel_write("mode: 32-bit protected mode\n");
     kernel_write("origin: from-scratch, no Linux dependency\n");
     kernel_write("status: boot path verified\n");
+    static const fat12_u8 first_file[] = "FADAL FAT12 write\n";
+    fat12_format();
+    if (fat12_write_file("KERNEL.TXT", first_file, sizeof(first_file) - 1) != 0) {
+        kernel_write("filesystem: FAT12 formatted; KERNEL.TXT written\n");
+        kernel_write("filesystem: allocated clusters ");
+        write_u32(fat12_last_allocated_clusters());
+        kernel_write("; free clusters ");
+        write_u32(fat12_free_clusters());
+        kernel_write("\n");
+        if (ata_write_sectors(FAT12_DISK_LBA, fat12_volume(), fat12_volume_sectors())) {
+            kernel_write("disk: ATA LBA28 persisted FAT12 volume\n");
+            fat12_u8 readback[32];
+            fat12_u32 readback_size = 0;
+            fat12_u8 readback_ok = ata_read_sectors(
+                FAT12_DISK_LBA,
+                fat12_volume_buffer(),
+                fat12_volume_sectors());
+            fat12_u8 file_ok = readback_ok && fat12_read_file(
+                "KERNEL.TXT",
+                readback,
+                sizeof(readback),
+                &readback_size);
+            if (file_ok && readback_size == sizeof(first_file) - 1) {
+                for (u32 index = 0; index < readback_size; index++) {
+                    if (readback[index] != first_file[index]) {
+                        file_ok = 0;
+                        break;
+                    }
+                }
+            } else {
+                file_ok = 0;
+            }
+            if (file_ok) {
+                kernel_write("filesystem: ATA read-back verified KERNEL.TXT\n");
+            } else {
+                kernel_write("filesystem: ATA read-back verification failed\n");
+            }
+        } else {
+            kernel_write("disk: ATA FAT12 persistence failed\n");
+        }
+    } else {
+        kernel_write("filesystem: FAT12 write failed\n");
+    }
     memory_init();
     reserve_page(USER_CODE_ADDRESS);
     reserve_page(USER_STACK_ADDRESS);
+    reserve_page(USER_STACK_2_ADDRESS);
     paging_init();
     tss_init();
     gdt_init();
+    process_manager_init();
+    u32 init_pid = process_create(USER_CODE_ADDRESS, USER_STACK_ADDRESS + PAGE_SIZE);
+    u32 worker_pid = process_create(USER_CODE_ADDRESS, USER_STACK_2_ADDRESS + PAGE_SIZE);
+    if (init_pid == 0 || worker_pid == 0 || !process_set_running(init_pid)) {
+        kernel_write("process: process table initialization failed\n");
+    } else {
+        kernel_write("process: dynamic PID allocator online; 2 processes ready\n");
+    }
     user_program_init();
     kernel_write("memory: 4 MiB identity paging online\n");
     if (memory_map_valid) {

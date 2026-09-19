@@ -41,6 +41,11 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
 16. A fixed-size slab allocator provides dedicated caches for eight process
     descriptors and sixteen FAT12 directory entries. Objects are zeroed on
     allocation, returned on release, and validated for reuse during boot.
+17. Boot stress testing fills all eight process-cache slots and confirms that
+    the ninth allocation fails cleanly, then allocates thirty 256 KiB heap
+    blocks, touches both ends of each block, and releases them without a page
+    leak. The current slab policy is bounded and fails closed rather than
+    expanding its cache automatically.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

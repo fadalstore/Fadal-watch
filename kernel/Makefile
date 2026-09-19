@@ -70,6 +70,8 @@ check: $(OUT)/fadal-kernel.img
 		@grep -q "memory: 16 MiB identity paging online" $(OUT)/smoke.log
 		@grep -q "memory: slab caches online (process, fat12_dirent)" $(OUT)/smoke.log
 		@grep -q "memory: slab allocation/reuse self-test passed" $(OUT)/smoke.log
+		@grep -q "memory: process slab exhausted cleanly at 8 objects" $(OUT)/smoke.log
+		@grep -q "memory: heap stress passed (30 blocks; allocator limit verified)" $(OUT)/smoke.log
 		@grep -q "filesystem: FAT12 formatted; KERNEL.TXT written" $(OUT)/smoke.log
 	@grep -q "filesystem: allocated clusters 1; free clusters 59" $(OUT)/smoke.log
 	@grep -q "disk: ATA LBA28 persisted FAT12 volume" $(OUT)/smoke.log

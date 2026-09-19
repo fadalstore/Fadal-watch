@@ -968,6 +968,51 @@ void kernel_main(void) {
     } else {
         kernel_write("memory: slab cache initialization failed\n");
     }
+    void *process_stress[SLAB_PROCESS_CAPACITY];
+    u8 process_slab_stress_ok = slab_system_ready();
+    for (u32 index = 0; index < SLAB_PROCESS_CAPACITY; index++) {
+        process_stress[index] = slab_alloc(&process_slab_cache);
+        process_slab_stress_ok = process_slab_stress_ok && process_stress[index] != (void *)0;
+    }
+    process_slab_stress_ok = process_slab_stress_ok &&
+        slab_alloc(&process_slab_cache) == (void *)0;
+    for (u32 index = 0; index < SLAB_PROCESS_CAPACITY; index++) {
+        process_slab_stress_ok = process_slab_stress_ok &&
+            slab_free(&process_slab_cache, process_stress[index]);
+    }
+    process_slab_stress_ok = process_slab_stress_ok &&
+        slab_free_objects(&process_slab_cache) == SLAB_PROCESS_CAPACITY;
+    if (process_slab_stress_ok) {
+        kernel_write("memory: process slab exhausted cleanly at 8 objects\n");
+    } else {
+        kernel_write("memory: process slab overflow test failed\n");
+    }
+    void *heap_stress[MAX_HEAP_ALLOCS];
+    u32 heap_stress_count = 0;
+    u32 heap_free_before_stress = free_page_count;
+    u32 heap_used_before_stress = heap_used_bytes;
+    u8 heap_stress_ok = 1;
+    for (u32 index = 0; index < MAX_HEAP_ALLOCS; index++) {
+        heap_stress[index] = kmalloc(256 * 1024);
+        if (heap_stress[index] == (void *)0) {
+            break;
+        }
+        heap_stress_count++;
+        ((u8 *)heap_stress[index])[0] = (u8)index;
+        ((u8 *)heap_stress[index])[256 * 1024 - 1] = (u8)(index ^ 0xff);
+    }
+    heap_stress_ok = heap_stress_count == MAX_HEAP_ALLOCS - 2 &&
+        kmalloc(4096) == (void *)0;
+    for (u32 index = 0; index < heap_stress_count; index++) {
+        heap_stress_ok = heap_stress_ok && kfree(heap_stress[index]);
+    }
+    heap_stress_ok = heap_stress_ok && free_page_count == heap_free_before_stress &&
+        heap_used_bytes == heap_used_before_stress;
+    if (heap_stress_ok) {
+        kernel_write("memory: heap stress passed (30 blocks; allocator limit verified)\n");
+    } else {
+        kernel_write("memory: heap stress test failed\n");
+    }
     static const fat12_u8 first_file[] = "FADAL FAT12 write\n";
     fat12_format();
     if (fat12_write_file("KERNEL.TXT", first_file, sizeof(first_file) - 1) != 0) {

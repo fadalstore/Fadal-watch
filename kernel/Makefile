@@ -72,10 +72,11 @@ check: $(OUT)/fadal-kernel.img
 		@grep -q "memory: slab allocation/reuse self-test passed" $(OUT)/smoke.log
 		@grep -q "memory: process slab exhausted cleanly at 8 objects" $(OUT)/smoke.log
 		@grep -q "memory: heap stress passed (30 blocks; allocator limit verified)" $(OUT)/smoke.log
-		@grep -q "filesystem: FAT12 formatted; KERNEL.TXT written" $(OUT)/smoke.log
-	@grep -q "filesystem: allocated clusters 1; free clusters 59" $(OUT)/smoke.log
-	@grep -q "disk: ATA LBA28 persisted FAT12 volume" $(OUT)/smoke.log
-	@grep -q "filesystem: ATA read-back verified KERNEL.TXT" $(OUT)/smoke.log
+		@grep -Eq "filesystem: FAT12 formatted; KERNEL.TXT written|filesystem: FAT12 mounted; root directory recognized" $(OUT)/smoke.log
+		@grep -Eq "filesystem: FAT12 root directory recognized \(1 entries\)|filesystem: FAT12 mounted; root directory recognized \(1 entries\)" $(OUT)/smoke.log
+		@grep -Eq "filesystem: allocated clusters 1; free clusters 59|filesystem: mounted KERNEL.TXT verified" $(OUT)/smoke.log
+		@grep -Eq "disk: ATA LBA28 persisted FAT12 volume|disk: FAT12 remount read-only verification passed" $(OUT)/smoke.log
+		@grep -Eq "filesystem: ATA read-back verified KERNEL.TXT|filesystem: mounted KERNEL.TXT verified" $(OUT)/smoke.log
 	@grep -q "memory: dynamic heap self-test passed (2 pages)" $(OUT)/smoke.log
 	@grep -q "memory: page allocation self-test passed" $(OUT)/smoke.log
 	@grep -q "timer: PIT IRQ0 online at 100 Hz" $(OUT)/smoke.log

@@ -33,6 +33,8 @@ struct fat12_dirent {
 
 static fat12_u8 volume[FAT12_TOTAL_SECTORS * FAT12_SECTOR_SIZE];
 static fat12_u32 last_allocated_clusters;
+static fat12_u8 mounted;
+static fat12_u32 root_entries;
 
 static void zero_bytes(fat12_u8 *target, fat12_u32 count) {
     for (fat12_u32 index = 0; index < count; index++) {
@@ -152,11 +154,49 @@ void fat12_format(void) {
         fat[2] = 0xff;
     }
     last_allocated_clusters = 0;
+    mounted = 1;
+    root_entries = 0;
+}
+
+fat12_u8 fat12_mount(void) {
+    if (volume[510] != 0x55 || volume[511] != 0xaa ||
+        volume[11] != 0x00 || volume[12] != 0x02 || volume[13] != 1 ||
+        volume[14] != FAT12_RESERVED_SECTORS || volume[16] != FAT12_FAT_COUNT ||
+        volume[17] != FAT12_ROOT_ENTRIES || volume[19] != FAT12_TOTAL_SECTORS ||
+        volume[22] != FAT12_SECTORS_PER_FAT || volume[21] != 0xf0) {
+        mounted = 0;
+        root_entries = 0;
+        return 0;
+    }
+    const fat12_u8 *fat = fat_table(0);
+    if (fat[0] != 0xf0 || fat[1] != 0xff || fat[2] != 0xff) {
+        mounted = 0;
+        root_entries = 0;
+        return 0;
+    }
+    root_entries = 0;
+    fat12_u32 root_offset = (FAT12_RESERVED_SECTORS + FAT12_FAT_COUNT * FAT12_SECTORS_PER_FAT) * FAT12_SECTOR_SIZE;
+    for (fat12_u32 index = 0; index < FAT12_ROOT_ENTRIES; index++) {
+        struct fat12_dirent *entry = (struct fat12_dirent *)(volume + root_offset + index * sizeof(struct fat12_dirent));
+        if (entry->name[0] != 0x00 && entry->name[0] != 0xe5 && entry->attributes != 0x0f) {
+            root_entries++;
+        }
+    }
+    mounted = 1;
+    return 1;
+}
+
+fat12_u8 fat12_is_mounted(void) {
+    return mounted;
+}
+
+fat12_u32 fat12_root_entry_count(void) {
+    return root_entries;
 }
 
 fat12_u32 fat12_write_file(const char *name, const fat12_u8 *data, fat12_u32 size) {
     fat12_u8 short_name[11];
-    if (!make_short_name(name, short_name) || size > (FAT12_MAX_CLUSTER - 1) * FAT12_SECTOR_SIZE) {
+    if (!mounted || !make_short_name(name, short_name) || size > (FAT12_MAX_CLUSTER - 1) * FAT12_SECTOR_SIZE) {
         return 0;
     }
     fat12_u8 *fat = fat_table(0);
@@ -215,6 +255,7 @@ fat12_u32 fat12_write_file(const char *name, const fat12_u8 *data, fat12_u32 siz
     entry->size = size;
     copy_bytes((fat12_u8 *)entry_slot, (const fat12_u8 *)entry, sizeof(struct fat12_dirent));
     slab_free(&fat12_dirent_slab_cache, entry);
+    root_entries++;
     last_allocated_clusters = clusters_needed;
     return clusters_needed;
 }
@@ -248,7 +289,7 @@ fat12_u8 *fat12_volume_buffer(void) {
 
 fat12_u8 fat12_read_file(const char *name, fat12_u8 *output, fat12_u32 capacity, fat12_u32 *size) {
     fat12_u8 short_name[11];
-    if (!make_short_name(name, short_name)) {
+    if (!mounted || !make_short_name(name, short_name)) {
         return 0;
     }
     fat12_u32 root_offset = (FAT12_RESERVED_SECTORS + FAT12_FAT_COUNT * FAT12_SECTORS_PER_FAT) * FAT12_SECTOR_SIZE;

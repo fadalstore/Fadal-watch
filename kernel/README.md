@@ -46,13 +46,17 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     blocks, touches both ends of each block, and releases them without a page
     leak. The current slab policy is bounded and fails closed rather than
     expanding its cache automatically.
+18. FAT12 now has a mount phase that validates the BPB, boot signature, media
+    descriptor, FAT header, and root-directory geometry before scanning root
+    entries. Boot mounts an existing volume and verifies `KERNEL.TXT`; only a
+    blank or invalid volume takes the first-time format path.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible
 userspace are intentionally staged after the bootable foundation. FAT12 write
-support now persists and reads the initial volume through the ATA primary-master
-PIO path; partition discovery and a general block-device abstraction remain
-future work.
+support now persists, mounts, and reads the volume through the ATA
+primary-master PIO path; partition discovery and a general block-device
+abstraction remain future work.
 
 ## Build and run
 

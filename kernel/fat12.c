@@ -1,4 +1,5 @@
 #include "fat12.h"
+#include "slab.h"
 
 #define FAT12_SECTOR_SIZE 512
 #define FAT12_TOTAL_SECTORS 64
@@ -160,15 +161,20 @@ fat12_u32 fat12_write_file(const char *name, const fat12_u8 *data, fat12_u32 siz
     }
     fat12_u8 *fat = fat_table(0);
     fat12_u32 root_offset = (FAT12_RESERVED_SECTORS + FAT12_FAT_COUNT * FAT12_SECTORS_PER_FAT) * FAT12_SECTOR_SIZE;
-    struct fat12_dirent *entry = (struct fat12_dirent *)0;
+    struct fat12_dirent *entry = (struct fat12_dirent *)slab_alloc(&fat12_dirent_slab_cache);
+    struct fat12_dirent *entry_slot = (struct fat12_dirent *)0;
+    if (entry == (struct fat12_dirent *)0) {
+        return 0;
+    }
     for (fat12_u32 index = 0; index < FAT12_ROOT_ENTRIES; index++) {
         struct fat12_dirent *candidate = (struct fat12_dirent *)(volume + root_offset + index * sizeof(struct fat12_dirent));
         if (candidate->name[0] == 0x00 || candidate->name[0] == 0xe5) {
-            entry = candidate;
+            entry_slot = candidate;
             break;
         }
     }
-    if (entry == (struct fat12_dirent *)0) {
+    if (entry_slot == (struct fat12_dirent *)0) {
+        slab_free(&fat12_dirent_slab_cache, entry);
         return 0;
     }
 
@@ -179,6 +185,7 @@ fat12_u32 fat12_write_file(const char *name, const fat12_u8 *data, fat12_u32 siz
     for (fat12_u32 index = 0; index < clusters_needed; index++) {
         fat12_u16 cluster = find_free_cluster(fat);
         if (cluster == 0) {
+            slab_free(&fat12_dirent_slab_cache, entry);
             return 0;
         }
         if (first_cluster == 0) {
@@ -202,11 +209,12 @@ fat12_u32 fat12_write_file(const char *name, const fat12_u8 *data, fat12_u32 siz
     for (fat12_u32 copy = 1; copy < FAT12_FAT_COUNT; copy++) {
         copy_bytes(fat_table(copy), fat, FAT12_SECTORS_PER_FAT * FAT12_SECTOR_SIZE);
     }
-    zero_bytes((fat12_u8 *)entry, sizeof(struct fat12_dirent));
     copy_bytes(entry->name, short_name, sizeof(entry->name));
     entry->attributes = FAT12_ATTR_ARCHIVE;
     entry->first_cluster = first_cluster;
     entry->size = size;
+    copy_bytes((fat12_u8 *)entry_slot, (const fat12_u8 *)entry, sizeof(struct fat12_dirent));
+    slab_free(&fat12_dirent_slab_cache, entry);
     last_allocated_clusters = clusters_needed;
     return clusters_needed;
 }
@@ -244,7 +252,10 @@ fat12_u8 fat12_read_file(const char *name, fat12_u8 *output, fat12_u32 capacity,
         return 0;
     }
     fat12_u32 root_offset = (FAT12_RESERVED_SECTORS + FAT12_FAT_COUNT * FAT12_SECTORS_PER_FAT) * FAT12_SECTOR_SIZE;
-    struct fat12_dirent *entry = (struct fat12_dirent *)0;
+    struct fat12_dirent *entry = (struct fat12_dirent *)slab_alloc(&fat12_dirent_slab_cache);
+    if (entry == (struct fat12_dirent *)0) {
+        return 0;
+    }
     for (fat12_u32 index = 0; index < FAT12_ROOT_ENTRIES; index++) {
         struct fat12_dirent *candidate = (struct fat12_dirent *)(volume + root_offset + index * sizeof(struct fat12_dirent));
         fat12_u8 matches = 1;
@@ -255,11 +266,12 @@ fat12_u8 fat12_read_file(const char *name, fat12_u8 *output, fat12_u32 capacity,
             }
         }
         if (matches) {
-            entry = candidate;
+            copy_bytes((fat12_u8 *)entry, (const fat12_u8 *)candidate, sizeof(struct fat12_dirent));
             break;
         }
     }
-    if (entry == (struct fat12_dirent *)0 || entry->size > capacity) {
+    if (entry->name[0] == 0 || entry->size > capacity) {
+        slab_free(&fat12_dirent_slab_cache, entry);
         return 0;
     }
     const fat12_u8 *fat = fat_table(0);
@@ -277,8 +289,10 @@ fat12_u8 fat12_read_file(const char *name, fat12_u8 *output, fat12_u32 capacity,
         cluster = fat_get(fat, cluster);
     }
     if (remaining != 0) {
+        slab_free(&fat12_dirent_slab_cache, entry);
         return 0;
     }
     *size = entry->size;
+    slab_free(&fat12_dirent_slab_cache, entry);
     return 1;
 }

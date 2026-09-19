@@ -38,6 +38,9 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     `kmalloc`/`kfree` allocations, zeroed pages, reuse after release, and an
     allocation table for up to 32 live blocks. Boot validates a two-page
     allocation and release cycle.
+16. A fixed-size slab allocator provides dedicated caches for eight process
+    descriptors and sixteen FAT12 directory entries. Objects are zeroed on
+    allocation, returned on release, and validated for reuse during boot.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible
@@ -76,7 +79,8 @@ intentionally bounded until an x86_64 paging layer is added.
 
 The kernel heap is currently bounded by the identity-mapped 16 MiB window and
 allocates whole contiguous pages. It is suitable for kernel metadata and early
-filesystem buffers; slab allocation and demand paging are future
+filesystem buffers. Slab allocation for process and FAT12 metadata is now
+available; virtual address expansion and demand paging remain future
 memory-management milestones.
 
 The console commands are `help`, `info`, `mem`, `uptime`, `status`, and

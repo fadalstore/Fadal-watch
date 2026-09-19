@@ -1,5 +1,6 @@
 #include "fat12.h"
 #include "ata.h"
+#include "slab.h"
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -159,7 +160,7 @@ struct heap_allocation {
 static struct idt_entry idt[IDT_ENTRIES];
 static struct gdt_entry gdt[6];
 static struct tss_entry tss;
-static struct process process_table[MAX_PROCESSES];
+static struct process *process_table[MAX_PROCESSES];
 static u32 next_pid = 1;
 static u32 current_pid;
 static u32 process_total;
@@ -339,10 +340,13 @@ static void reserve_page(u32 address) {
 
 static void process_manager_init(void) {
     for (u32 index = 0; index < MAX_PROCESSES; index++) {
-        process_table[index].pid = 0;
-        process_table[index].state = PROCESS_UNUSED;
-        process_table[index].entry = 0;
-        process_table[index].user_stack_top = 0;
+        process_table[index] = (struct process *)slab_alloc(&process_slab_cache);
+        if (process_table[index] != (struct process *)0) {
+            process_table[index]->pid = 0;
+            process_table[index]->state = PROCESS_UNUSED;
+            process_table[index]->entry = 0;
+            process_table[index]->user_stack_top = 0;
+        }
     }
     next_pid = 1;
     current_pid = 0;
@@ -352,7 +356,10 @@ static void process_manager_init(void) {
 
 static u32 process_create(u32 entry, u32 user_stack_top) {
     for (u32 index = 0; index < MAX_PROCESSES; index++) {
-        struct process *process = &process_table[index];
+        struct process *process = process_table[index];
+        if (process == (struct process *)0) {
+            continue;
+        }
         if (process->state != PROCESS_UNUSED) {
             continue;
         }
@@ -369,7 +376,10 @@ static u32 process_create(u32 entry, u32 user_stack_top) {
 
 static u8 process_set_running(u32 pid) {
     for (u32 index = 0; index < MAX_PROCESSES; index++) {
-        struct process *process = &process_table[index];
+        struct process *process = process_table[index];
+        if (process == (struct process *)0) {
+            continue;
+        }
         if (process->state == PROCESS_RUNNING) {
             process->state = PROCESS_READY;
         }
@@ -384,7 +394,10 @@ static u8 process_set_running(u32 pid) {
 
 static u8 process_exit_current(void) {
     for (u32 index = 0; index < MAX_PROCESSES; index++) {
-        struct process *process = &process_table[index];
+        struct process *process = process_table[index];
+        if (process == (struct process *)0) {
+            continue;
+        }
         if (process->pid != current_pid || process->state == PROCESS_EXITED) {
             continue;
         }
@@ -393,6 +406,8 @@ static u8 process_exit_current(void) {
             active_processes--;
         }
         current_pid = 0;
+        slab_free(&process_slab_cache, process);
+        process_table[index] = (struct process *)0;
         return 1;
     }
     return 0;
@@ -492,7 +507,7 @@ static void heap_init(void) {
     heap_used_bytes = 0;
 }
 
-static void *kmalloc(u32 bytes) {
+void *kmalloc(u32 bytes) {
     if (bytes == 0 || heap_allocation_count >= MAX_HEAP_ALLOCS) {
         return (void *)0;
     }
@@ -535,7 +550,7 @@ static void *kmalloc(u32 bytes) {
     return (void *)0;
 }
 
-static u8 kfree(void *address) {
+u8 kfree(void *address) {
     if (address == (void *)0) {
         return 0;
     }
@@ -912,6 +927,47 @@ void kernel_main(void) {
     kernel_write("mode: 32-bit protected mode\n");
     kernel_write("origin: from-scratch, no Linux dependency\n");
     kernel_write("status: boot path verified\n");
+    memory_init();
+    reserve_page(USER_CODE_ADDRESS);
+    reserve_page(USER_STACK_ADDRESS);
+    reserve_page(USER_STACK_2_ADDRESS);
+    heap_init();
+    u32 heap_free_before = free_page_count;
+    u8 *heap_test = (u8 *)kmalloc(PAGE_SIZE + 17);
+    u8 heap_ok = heap_test != (u8 *)0;
+    if (heap_ok) {
+        heap_test[0] = 0xa5;
+        heap_test[PAGE_SIZE + 16] = 0x5a;
+        heap_ok = heap_test[0] == 0xa5 && heap_test[PAGE_SIZE + 16] == 0x5a;
+    }
+    heap_ok = heap_ok && kfree(heap_test) && free_page_count == heap_free_before &&
+        heap_used_bytes == 0 && heap_allocation_count == 0;
+    if (heap_ok) {
+        kernel_write("memory: dynamic heap self-test passed (2 pages)\n");
+    } else {
+        kernel_write("memory: dynamic heap self-test failed\n");
+    }
+    slab_system_init();
+    if (slab_system_ready()) {
+        kernel_write("memory: slab caches online (process, fat12_dirent)\n");
+        void *process_probe = slab_alloc(&process_slab_cache);
+        void *dirent_probe = slab_alloc(&fat12_dirent_slab_cache);
+        u8 slab_ok = process_probe != (void *)0 && dirent_probe != (void *)0;
+        slab_ok = slab_ok && slab_free(&process_slab_cache, process_probe);
+        slab_ok = slab_ok && slab_free(&fat12_dirent_slab_cache, dirent_probe);
+        void *process_reuse = slab_alloc(&process_slab_cache);
+        slab_ok = slab_ok && process_reuse == process_probe;
+        slab_ok = slab_ok && slab_free(&process_slab_cache, process_reuse);
+        slab_ok = slab_ok && slab_free_objects(&process_slab_cache) == SLAB_PROCESS_CAPACITY;
+        slab_ok = slab_ok && slab_free_objects(&fat12_dirent_slab_cache) == SLAB_FAT12_DIRENT_CAPACITY;
+        if (slab_ok) {
+            kernel_write("memory: slab allocation/reuse self-test passed\n");
+        } else {
+            kernel_write("memory: slab allocation/reuse self-test failed\n");
+        }
+    } else {
+        kernel_write("memory: slab cache initialization failed\n");
+    }
     static const fat12_u8 first_file[] = "FADAL FAT12 write\n";
     fat12_format();
     if (fat12_write_file("KERNEL.TXT", first_file, sizeof(first_file) - 1) != 0) {
@@ -954,26 +1010,6 @@ void kernel_main(void) {
         }
     } else {
         kernel_write("filesystem: FAT12 write failed\n");
-    }
-    memory_init();
-    reserve_page(USER_CODE_ADDRESS);
-    reserve_page(USER_STACK_ADDRESS);
-    reserve_page(USER_STACK_2_ADDRESS);
-    heap_init();
-    u32 heap_free_before = free_page_count;
-    u8 *heap_test = (u8 *)kmalloc(PAGE_SIZE + 17);
-    u8 heap_ok = heap_test != (u8 *)0;
-    if (heap_ok) {
-        heap_test[0] = 0xa5;
-        heap_test[PAGE_SIZE + 16] = 0x5a;
-        heap_ok = heap_test[0] == 0xa5 && heap_test[PAGE_SIZE + 16] == 0x5a;
-    }
-    heap_ok = heap_ok && kfree(heap_test) && free_page_count == heap_free_before &&
-        heap_used_bytes == 0 && heap_allocation_count == 0;
-    if (heap_ok) {
-        kernel_write("memory: dynamic heap self-test passed (2 pages)\n");
-    } else {
-        kernel_write("memory: dynamic heap self-test failed\n");
     }
     paging_init();
     tss_init();

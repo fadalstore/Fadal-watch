@@ -26,7 +26,7 @@ $(OUT):
 $(OUT)/boot.o: boot.S | $(OUT)
 	$(AS) --32 -o $@ $<
 
-$(OUT)/kernel.o: kernel.c fat12.h ata.h | $(OUT)
+$(OUT)/kernel.o: kernel.c fat12.h ata.h slab.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(OUT)/fat12.o: fat12.c fat12.h | $(OUT)
@@ -35,11 +35,14 @@ $(OUT)/fat12.o: fat12.c fat12.h | $(OUT)
 $(OUT)/ata.o: ata.c ata.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+$(OUT)/slab.o: slab.c slab.h | $(OUT)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 $(OUT)/interrupts.o: interrupts.S | $(OUT)
 	$(AS) --32 -o $@ $<
 
-$(OUT)/kernel.elf: $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/interrupts.o linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/interrupts.o
+$(OUT)/kernel.elf: $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/slab.o $(OUT)/interrupts.o linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/slab.o $(OUT)/interrupts.o
 
 $(OUT)/kernel.bin: $(OUT)/kernel.elf
 	$(OBJCOPY) -O binary $< $@
@@ -65,6 +68,8 @@ check: $(OUT)/fadal-kernel.img
 		@grep -q "FADAL KERNEL ONLINE" $(OUT)/smoke.log
 		@grep -q "memory: BIOS E820 map accepted" $(OUT)/smoke.log
 		@grep -q "memory: 16 MiB identity paging online" $(OUT)/smoke.log
+		@grep -q "memory: slab caches online (process, fat12_dirent)" $(OUT)/smoke.log
+		@grep -q "memory: slab allocation/reuse self-test passed" $(OUT)/smoke.log
 		@grep -q "filesystem: FAT12 formatted; KERNEL.TXT written" $(OUT)/smoke.log
 	@grep -q "filesystem: allocated clusters 1; free clusters 59" $(OUT)/smoke.log
 	@grep -q "disk: ATA LBA28 persisted FAT12 volume" $(OUT)/smoke.log

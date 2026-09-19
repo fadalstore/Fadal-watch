@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "FadalWatch Network Guardian"
+description = "A defensive network intelligence workspace that maps authorized assets, learns normal behavior, explains meaningful changes, and guides safe response without exploitation or credential access."
+version = "1.0.0"
+id = "artifacts/fadalwatch-guardian"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 21926
+
+[services.development]
+run = "pnpm --filter @workspace/fadalwatch-guardian run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/fadalwatch-guardian", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/fadalwatch-guardian/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21926"
+BASE_PATH = "/"

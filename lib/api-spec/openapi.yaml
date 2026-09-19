@@ -2,14 +2,16 @@ openapi: 3.1.0
 info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
-  version: 0.1.0
-  description: API specification
+  version: 0.2.0
+  description: Defensive network intelligence API for FadalWatch Network Guardian
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: guardian
+    description: Network intelligence and response operations
 paths:
   /healthz:
     get:
@@ -24,7 +26,195 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /overview:
+    get:
+      operationId: getOverview
+      tags: [guardian]
+      summary: Get the network posture overview
+      responses:
+        "200":
+          description: Current network posture and recent activity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Overview"
+  /assets:
+    get:
+      operationId: listAssets
+      tags: [guardian]
+      summary: List monitored assets
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [all, healthy, watch, critical]
+            default: all
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Monitored assets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Asset"
+    post:
+      operationId: createAsset
+      tags: [guardian]
+      summary: Add an authorized asset to monitoring
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssetInput"
+      responses:
+        "201":
+          description: Asset created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "400":
+          description: Invalid asset
+  /assets/{assetId}:
+    get:
+      operationId: getAsset
+      tags: [guardian]
+      summary: Get one monitored asset
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+      responses:
+        "200":
+          description: Asset detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetDetail"
+        "404":
+          description: Asset not found
+  /scan-runs:
+    post:
+      operationId: createScanRun
+      tags: [guardian]
+      summary: Start a safe, authorized observation run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScanRunInput"
+      responses:
+        "201":
+          description: Observation run recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanRun"
+        "400":
+          description: Invalid target
+  /activity:
+    get:
+      operationId: listActivity
+      tags: [guardian]
+      summary: List the explainable activity timeline
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: Recent activity
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Activity"
+  /alerts:
+    get:
+      operationId: listAlerts
+      tags: [guardian]
+      summary: List active and resolved alerts
+      parameters:
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [all, open, acknowledged, resolved]
+            default: all
+      responses:
+        "200":
+          description: Alerts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Alert"
+  /alerts/{alertId}:
+    patch:
+      operationId: updateAlert
+      tags: [guardian]
+      summary: Change an alert state
+      parameters:
+        - $ref: "#/components/parameters/AlertId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertUpdate"
+      responses:
+        "200":
+          description: Updated alert
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Alert"
+        "404":
+          description: Alert not found
+  /coverage:
+    get:
+      operationId: getCoverage
+      tags: [guardian]
+      summary: Get monitoring coverage
+      responses:
+        "200":
+          description: Coverage by network zone
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CoverageZone"
 components:
+  parameters:
+    AssetId:
+      name: assetId
+      in: path
+      required: true
+      schema:
+        type: string
+    AlertId:
+      name: alertId
+      in: path
+      required: true
+      schema:
+        type: string
   schemas:
     HealthStatus:
       type: object
@@ -33,4 +223,171 @@ components:
           type: string
       required:
         - status
+    Asset:
+      type: object
+      required: [id, address, label, type, status, exposure, risk, lastSeen, services, baselineState]
+      properties:
+        id: { type: string }
+        address: { type: string }
+        label: { type: string }
+        type:
+          type: string
+          enum: [server, workstation, network, unknown]
+        status:
+          type: string
+          enum: [healthy, watch, critical]
+        exposure: { type: integer, minimum: 0, maximum: 100 }
+        risk: { type: integer, minimum: 0, maximum: 100 }
+        lastSeen: { type: string, format: date-time }
+        firstSeen: { type: string, format: date-time }
+        services: { type: integer, minimum: 0 }
+        baselineState:
+          type: string
+          enum: [learning, stable, drift]
+    AssetInput:
+      type: object
+      required: [address, label, type]
+      properties:
+        address: { type: string, minLength: 1, maxLength: 255 }
+        label: { type: string, minLength: 1, maxLength: 120 }
+        type:
+          type: string
+          enum: [server, workstation, network, unknown]
+        zone: { type: string, maxLength: 80 }
+    AssetDetail:
+      allOf:
+        - $ref: "#/components/schemas/Asset"
+        - type: object
+          required: [zone, servicesList, history]
+          properties:
+            zone: { type: string }
+            servicesList:
+              type: array
+              items:
+                $ref: "#/components/schemas/Service"
+            history:
+              type: array
+              items:
+                $ref: "#/components/schemas/Activity"
+    Service:
+      type: object
+      required: [name, port, state, lastObserved]
+      properties:
+        name: { type: string }
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        state:
+          type: string
+          enum: [expected, new, risky]
+        lastObserved: { type: string, format: date-time }
+        note: { type: ["string", "null"] }
+    Activity:
+      type: object
+      required: [id, kind, title, detail, timestamp, severity]
+      properties:
+        id: { type: string }
+        kind:
+          type: string
+          enum: [scan, baseline, alert, response, asset]
+        title: { type: string }
+        detail: { type: string }
+        timestamp: { type: string, format: date-time }
+        severity:
+          type: string
+          enum: [info, low, medium, high, critical]
+        assetId: { type: ["string", "null"] }
+    Alert:
+      type: object
+      required: [id, title, reason, severity, state, assetId, createdAt, recommendation]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        reason: { type: string }
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+        state:
+          type: string
+          enum: [open, acknowledged, resolved]
+        assetId: { type: string }
+        createdAt: { type: string, format: date-time }
+        recommendation: { type: string }
+        evidence:
+          type: array
+          items: { type: string }
+    AlertUpdate:
+      type: object
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [open, acknowledged, resolved]
+    ScanRunInput:
+      type: object
+      required: [scope, authorizationConfirmed]
+      properties:
+        scope: { type: string, minLength: 1, maxLength: 255 }
+        authorizationConfirmed: { type: boolean }
+        mode:
+          type: string
+          enum: [observation, baseline]
+          default: observation
+    ScanRun:
+      type: object
+      required: [id, scope, mode, status, startedAt, assetsObserved, changesFound]
+      properties:
+        id: { type: string }
+        scope: { type: string }
+        mode:
+          type: string
+          enum: [observation, baseline]
+        status:
+          type: string
+          enum: [completed, rejected]
+        startedAt: { type: string, format: date-time }
+        assetsObserved: { type: integer, minimum: 0 }
+        changesFound: { type: integer, minimum: 0 }
+        message: { type: ["string", "null"] }
+    CoverageZone:
+      type: object
+      required: [name, range, monitored, discovered, coverage, state]
+      properties:
+        name: { type: string }
+        range: { type: string }
+        monitored: { type: integer, minimum: 0 }
+        discovered: { type: integer, minimum: 0 }
+        coverage: { type: integer, minimum: 0, maximum: 100 }
+        state:
+          type: string
+          enum: [healthy, partial, attention]
+    Overview:
+      type: object
+      required: [healthScore, monitoredAssets, activeAlerts, newToday, exposedServices, coverage, lastScan, assetsByType, trend, recentActivity]
+      properties:
+        healthScore: { type: integer, minimum: 0, maximum: 100 }
+        monitoredAssets: { type: integer, minimum: 0 }
+        activeAlerts: { type: integer, minimum: 0 }
+        newToday: { type: integer, minimum: 0 }
+        exposedServices: { type: integer, minimum: 0 }
+        coverage: { type: integer, minimum: 0, maximum: 100 }
+        lastScan: { type: ["string", "null"], format: date-time }
+        assetsByType:
+          type: array
+          items:
+            type: object
+            required: [type, count]
+            properties:
+              type: { type: string }
+              count: { type: integer, minimum: 0 }
+        trend:
+          type: array
+          items:
+            type: object
+            required: [label, score]
+            properties:
+              label: { type: string }
+              score: { type: integer, minimum: 0, maximum: 100 }
+        recentActivity:
+          type: array
+          items:
+            $ref: "#/components/schemas/Activity"
 

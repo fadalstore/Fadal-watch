@@ -65,9 +65,17 @@ and QEMU:
 
 ```sh
 make -C kernel
+make -C kernel independence
 make -C kernel check
 make -C kernel run
 ```
+
+`make -C kernel independence` is a build-time contract for Fadal's ownership:
+all C translation units use freestanding compilation without host system
+headers, the linker uses `-nostdlib`, and the final kernel ELF must have no
+unresolved runtime symbols. GCC/binutils are build tools only; BIOS firmware,
+ATA hardware, and QEMU are execution targets, not another operating-system
+kernel embedded in Fadal.
 
 `make run` boots `kernel/out/fadal-kernel.img` in QEMU, sends serial output to
 the terminal, and stops after the smoke-test timeout. The image uses a fixed

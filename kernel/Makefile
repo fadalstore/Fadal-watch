@@ -13,10 +13,10 @@ KERNEL_BYTES := $(shell expr $(BOOT_SECTORS) \* 512)
 
 CFLAGS := -m32 -ffreestanding -fno-pie -fno-stack-protector -fno-builtin \
 	-mno-sse -mno-sse2 -mno-mmx -msoft-float -fno-tree-vectorize \
-	-Wall -Wextra -Werror -O2
+	-Wall -Wextra -Werror -O2 -nostdinc
 LDFLAGS := -m elf_i386 -T linker.ld -nostdlib
 
-.PHONY: all clean check run
+.PHONY: all clean check independence run
 
 all: $(OUT)/fadal-kernel.img
 
@@ -59,7 +59,13 @@ $(OUT)/fadal-kernel.img: $(OUT)/boot.bin $(OUT)/kernel.bin
 	dd if=$(OUT)/boot.bin of=$@ conv=notrunc status=none
 	dd if=$(OUT)/kernel.bin of=$@ bs=512 seek=1 conv=notrunc status=none
 
-check: $(OUT)/fadal-kernel.img
+independence: $(OUT)/kernel.elf
+	@test -z "$$(nm -u $(OUT)/kernel.elf)" || \
+		(echo "kernel has unresolved host/runtime symbols" >&2; nm -u $(OUT)/kernel.elf; exit 1)
+	@! rg -n '#include[[:space:]]*<' . --glob '*.c' --glob '*.h' --glob '!out/**'
+	@echo "Fadal independence guard passed: freestanding, no host headers, no unresolved symbols"
+
+check: independence $(OUT)/fadal-kernel.img
 	@command -v $(QEMU) >/dev/null || \
 		(echo "$(QEMU) is required for the boot smoke test" >&2; exit 1)
 	@timeout 5s $(QEMU) -accel tcg -boot c -drive format=raw,file=$(OUT)/fadal-kernel.img \

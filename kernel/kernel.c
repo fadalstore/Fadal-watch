@@ -2,6 +2,7 @@
 #include "ata.h"
 #include "slab.h"
 #include "vfs.h"
+#include "fsh.h"
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -774,17 +775,6 @@ static char keyboard_ascii(u8 scancode) {
     }
 }
 
-static u8 text_equal(const char *left, const char *right) {
-    u32 index = 0;
-    while (left[index] != '\0' && right[index] != '\0') {
-        if (left[index] != right[index]) {
-            return 0;
-        }
-        index++;
-    }
-    return left[index] == right[index];
-}
-
 static void print_memory_stats(void) {
     kernel_write("memory: ");
     write_u32(free_page_count);
@@ -806,73 +796,90 @@ static void command_reset(void) {
     command[0] = '\0';
 }
 
-static void command_run(void) {
-    kernel_write("\n");
+static void shell_info(void) {
+    kernel_write("fadal kernel: 32-bit protected mode\n");
+    kernel_write("console: VGA text + PS/2 IRQ1\n");
+    kernel_write("memory: BIOS E820 map + bounded identity allocator\n");
+    kernel_write("timer: PIT IRQ0 at 100 Hz\n");
+    kernel_write("syscalls: int 0x80 ABI gate online\n");
+    kernel_write("shell: FSH user-space command parser\n");
+}
 
-    if (command_length == 0) {
-        /* Empty input just redraws the prompt. */
-    } else if (text_equal(command, "help")) {
-        kernel_write("commands: help info mem uptime status mount ls cat clear\n");
-    } else if (text_equal(command, "info")) {
-        kernel_write("fadal kernel: 32-bit protected mode\n");
-        kernel_write("console: VGA text + PS/2 IRQ1\n");
-        kernel_write("memory: BIOS E820 map + bounded identity allocator\n");
-        kernel_write("timer: PIT IRQ0 at 100 Hz\n");
-        kernel_write("syscalls: int 0x80 ABI gate online\n");
-        kernel_write("shell: PS/2 keyboard IRQ1 interactive line editor\n");
-    } else if (text_equal(command, "mem")) {
-        print_memory_stats();
-    } else if (text_equal(command, "uptime")) {
-        kernel_write("uptime: ");
-        write_u32(timer_ticks / TIMER_FREQUENCY);
-        kernel_write("s (");
-        write_u32(timer_ticks);
-        kernel_write(" ticks)\n");
-    } else if (text_equal(command, "status")) {
-        kernel_write("status: kernel online; IRQ0 + IRQ1 active\n");
-        kernel_write("status: syscall count ");
-        write_u32(syscall_count);
-        kernel_write("\n");
-        kernel_write("processes: ");
-        write_u32(process_total);
-        kernel_write(" total; active ");
-        write_u32(active_processes);
-        kernel_write("; current pid ");
-        write_u32(current_pid);
-        kernel_write("\n");
-        print_memory_stats();
-    } else if (text_equal(command, "mount")) {
-        if (vfs_is_mounted()) {
-            kernel_write("vfs: ");
-            kernel_write(vfs_filesystem_name());
-            kernel_write(" mounted as root; ");
-            write_u32(vfs_root_entries());
-            kernel_write(" root entries\n");
-        } else {
-            kernel_write("vfs: no root filesystem mounted\n");
-        }
-    } else if (text_equal(command, "ls")) {
-        if (vfs_is_mounted()) {
-            kernel_write("root: ");
-            write_u32(vfs_root_entries());
-            kernel_write(" entries\n");
-            kernel_write("KERNEL.TXT\n");
-        } else {
-            kernel_write("ls: no root filesystem mounted\n");
-        }
-    } else if (text_equal(command, "cat KERNEL.TXT")) {
-        u8 file[128];
-        u32 file_size = 0;
-        if (vfs_read_file("KERNEL.TXT", file, sizeof(file), &file_size)) {
-            shell_write_bytes(file, file_size);
-        } else {
-            kernel_write("cat: KERNEL.TXT not found\n");
-        }
-    } else if (text_equal(command, "clear")) {
-        vga_clear();
+static void shell_uptime(void) {
+    kernel_write("uptime: ");
+    write_u32(timer_ticks / TIMER_FREQUENCY);
+    kernel_write("s (");
+    write_u32(timer_ticks);
+    kernel_write(" ticks)\n");
+}
+
+static void shell_status(void) {
+    kernel_write("status: kernel online; IRQ0 + IRQ1 active\n");
+    kernel_write("status: syscall count ");
+    write_u32(syscall_count);
+    kernel_write("\n");
+    kernel_write("processes: ");
+    write_u32(process_total);
+    kernel_write(" total; active ");
+    write_u32(active_processes);
+    kernel_write("; current pid ");
+    write_u32(current_pid);
+    kernel_write("\n");
+    print_memory_stats();
+}
+
+static void shell_mount(void) {
+    if (vfs_is_mounted()) {
+        kernel_write("vfs: ");
+        kernel_write(vfs_filesystem_name());
+        kernel_write(" mounted as root; ");
+        write_u32(vfs_root_entries());
+        kernel_write(" root entries\n");
     } else {
-        kernel_write("unknown command; try help\n");
+        kernel_write("vfs: no root filesystem mounted\n");
     }
+}
+
+static void shell_list(void) {
+    if (vfs_is_mounted()) {
+        kernel_write("root: ");
+        write_u32(vfs_root_entries());
+        kernel_write(" entries\n");
+        kernel_write("KERNEL.TXT\n");
+    } else {
+        kernel_write("ls: no root filesystem mounted\n");
+    }
+}
+
+static void shell_cat_kernel(void) {
+    u8 file[128];
+    u32 file_size = 0;
+    if (vfs_read_file("KERNEL.TXT", file, sizeof(file), &file_size)) {
+        shell_write_bytes(file, file_size);
+    } else {
+        kernel_write("cat: KERNEL.TXT not found\n");
+    }
+}
+
+static void shell_clear(void) {
+    vga_clear();
+}
+
+static const struct fsh_context shell_context = {
+    .write = kernel_write,
+    .info = shell_info,
+    .mem = print_memory_stats,
+    .uptime = shell_uptime,
+    .status = shell_status,
+    .mount = shell_mount,
+    .list = shell_list,
+    .cat_kernel = shell_cat_kernel,
+    .clear = shell_clear,
+};
+
+static void shell_submit_line(void) {
+    kernel_write("\n");
+    fsh_run_line(&shell_context, command, command_length);
 
     command_reset();
     kernel_write("> ");
@@ -891,7 +898,7 @@ static void keyboard_handle(u8 scancode) {
         return;
     }
     if (scancode == 0x1c) {
-        command_run();
+        shell_submit_line();
         return;
     }
     if (scancode == 0x0e) {
@@ -1155,6 +1162,7 @@ void kernel_main(void) {
     kernel_write("syscalls: int 0x80 ABI gate online\n");
     kernel_write("userspace: ring-3 test process armed\n");
     kernel_write("keyboard: PS/2 IRQ1 interactive shell online\n");
+    kernel_write("shell: FSH parser module loaded outside kernel command parser\n");
     shell_init();
     enable_interrupts();
     enter_user_mode();

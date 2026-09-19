@@ -26,7 +26,7 @@ $(OUT):
 $(OUT)/boot.o: boot.S | $(OUT)
 	$(AS) --32 -o $@ $<
 
-$(OUT)/kernel.o: kernel.c fat12.h ata.h slab.h vfs.h | $(OUT)
+$(OUT)/kernel.o: kernel.c fat12.h ata.h slab.h vfs.h fsh.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(OUT)/fat12.o: fat12.c fat12.h | $(OUT)
@@ -41,11 +41,14 @@ $(OUT)/slab.o: slab.c slab.h | $(OUT)
 $(OUT)/vfs.o: vfs.c vfs.h fat12.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+$(OUT)/fsh.o: fsh.c fsh.h | $(OUT)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 $(OUT)/interrupts.o: interrupts.S | $(OUT)
 	$(AS) --32 -o $@ $<
 
-$(OUT)/kernel.elf: $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/interrupts.o linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/interrupts.o
+$(OUT)/kernel.elf: $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh.o $(OUT)/interrupts.o linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh.o $(OUT)/interrupts.o
 
 $(OUT)/kernel.bin: $(OUT)/kernel.elf
 	$(OBJCOPY) -O binary $< $@
@@ -92,6 +95,7 @@ check: independence $(OUT)/fadal-kernel.img
 	@grep -q "syscalls: int 0x80 ABI gate online" $(OUT)/smoke.log
 		@grep -q "process: dynamic PID allocator online; 2 processes ready" $(OUT)/smoke.log
 		@grep -q "keyboard: PS/2 IRQ1 interactive shell online" $(OUT)/smoke.log
+		@grep -q "shell: FSH parser module loaded outside kernel command parser" $(OUT)/smoke.log
 		@grep -q "Fadal shell ready" $(OUT)/smoke.log
 	@grep -q "syscall: ring-3 entry" $(OUT)/smoke.log
 	@grep -q "syscall: get_ticks dispatch" $(OUT)/smoke.log

@@ -111,11 +111,15 @@ filesystem buffers. Slab allocation for process and FAT12 metadata is now
 available; virtual address expansion and demand paging remain future
 memory-management milestones.
 
-The interactive shell is driven by the kernel's PS/2 IRQ1 handler. It supports
+The interactive shell is driven by the kernel's PS/2 IRQ1 handler, while its
+command parser lives in the separately compiled `fsh.c`/`fsh.h` Fadal Shell
+module. The kernel exports service callbacks for memory, uptime, status, VFS,
+and screen clearing; FSH performs command matching and dispatch. It supports
 scancode-to-ASCII translation, Shift letters, Backspace, Enter, a bounded line
 buffer, and the commands `help`, `info`, `mem`, `uptime`, `status`, `mount`,
-`ls`, `cat KERNEL.TXT`, and `clear`. Timer interrupts wake the idle loop and
-make the uptime signal independent from the dashboard or any host userspace.
+`ls`, `cat KERNEL.TXT`, and `clear`. The current image links FSH as a
+freestanding shell module; moving it to a separate ring-3 executable is the
+next step after `read`, `write`, and `exec` syscalls are available.
 
 The current userspace milestone is intentionally tiny: the kernel registers
 two process records with distinct user stacks, selects PID 1, and its test

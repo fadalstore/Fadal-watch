@@ -16,7 +16,7 @@ CFLAGS := -m32 -ffreestanding -fno-pie -fno-stack-protector -fno-builtin \
 	-Wall -Wextra -Werror -O2 -nostdinc
 LDFLAGS := -m elf_i386 -T linker.ld -nostdlib
 
-.PHONY: all clean check independence run
+.PHONY: all clean check independence run run-vga
 
 all: $(OUT)/fadal-kernel.img
 
@@ -90,7 +90,9 @@ check: independence $(OUT)/fadal-kernel.img
 	@grep -q "memory: page allocation self-test passed" $(OUT)/smoke.log
 	@grep -q "timer: PIT IRQ0 online at 100 Hz" $(OUT)/smoke.log
 	@grep -q "syscalls: int 0x80 ABI gate online" $(OUT)/smoke.log
-	@grep -q "process: dynamic PID allocator online; 2 processes ready" $(OUT)/smoke.log
+		@grep -q "process: dynamic PID allocator online; 2 processes ready" $(OUT)/smoke.log
+		@grep -q "keyboard: PS/2 IRQ1 interactive shell online" $(OUT)/smoke.log
+		@grep -q "Fadal shell ready" $(OUT)/smoke.log
 	@grep -q "syscall: ring-3 entry" $(OUT)/smoke.log
 	@grep -q "syscall: get_ticks dispatch" $(OUT)/smoke.log
 	@grep -q "syscall: get_pid dispatch" $(OUT)/smoke.log
@@ -101,6 +103,10 @@ check: independence $(OUT)/fadal-kernel.img
 run: $(OUT)/fadal-kernel.img
 	$(QEMU) -accel tcg -boot c -drive format=raw,file=$(OUT)/fadal-kernel.img \
 		-serial stdio -display none -no-reboot -no-shutdown
+
+run-vga: $(OUT)/fadal-kernel.img
+	$(QEMU) -accel tcg -boot c -drive format=raw,file=$(OUT)/fadal-kernel.img \
+		-serial stdio -no-reboot -no-shutdown
 
 clean:
 	rm -rf $(OUT)

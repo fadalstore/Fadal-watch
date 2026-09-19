@@ -72,6 +72,7 @@ make -C kernel
 make -C kernel independence
 make -C kernel check
 make -C kernel run
+make -C kernel run-vga
 ```
 
 `make -C kernel independence` is a build-time contract for Fadal's ownership:
@@ -84,6 +85,12 @@ kernel embedded in Fadal.
 `make run` boots `kernel/out/fadal-kernel.img` in QEMU, sends serial output to
 the terminal, and stops after the smoke-test timeout. The image uses a fixed
 112-sector kernel budget for the first boot stage.
+
+Use `make -C kernel run-vga` for the interactive shell: it opens the QEMU VGA
+window, where keyboard scancodes are delivered to the PS/2 IRQ1 driver. The
+serial output remains attached to the launching terminal. `make run` is the
+headless serial-output mode and is useful for logs, but it cannot receive
+physical keyboard input while QEMU's display is disabled.
 
 When running with a VGA display, the console accepts keyboard input after the
 `Fadal console ready` prompt. Keyboard input is delivered through the kernel's
@@ -104,9 +111,11 @@ filesystem buffers. Slab allocation for process and FAT12 metadata is now
 available; virtual address expansion and demand paging remain future
 memory-management milestones.
 
-The console commands are `help`, `info`, `mem`, `uptime`, `status`, and
-`clear`. Timer interrupts wake the idle loop and make the uptime signal
-independent from the dashboard or any host userspace.
+The interactive shell is driven by the kernel's PS/2 IRQ1 handler. It supports
+scancode-to-ASCII translation, Shift letters, Backspace, Enter, a bounded line
+buffer, and the commands `help`, `info`, `mem`, `uptime`, `status`, `mount`,
+`ls`, `cat KERNEL.TXT`, and `clear`. Timer interrupts wake the idle loop and
+make the uptime signal independent from the dashboard or any host userspace.
 
 The current userspace milestone is intentionally tiny: the kernel registers
 two process records with distinct user stacks, selects PID 1, and its test

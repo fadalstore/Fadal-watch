@@ -713,6 +713,13 @@ static void kernel_write(const char *text) {
     serial_write(text);
 }
 
+static void shell_write_bytes(const u8 *data, u32 size) {
+    for (u32 index = 0; index < size; index++) {
+        vga_putc((char)data[index]);
+        serial_putc((char)data[index]);
+    }
+}
+
 static char keyboard_ascii(u8 scancode) {
     switch (scancode) {
         case 0x02: return '1';
@@ -805,13 +812,14 @@ static void command_run(void) {
     if (command_length == 0) {
         /* Empty input just redraws the prompt. */
     } else if (text_equal(command, "help")) {
-        kernel_write("commands: help info mem uptime status clear\n");
+        kernel_write("commands: help info mem uptime status mount ls cat clear\n");
     } else if (text_equal(command, "info")) {
         kernel_write("fadal kernel: 32-bit protected mode\n");
         kernel_write("console: VGA text + PS/2 IRQ1\n");
         kernel_write("memory: BIOS E820 map + bounded identity allocator\n");
         kernel_write("timer: PIT IRQ0 at 100 Hz\n");
         kernel_write("syscalls: int 0x80 ABI gate online\n");
+        kernel_write("shell: PS/2 keyboard IRQ1 interactive line editor\n");
     } else if (text_equal(command, "mem")) {
         print_memory_stats();
     } else if (text_equal(command, "uptime")) {
@@ -833,6 +841,33 @@ static void command_run(void) {
         write_u32(current_pid);
         kernel_write("\n");
         print_memory_stats();
+    } else if (text_equal(command, "mount")) {
+        if (vfs_is_mounted()) {
+            kernel_write("vfs: ");
+            kernel_write(vfs_filesystem_name());
+            kernel_write(" mounted as root; ");
+            write_u32(vfs_root_entries());
+            kernel_write(" root entries\n");
+        } else {
+            kernel_write("vfs: no root filesystem mounted\n");
+        }
+    } else if (text_equal(command, "ls")) {
+        if (vfs_is_mounted()) {
+            kernel_write("root: ");
+            write_u32(vfs_root_entries());
+            kernel_write(" entries\n");
+            kernel_write("KERNEL.TXT\n");
+        } else {
+            kernel_write("ls: no root filesystem mounted\n");
+        }
+    } else if (text_equal(command, "cat KERNEL.TXT")) {
+        u8 file[128];
+        u32 file_size = 0;
+        if (vfs_read_file("KERNEL.TXT", file, sizeof(file), &file_size)) {
+            shell_write_bytes(file, file_size);
+        } else {
+            kernel_write("cat: KERNEL.TXT not found\n");
+        }
     } else if (text_equal(command, "clear")) {
         vga_clear();
     } else {
@@ -878,6 +913,11 @@ static void keyboard_handle(u8 scancode) {
     command[command_length] = '\0';
     vga_putc(value);
     serial_putc(value);
+}
+
+static void shell_init(void) {
+    command_reset();
+    kernel_write("Fadal shell ready\n> ");
 }
 
 void keyboard_interrupt_handler(void) {
@@ -1114,6 +1154,8 @@ void kernel_main(void) {
     kernel_write("timer: PIT IRQ0 online at 100 Hz\n");
     kernel_write("syscalls: int 0x80 ABI gate online\n");
     kernel_write("userspace: ring-3 test process armed\n");
+    kernel_write("keyboard: PS/2 IRQ1 interactive shell online\n");
+    shell_init();
     enable_interrupts();
     enter_user_mode();
 }

@@ -58,6 +58,8 @@ typedef unsigned int u32;
 #define SYSCALL_SET_PRIORITY 18
 #define SYSCALL_NET_LOOPBACK 19
 #define SYSCALL_GET_CPUS 20
+#define SYSCALL_GET_IPI 21
+#define LAPIC_BASE 0xfee00000
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
 #define PROCESS_READY 1
@@ -103,6 +105,9 @@ static volatile u8 net_loopback_reported;
 static volatile u8 get_cpus_reported;
 static u32 smp_cpu_count = 1;
 static u8 smp_apic_present;
+static u8 smp_bsp_apic_id;
+static u8 smp_ipi_state;
+static volatile u8 get_ipi_reported;
 static u8 net_loopback_buffer[256];
 static u32 net_loopback_length;
 static volatile u8 timer_scheduler_reported;
@@ -1318,12 +1323,45 @@ static void smp_probe(void) {
     u32 edx;
     __asm__ volatile ("cpuid"
         : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
+    smp_bsp_apic_id = (u8)(ebx >> 24);
     smp_apic_present = (edx & (1 << 9)) != 0;
     if ((edx & (1 << 28)) != 0) {
         u32 logical = (ebx >> 16) & 0xff;
         if (logical != 0) {
             smp_cpu_count = logical;
         }
+    }
+}
+
+static volatile u32 *lapic_register(u32 offset) {
+    return (volatile u32 *)(LAPIC_BASE + offset);
+}
+
+static u8 lapic_wait_idle(void) {
+    for (u32 attempt = 0; attempt < 100000; attempt++) {
+        if ((*lapic_register(0x300) & (1 << 12)) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static u8 lapic_send_ipi(u8 apic_id, u8 vector, u8 delivery_mode) {
+    if (!smp_apic_present || !lapic_wait_idle()) {
+        return 0;
+    }
+    *lapic_register(0x310) = (u32)apic_id << 24;
+    *lapic_register(0x300) = ((u32)delivery_mode << 8) | vector;
+    return lapic_wait_idle();
+}
+
+static void smp_startup_prepare(void) {
+    if (!smp_apic_present) {
+        smp_ipi_state = 0;
+    } else if (smp_cpu_count <= 1) {
+        smp_ipi_state = 1;
+    } else {
+        smp_ipi_state = lapic_send_ipi(1, 0xf0, 5) ? 2 : 0;
     }
 }
 
@@ -1704,6 +1742,12 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
             get_cpus_reported = 1;
             serial_write("syscall: getcpus dispatch; SMP topology reported\n");
         }
+    } else if (frame->eax == SYSCALL_GET_IPI) {
+        frame->eax = smp_ipi_state;
+        if (!get_ipi_reported) {
+            get_ipi_reported = 1;
+            serial_write("syscall: getipi dispatch; AP startup/IPI state reported\n");
+        }
     } else if (frame->eax == SYSCALL_SLEEP) {
         u32 slot = process_slot_for_pid(current_pid);
         if (frame->ebx == 0) {
@@ -1835,10 +1879,14 @@ void kernel_main(void) {
     kernel_write("status: boot path verified\n");
     memory_init();
     smp_probe();
+    smp_startup_prepare();
     kernel_write("smp: CPUID topology detected (");
     write_u32(smp_cpu_count);
     kernel_write(" logical CPUs; APIC ");
     kernel_write(smp_apic_present ? "present)\n" : "absent)\n");
+    kernel_write(smp_ipi_state == 1 ?
+        "smp: AP startup guarded; single-BSP IPI path armed\n" :
+        "smp: AP startup/IPI path attempted\n");
     if (ata_identify(ata_identify_buffer)) {
         kernel_write("disk: ATA primary-master IDENTIFY passed\n");
     } else {

@@ -132,6 +132,8 @@ check: independence $(OUT)/fadal-kernel.img
 	@grep -q "syscall: netloop dispatch; loopback packet delivered" $(OUT)/smoke.log
 	@grep -q "smp: CPUID topology detected" $(OUT)/smoke.log
 	@grep -q "syscall: getcpus dispatch; SMP topology reported" $(OUT)/smoke.log
+	@grep -q "smp: AP startup guarded; single-BSP IPI path armed" $(OUT)/smoke.log
+	@grep -q "syscall: getipi dispatch; AP startup/IPI state reported" $(OUT)/smoke.log
 		@grep -q "syscall: get_pid dispatch" $(OUT)/smoke.log
 			@grep -q "syscall: read dispatch; nonblocking TTY queue read" $(OUT)/smoke.log
 			@grep -q "syscall: yield dispatch; cooperative scheduler point" $(OUT)/smoke.log

@@ -150,6 +150,11 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     the discovered logical CPU count (`EBX=0`) and APIC readiness (`EBX=1`).
     This is the SMP prerequisite layer; AP startup/IPI bring-up and per-CPU
     scheduler state remain the next SMP milestone.
+40. The SMP layer now includes LAPIC MMIO idle polling and IPI delivery
+    primitives. On a single-CPU machine, AP startup is deliberately guarded
+    and the BSP-only IPI path is marked armed without sending a nonexistent AP
+    an INIT/SIPI sequence. Syscall `21` (`getipi`) exposes this state; multi-CPU
+    bring-up remains gated behind the discovered topology.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

@@ -171,6 +171,10 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     sequence number on the serial console. Syscall `24` (`getlog`) exposes the
     current sequence and level to FSH; boot requires the first `[KLOG 1 #1]`
     record, making early initialization and later debug output traceable.
+45. A 32-sector RAM-disk block device now provides bounded sector read/write,
+    initialization, and checksum validation independent of ATA/FAT12. Syscall
+    `25` (`getramdisk`) exposes the boot integrity result to FSH; boot requires
+    a write/read pattern verification before the real disk filesystem mounts.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

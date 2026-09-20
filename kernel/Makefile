@@ -26,13 +26,16 @@ $(OUT):
 $(OUT)/boot.o: boot.S | $(OUT)
 	$(AS) --32 -o $@ $<
 
-$(OUT)/kernel.o: kernel.c fat12.h ata.h slab.h vfs.h | $(OUT)
+$(OUT)/kernel.o: kernel.c fat12.h ata.h ramdisk.h slab.h vfs.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(OUT)/fat12.o: fat12.c fat12.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(OUT)/ata.o: ata.c ata.h | $(OUT)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(OUT)/ramdisk.o: ramdisk.c ramdisk.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(OUT)/slab.o: slab.c slab.h | $(OUT)
@@ -56,8 +59,8 @@ $(OUT)/fsh_blob.o: $(OUT)/fsh.bin
 $(OUT)/interrupts.o: interrupts.S kernel.c | $(OUT)
 	$(AS) --32 -o $@ $<
 
-$(OUT)/kernel.elf: $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o
+$(OUT)/kernel.elf: $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o
 
 $(OUT)/kernel.bin: $(OUT)/kernel.elf
 	$(OBJCOPY) -O binary $< $@
@@ -140,6 +143,8 @@ check: independence $(OUT)/fadal-kernel.img
 	@grep -q "syscall: getfs dispatch; generic VFS lookup returned" $(OUT)/smoke.log
 	@grep -q "\[KLOG 1 #1\] structured logging online" $(OUT)/smoke.log
 	@grep -q "syscall: getlog dispatch; structured log state returned" $(OUT)/smoke.log
+	@grep -q "storage: RAM-disk sector read/write and checksum passed" $(OUT)/smoke.log
+	@grep -q "syscall: getramdisk dispatch; RAM-disk integrity returned" $(OUT)/smoke.log
 		@grep -q "syscall: get_pid dispatch" $(OUT)/smoke.log
 			@grep -q "syscall: read dispatch; nonblocking TTY queue read" $(OUT)/smoke.log
 			@grep -q "syscall: yield dispatch; cooperative scheduler point" $(OUT)/smoke.log

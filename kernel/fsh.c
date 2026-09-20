@@ -16,6 +16,7 @@ typedef unsigned int u32;
 #define SYSCALL_GET_SYNC 22
 #define SYSCALL_GET_FS 23
 #define SYSCALL_GET_LOG 24
+#define SYSCALL_GET_RAMDISK 25
 #define SYSCALL_READ 4
 #define SYSCALL_WRITE 5
 #define SYSCALL_OPEN 6
@@ -146,6 +147,7 @@ void fsh_entry(void) {
     fsh_syscall3(SYSCALL_GET_SYNC, 0, 0, 0);
     fsh_syscall3(SYSCALL_GET_FS, 2, 0, 0);
     fsh_syscall3(SYSCALL_GET_LOG, 0, 0, 0);
+    fsh_syscall3(SYSCALL_GET_RAMDISK, 0, 0, 0);
     fsh_syscall3(SYSCALL_SLEEP, 1, 0, 0);
     fsh_syscall3(SYSCALL_MMAP, 32, 0, 0);
     for (;;) {

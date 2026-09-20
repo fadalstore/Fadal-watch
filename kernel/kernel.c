@@ -1,5 +1,6 @@
 #include "fat12.h"
 #include "ata.h"
+#include "ramdisk.h"
 #include "slab.h"
 #include "vfs.h"
 
@@ -62,6 +63,7 @@ typedef unsigned int u32;
 #define SYSCALL_GET_SYNC 22
 #define SYSCALL_GET_FS 23
 #define SYSCALL_GET_LOG 24
+#define SYSCALL_GET_RAMDISK 25
 #define LAPIC_BASE 0xfee00000
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
@@ -114,6 +116,8 @@ static volatile u8 get_ipi_reported;
 static volatile u8 get_sync_reported;
 static volatile u8 get_fs_reported;
 static volatile u8 get_log_reported;
+static volatile u8 get_ramdisk_reported;
+static u8 ramdisk_self_test_passed;
 static u32 kernel_log_sequence;
 static u8 kernel_log_level;
 struct spinlock {
@@ -1832,6 +1836,12 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
             get_log_reported = 1;
             serial_write("syscall: getlog dispatch; structured log state returned\n");
         }
+    } else if (frame->eax == SYSCALL_GET_RAMDISK) {
+        frame->eax = ramdisk_self_test_passed;
+        if (!get_ramdisk_reported) {
+            get_ramdisk_reported = 1;
+            serial_write("syscall: getramdisk dispatch; RAM-disk integrity returned\n");
+        }
     } else if (frame->eax == SYSCALL_SLEEP) {
         u32 slot = process_slot_for_pid(current_pid);
         if (frame->ebx == 0) {
@@ -1965,6 +1975,21 @@ void kernel_main(void) {
     memory_init();
     smp_probe();
     smp_startup_prepare();
+    ramdisk_init();
+    ramdisk_u8 ramdisk_write_buffer[RAMDISK_SECTOR_SIZE];
+    ramdisk_u8 ramdisk_read_buffer[RAMDISK_SECTOR_SIZE];
+    for (u32 index = 0; index < RAMDISK_SECTOR_SIZE; index++) {
+        ramdisk_write_buffer[index] = (ramdisk_u8)(index ^ 0x5a);
+    }
+    ramdisk_self_test_passed = ramdisk_write(2, ramdisk_write_buffer, 1) &&
+        ramdisk_read(2, ramdisk_read_buffer, 1);
+    for (u32 index = 0; index < RAMDISK_SECTOR_SIZE && ramdisk_self_test_passed; index++) {
+        ramdisk_self_test_passed = ramdisk_read_buffer[index] == ramdisk_write_buffer[index];
+    }
+    ramdisk_self_test_passed = ramdisk_self_test_passed && ramdisk_checksum() != 0;
+    kernel_write(ramdisk_self_test_passed ?
+        "storage: RAM-disk sector read/write and checksum passed\n" :
+        "storage: RAM-disk self-test failed\n");
     sync_self_test_passed = synchronization_self_test();
     kernel_write(sync_self_test_passed ?
         "sync: spinlock and mutex self-test passed\n" :

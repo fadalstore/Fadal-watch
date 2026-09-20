@@ -84,6 +84,7 @@ static volatile u8 stat_reported;
 static volatile u8 seek_reported;
 static volatile u8 wait_reported;
 static volatile u8 get_ppid_reported;
+static volatile u8 timer_scheduler_reported;
 static volatile u8 page_fault_reported;
 static u32 scheduler_ticks;
 static u32 scheduler_ready_pid;
@@ -1202,6 +1203,31 @@ static void scheduler_select_ready(void) {
     }
 }
 
+static void scheduler_select_next_ready(void) {
+    u32 current_slot = process_slot_for_pid(current_pid);
+    scheduler_ready_pid = 0;
+    for (u32 offset = 1; offset <= MAX_PROCESSES; offset++) {
+        u32 index = (current_slot + offset) % MAX_PROCESSES;
+        struct process *process = process_table[index];
+        if (process != (struct process *)0 && process->state == PROCESS_READY) {
+            scheduler_ready_pid = process->pid;
+            return;
+        }
+    }
+    scheduler_select_ready();
+}
+
+static u8 scheduler_round_robin_self_test(u32 init_pid, u32 worker_pid) {
+    u32 saved_pid = current_pid;
+    u32 saved_ready_pid = scheduler_ready_pid;
+    current_pid = init_pid;
+    scheduler_select_next_ready();
+    u8 selected_worker = scheduler_ready_pid == worker_pid;
+    current_pid = saved_pid;
+    scheduler_ready_pid = saved_ready_pid;
+    return selected_worker;
+}
+
 static char keyboard_ascii(u8 scancode) {
     switch (scancode) {
         case 0x02: return '1';
@@ -1339,7 +1365,11 @@ void timer_interrupt_handler(void) {
     timer_ticks++;
     scheduler_ticks++;
     if ((scheduler_ticks % 10) == 0) {
-        scheduler_select_ready();
+        scheduler_select_next_ready();
+        if (scheduler_ready_pid != 0 && !timer_scheduler_reported) {
+            timer_scheduler_reported = 1;
+            serial_write("scheduler: timer selected next ready PID\n");
+        }
     }
 }
 
@@ -1413,7 +1443,7 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
             serial_write("syscall: exec dispatch; process created\n");
         }
     } else if (frame->eax == SYSCALL_YIELD) {
-        scheduler_select_ready();
+        scheduler_select_next_ready();
         frame->eax = scheduler_ready_pid;
         if (!yield_reported) {
             yield_reported = 1;
@@ -1658,6 +1688,11 @@ void kernel_main(void) {
             kernel_write("memory: per-process address-space isolation verified\n");
         } else {
             kernel_write("memory: per-process address-space isolation failed\n");
+        }
+        if (scheduler_round_robin_self_test(init_pid, worker_pid)) {
+            kernel_write("scheduler: round-robin ready selection passed\n");
+        } else {
+            kernel_write("scheduler: round-robin ready selection failed\n");
         }
         if (process_cleanup_self_test(init_pid)) {
             kernel_write("process: address-space cleanup and PID-slot reuse passed\n");

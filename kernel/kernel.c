@@ -2089,6 +2089,13 @@ void kernel_main(void) {
                 readback,
                 sizeof(readback),
                 &readback_size);
+            fat12_u8 cache_probe[512];
+            ata_cache_reset();
+            ata_read_sectors(FAT12_DISK_LBA, cache_probe, 1);
+            ata_read_sectors(FAT12_DISK_LBA, cache_probe, 1);
+            if (ata_cache_hits() != 0) {
+                kernel_write("disk: ATA sector cache served read-back\n");
+            }
             if (file_ok && readback_size == sizeof(first_file) - 1) {
                 for (u32 index = 0; index < readback_size; index++) {
                     if (readback[index] != first_file[index]) {

@@ -97,7 +97,8 @@ check: independence $(OUT)/fadal-kernel.img
 		@grep -Eq "filesystem: FAT12 formatted; KERNEL.TXT written|vfs: FAT12 backend mounted; root directory recognized" $(OUT)/smoke.log
 		@grep -q "vfs: FAT12 backend mounted; root directory recognized (2 entries)" $(OUT)/smoke.log
 				@grep -Eq "filesystem: allocated clusters (3; free clusters 56|4; free clusters 55)|filesystem: mounted KERNEL.TXT verified" $(OUT)/smoke.log
-		@grep -Eq "disk: ATA LBA28 persisted FAT12 volume|disk: FAT12 remount read-only verification passed" $(OUT)/smoke.log
+	@grep -Eq "disk: ATA LBA28 persisted FAT12 volume|disk: FAT12 remount read-only verification passed" $(OUT)/smoke.log
+	@grep -q "disk: ATA sector cache served read-back" $(OUT)/smoke.log
 		@grep -Eq "filesystem: ATA read-back verified KERNEL.TXT|filesystem: mounted KERNEL.TXT verified" $(OUT)/smoke.log
 	@grep -q "memory: dynamic heap self-test passed (2 pages)" $(OUT)/smoke.log
 	@grep -q "memory: page allocation self-test passed" $(OUT)/smoke.log

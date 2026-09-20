@@ -163,6 +163,10 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     Syscall `23` (`getfs`) returns the mounted filesystem type, root-entry
     count, or generic `KERNEL.TXT` metadata size. FSH exercises lookup through
     this VFS boundary instead of depending directly on FAT12 internals.
+43. The ATA PIO driver now includes a four-entry write-through sector cache.
+    Successful writes update both disk and cache; repeated reads use cached
+    sectors and increment telemetry. FAT12 read-back requires a cache-hit
+    trace in the QEMU smoke test.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

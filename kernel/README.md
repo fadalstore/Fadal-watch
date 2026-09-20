@@ -103,7 +103,11 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     descriptor. A running child returns the nonblocking `0xffffffff` result,
     while unrelated or nonexistent children are rejected. Boot also verifies
     that a live child is not reaped and that its exit code survives until the
-    parent collects it. FSH exercises the wait ABI immediately after `exec`.
+	parent collects it. FSH exercises the wait ABI immediately after `exec`.
+
+30. Syscall `13` (`getppid`) returns the current process's recorded parent PID
+    directly from the kernel process table. FSH invokes it during startup, and
+    the smoke test verifies its freestanding interrupt dispatch path.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

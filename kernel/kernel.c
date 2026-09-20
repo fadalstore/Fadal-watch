@@ -48,6 +48,7 @@ typedef unsigned int u32;
 #define SYSCALL_STAT 10
 #define SYSCALL_SEEK 11
 #define SYSCALL_WAIT 12
+#define SYSCALL_GET_PPID 13
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
 #define PROCESS_READY 1
@@ -82,6 +83,7 @@ static volatile u8 close_reported;
 static volatile u8 stat_reported;
 static volatile u8 seek_reported;
 static volatile u8 wait_reported;
+static volatile u8 get_ppid_reported;
 static volatile u8 page_fault_reported;
 static u32 scheduler_ticks;
 static u32 scheduler_ready_pid;
@@ -586,6 +588,16 @@ static u32 process_slot_for_pid(u32 pid) {
         }
     }
     return MAX_PROCESSES;
+}
+
+static u32 process_parent_pid(u32 pid) {
+    for (u32 index = 0; index < MAX_PROCESSES; index++) {
+        struct process *process = process_table[index];
+        if (process != (struct process *)0 && process->pid == pid) {
+            return process->parent_pid;
+        }
+    }
+    return 0xffffffff;
 }
 
 static u8 process_exit_current(u32 exit_code) {
@@ -1349,6 +1361,12 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
         if (!get_pid_reported) {
             get_pid_reported = 1;
             serial_write("syscall: get_pid dispatch\n");
+        }
+    } else if (frame->eax == SYSCALL_GET_PPID) {
+        frame->eax = process_parent_pid(current_pid);
+        if (!get_ppid_reported) {
+            get_ppid_reported = 1;
+            serial_write("syscall: getppid dispatch; parent PID returned\n");
         }
     } else if (frame->eax == SYSCALL_EXIT) {
         frame->eax = process_exit_current(frame->ebx) ? 0 : 0xffffffff;

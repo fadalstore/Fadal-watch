@@ -4,6 +4,7 @@ typedef unsigned int u32;
 #define SYSCALL_EXIT 3
 #define SYSCALL_GET_TICKS 1
 #define SYSCALL_GET_PID 2
+#define SYSCALL_GET_PPID 13
 #define SYSCALL_READ 4
 #define SYSCALL_WRITE 5
 #define SYSCALL_OPEN 6
@@ -123,6 +124,7 @@ void fsh_entry(void) {
     }
     fsh_syscall3(SYSCALL_GET_TICKS, 0, 0, 0);
     fsh_syscall3(SYSCALL_GET_PID, 0, 0, 0);
+    fsh_syscall3(SYSCALL_GET_PPID, 0, 0, 0);
     for (;;) {
         if (prompt_pending) {
             fsh_write(prompt);

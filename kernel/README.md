@@ -115,6 +115,10 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     process `CR3`, and restores the selected frame through `popa`/`iret`.
     Boot validates initial contexts, and the smoke test requires the first
     real timer context switch trace.
+32. Syscall `14` (`sleep`) accepts a timer-tick count in `EBX`, marks the
+    caller `BLOCKED`, and records a wake deadline. Timer IRQ0 moves expired
+    sleepers back to `READY`; FSH exercises a one-tick sleep through the
+    userspace ABI and the smoke test verifies the dispatch path.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

@@ -49,6 +49,7 @@ typedef unsigned int u32;
 #define SYSCALL_SEEK 11
 #define SYSCALL_WAIT 12
 #define SYSCALL_GET_PPID 13
+#define SYSCALL_SLEEP 14
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
 #define PROCESS_READY 1
@@ -57,6 +58,7 @@ typedef unsigned int u32;
 #define PROCESS_BLOCKED 4
 #define WAIT_NONE 0
 #define WAIT_TTY 1
+#define WAIT_SLEEP 2
 #define MAX_FDS 8
 #define MAX_HEAP_ALLOCS 32
 #define TTY_BUFFER_SIZE 256
@@ -84,6 +86,7 @@ static volatile u8 stat_reported;
 static volatile u8 seek_reported;
 static volatile u8 wait_reported;
 static volatile u8 get_ppid_reported;
+static volatile u8 sleep_reported;
 static volatile u8 timer_scheduler_reported;
 static volatile u8 page_fault_reported;
 static u32 scheduler_ticks;
@@ -215,6 +218,7 @@ struct process {
     u32 user_stack_top;
     struct address_space *address_space;
     u32 wait_reason;
+    u32 wake_tick;
     u32 exit_code;
     interrupt_frame context;
     u8 context_valid;
@@ -501,6 +505,7 @@ static void process_manager_init(void) {
             process_table[index]->user_stack_top = 0;
             process_table[index]->address_space = (struct address_space *)0;
             process_table[index]->wait_reason = WAIT_NONE;
+            process_table[index]->wake_tick = 0;
             process_table[index]->exit_code = 0;
             process_table[index]->context_valid = 0;
             process_table[index]->context.eip = 0;
@@ -549,6 +554,7 @@ static u32 process_create(u32 entry, u32 user_stack_top) {
         process->user_stack_top = user_stack_top;
         process->address_space = space;
         process->wait_reason = WAIT_NONE;
+        process->wake_tick = 0;
         process->exit_code = 0;
         process_context_init(process);
         for (u32 fd = 0; fd < MAX_FDS; fd++) {
@@ -667,6 +673,7 @@ static u8 process_reap_slot(u32 index) {
     process->user_stack_top = 0;
     process->address_space = (struct address_space *)0;
     process->wait_reason = WAIT_NONE;
+    process->wake_tick = 0;
     process->exit_code = 0;
     process->context_valid = 0;
     process->context.eip = 0;
@@ -1224,6 +1231,19 @@ static void scheduler_wake_reason(u32 reason) {
     }
 }
 
+static void scheduler_wake_sleepers(void) {
+    for (u32 index = 0; index < MAX_PROCESSES; index++) {
+        struct process *process = process_table[index];
+        if (process != (struct process *)0 && process->state == PROCESS_BLOCKED &&
+            process->wait_reason == WAIT_SLEEP &&
+            (u32)(timer_ticks - process->wake_tick) < 0x80000000) {
+            process->state = PROCESS_READY;
+            process->wait_reason = WAIT_NONE;
+            process->wake_tick = 0;
+        }
+    }
+}
+
 static void scheduler_select_ready(void) {
     scheduler_ready_pid = 0;
     for (u32 index = 0; index < MAX_PROCESSES; index++) {
@@ -1464,6 +1484,7 @@ void keyboard_interrupt_handler(void) {
 interrupt_frame *timer_interrupt_handler(interrupt_frame *frame) {
     timer_ticks++;
     scheduler_ticks++;
+    scheduler_wake_sleepers();
     if ((scheduler_ticks % 10) != 0) {
         return frame;
     }
@@ -1494,6 +1515,23 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
         if (!get_ppid_reported) {
             get_ppid_reported = 1;
             serial_write("syscall: getppid dispatch; parent PID returned\n");
+        }
+    } else if (frame->eax == SYSCALL_SLEEP) {
+        u32 slot = process_slot_for_pid(current_pid);
+        if (frame->ebx == 0) {
+            frame->eax = 0;
+        } else if (slot < MAX_PROCESSES) {
+            struct process *process = process_table[slot];
+            process->state = PROCESS_BLOCKED;
+            process->wait_reason = WAIT_SLEEP;
+            process->wake_tick = timer_ticks + frame->ebx;
+            frame->eax = 0;
+        } else {
+            frame->eax = 0xffffffff;
+        }
+        if (!sleep_reported) {
+            sleep_reported = 1;
+            serial_write("syscall: sleep dispatch; timer wake scheduled\n");
         }
     } else if (frame->eax == SYSCALL_EXIT) {
         frame->eax = process_exit_current(frame->ebx) ? 0 : 0xffffffff;

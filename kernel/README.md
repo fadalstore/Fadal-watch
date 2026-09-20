@@ -136,6 +136,10 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     reports the PS/2 keyboard IRQ path as online, while device `1` returns the
     current TTY input queue depth. FSH invokes the keyboard status query from
     ring 3, and the smoke test verifies the IRQ/TTY driver boundary.
+37. Syscall `18` (`setpriority`) assigns a bounded priority from `1` to `3`.
+    Timer-driven multitasking now chooses the highest-priority ready process;
+    equal-priority candidates retain bounded round-robin ordering. FSH raises
+    its priority to `2`, and the smoke test verifies the scheduler update.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

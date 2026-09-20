@@ -55,6 +55,7 @@ typedef unsigned int u32;
 #define SYSCALL_MMAP 15
 #define SYSCALL_GET_RING 16
 #define SYSCALL_GET_DEVICE 17
+#define SYSCALL_SET_PRIORITY 18
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
 #define PROCESS_READY 1
@@ -95,6 +96,7 @@ static volatile u8 sleep_reported;
 static volatile u8 mmap_reported;
 static volatile u8 get_ring_reported;
 static volatile u8 get_device_reported;
+static volatile u8 set_priority_reported;
 static volatile u8 timer_scheduler_reported;
 static volatile u8 page_fault_reported;
 static u32 scheduler_ticks;
@@ -228,6 +230,7 @@ struct process {
     u32 wait_reason;
     u32 wake_tick;
     u32 exit_code;
+    u32 priority;
     u32 heap_pages;
     u32 heap_physical[MAX_HEAP_PAGES];
     interrupt_frame context;
@@ -518,6 +521,7 @@ static void process_manager_init(void) {
             process_table[index]->wait_reason = WAIT_NONE;
             process_table[index]->wake_tick = 0;
             process_table[index]->exit_code = 0;
+            process_table[index]->priority = 1;
             process_table[index]->heap_pages = 0;
             for (u32 page = 0; page < MAX_HEAP_PAGES; page++) {
                 process_table[index]->heap_physical[page] = 0;
@@ -571,6 +575,7 @@ static u32 process_create(u32 entry, u32 user_stack_top) {
         process->wait_reason = WAIT_NONE;
         process->wake_tick = 0;
         process->exit_code = 0;
+        process->priority = 1;
         process->heap_pages = 0;
         for (u32 page = 0; page < MAX_HEAP_PAGES; page++) {
             process->heap_physical[page] = 0;
@@ -703,6 +708,7 @@ static u8 process_reap_slot(u32 index) {
     process->wait_reason = WAIT_NONE;
     process->wake_tick = 0;
     process->exit_code = 0;
+    process->priority = 1;
     process->heap_pages = 0;
     for (u32 page = 0; page < MAX_HEAP_PAGES; page++) {
         process->heap_physical[page] = 0;
@@ -1341,15 +1347,19 @@ static void scheduler_select_ready(void) {
 static void scheduler_select_next_ready(void) {
     u32 current_slot = process_slot_for_pid(current_pid);
     scheduler_ready_pid = 0;
+    u32 best_priority = 0;
     for (u32 offset = 1; offset <= MAX_PROCESSES; offset++) {
         u32 index = (current_slot + offset) % MAX_PROCESSES;
         struct process *process = process_table[index];
-        if (process != (struct process *)0 && process->state == PROCESS_READY) {
+        if (process != (struct process *)0 && process->state == PROCESS_READY &&
+            process->priority >= best_priority) {
             scheduler_ready_pid = process->pid;
-            return;
+            best_priority = process->priority;
         }
     }
-    scheduler_select_ready();
+    if (scheduler_ready_pid == 0) {
+        scheduler_select_ready();
+    }
 }
 
 static u8 scheduler_round_robin_self_test(u32 init_pid, u32 worker_pid) {
@@ -1616,6 +1626,18 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
         if (!get_device_reported) {
             get_device_reported = 1;
             serial_write("syscall: getdevice dispatch; keyboard and TTY status returned\n");
+        }
+    } else if (frame->eax == SYSCALL_SET_PRIORITY) {
+        struct process *process = current_process();
+        if (process != (struct process *)0 && frame->ebx >= 1 && frame->ebx <= 3) {
+            process->priority = frame->ebx;
+            frame->eax = process->priority;
+        } else {
+            frame->eax = 0xffffffff;
+        }
+        if (!set_priority_reported) {
+            set_priority_reported = 1;
+            serial_write("syscall: setpriority dispatch; scheduler priority updated\n");
         }
     } else if (frame->eax == SYSCALL_SLEEP) {
         u32 slot = process_slot_for_pid(current_pid);

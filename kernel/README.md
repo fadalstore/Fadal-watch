@@ -167,6 +167,10 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     Successful writes update both disk and cache; repeated reads use cached
     sectors and increment telemetry. FAT12 read-back requires a cache-hit
     trace in the QEMU smoke test.
+44. The kernel now has structured log records with a level and monotonic
+    sequence number on the serial console. Syscall `24` (`getlog`) exposes the
+    current sequence and level to FSH; boot requires the first `[KLOG 1 #1]`
+    record, making early initialization and later debug output traceable.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

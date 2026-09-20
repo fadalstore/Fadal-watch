@@ -61,6 +61,7 @@ typedef unsigned int u32;
 #define SYSCALL_GET_IPI 21
 #define SYSCALL_GET_SYNC 22
 #define SYSCALL_GET_FS 23
+#define SYSCALL_GET_LOG 24
 #define LAPIC_BASE 0xfee00000
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
@@ -112,6 +113,9 @@ static u8 smp_ipi_state;
 static volatile u8 get_ipi_reported;
 static volatile u8 get_sync_reported;
 static volatile u8 get_fs_reported;
+static volatile u8 get_log_reported;
+static u32 kernel_log_sequence;
+static u8 kernel_log_level;
 struct spinlock {
     volatile u32 locked;
 };
@@ -1329,6 +1333,17 @@ static void kernel_write(const char *text) {
     vga_write(text);
     serial_write(text);
 }
+static void kernel_log(u8 level, const char *text) {
+    kernel_log_sequence++;
+    kernel_log_level = level;
+    serial_write("[KLOG ");
+    serial_putc((char)('0' + level));
+    serial_write(" #");
+    write_u32(kernel_log_sequence);
+    serial_write("] ");
+    serial_write(text);
+    vga_write(text);
+}
 static void spin_lock(struct spinlock *lock) {
     u32 value = 1;
     do {
@@ -1810,6 +1825,13 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
             get_fs_reported = 1;
             serial_write("syscall: getfs dispatch; generic VFS lookup returned\n");
         }
+    } else if (frame->eax == SYSCALL_GET_LOG) {
+        frame->eax = frame->ebx == 0 ? kernel_log_sequence :
+            frame->ebx == 1 ? kernel_log_level : 0xffffffff;
+        if (!get_log_reported) {
+            get_log_reported = 1;
+            serial_write("syscall: getlog dispatch; structured log state returned\n");
+        }
     } else if (frame->eax == SYSCALL_SLEEP) {
         u32 slot = process_slot_for_pid(current_pid);
         if (frame->ebx == 0) {
@@ -1933,6 +1955,7 @@ __attribute__((section(".text.entry"), used))
 void kernel_main(void) {
     serial_init();
     vga_clear();
+    kernel_log(1, "structured logging online\n");
 
     kernel_write("FADAL KERNEL ONLINE\n");
     kernel_write("-------------------\n");

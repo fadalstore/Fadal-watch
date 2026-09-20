@@ -138,6 +138,8 @@ check: independence $(OUT)/fadal-kernel.img
 	@grep -q "sync: spinlock and mutex self-test passed" $(OUT)/smoke.log
 	@grep -q "syscall: getsync dispatch; spinlock and mutex status returned" $(OUT)/smoke.log
 	@grep -q "syscall: getfs dispatch; generic VFS lookup returned" $(OUT)/smoke.log
+	@grep -q "\[KLOG 1 #1\] structured logging online" $(OUT)/smoke.log
+	@grep -q "syscall: getlog dispatch; structured log state returned" $(OUT)/smoke.log
 		@grep -q "syscall: get_pid dispatch" $(OUT)/smoke.log
 			@grep -q "syscall: read dispatch; nonblocking TTY queue read" $(OUT)/smoke.log
 			@grep -q "syscall: yield dispatch; cooperative scheduler point" $(OUT)/smoke.log

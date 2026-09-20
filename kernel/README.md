@@ -193,6 +193,19 @@ general block-device abstraction remain future work.
 The build requires a C compiler with 32-bit freestanding support, GNU binutils,
 and QEMU:
 
+From the repository root, install the required packages and run the build and
+QEMU smoke test with:
+
+```sh
+./scripts/install-dependencies.sh
+```
+
+The installer supports Debian/Ubuntu, Fedora/RHEL, and Arch Linux. It uses the
+system package manager through `sudo`, checks that GCC can emit 32-bit objects,
+and runs `make -C kernel check` after installation. To validate an already
+prepared environment without changing packages, use
+`FADAL_SKIP_INSTALL=1 ./scripts/install-dependencies.sh`.
+
 ```sh
 make -C kernel
 make -C kernel independence

@@ -655,6 +655,30 @@ static u32 process_wait_child(u32 child_pid, u32 *status) {
     return 0xffffffff;
 }
 
+static u8 process_wait_self_test(u32 init_pid) {
+    u32 child_pid = process_create(USER_CODE_ADDRESS, USER_STACK_ADDRESS + PAGE_SIZE);
+    u32 child_slot = process_slot_for_pid(child_pid);
+    u32 status = 0xffffffff;
+    if (child_pid == 0 || child_slot >= MAX_PROCESSES) {
+        return 0;
+    }
+    /* wait is nonblocking until the scheduler can suspend and resume a task. */
+    current_pid = init_pid;
+    if (process_wait_child(child_pid, &status) != 0xffffffff) {
+        return 0;
+    }
+    current_pid = child_pid;
+    if (!process_exit_current(42)) {
+        current_pid = init_pid;
+        return 0;
+    }
+    current_pid = init_pid;
+    u32 waited_pid = process_wait_child(child_pid, &status);
+    current_pid = init_pid;
+    return waited_pid == child_pid && status == 42 &&
+        process_table[child_slot]->state == PROCESS_UNUSED;
+}
+
 static u8 process_cleanup_self_test(u32 init_pid) {
     u32 free_before = free_page_count;
     u32 probe_pid = process_create(USER_CODE_ADDRESS, USER_STACK_ADDRESS + PAGE_SIZE);
@@ -1621,6 +1645,11 @@ void kernel_main(void) {
             kernel_write("process: address-space cleanup and PID-slot reuse passed\n");
         } else {
             kernel_write("process: address-space cleanup self-test failed\n");
+        }
+        if (process_wait_self_test(init_pid)) {
+            kernel_write("process: parent-child wait status and reaping passed\n");
+        } else {
+            kernel_write("process: parent-child wait self-test failed\n");
         }
         u32 file_probe_fd = fd_open_kernel_file();
         u32 file_probe_size = file_probe_fd == 0xffffffff ? 0xffffffff :

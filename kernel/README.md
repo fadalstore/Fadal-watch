@@ -98,11 +98,12 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     returns the new offset. Requests beyond the bounded file are rejected;
     FSH performs an absolute-zero seek and one-byte read probe at startup.
 29. Processes now record `parent_pid` and `exit_code`. Syscall `12` (`wait`)
-    accepts a child PID in `EBX` and a userspace status pointer in `ECX`; it
-    returns the exited child PID after copying the exit code and reaping the
+    accepts a child PID in `EBX` and a userspace status pointer in `ECX`;
+    it returns the exited child PID after copying the exit code and reaping the
     descriptor. A running child returns the nonblocking `0xffffffff` result,
-    while unrelated or nonexistent children are rejected. FSH exercises the
-    wait ABI immediately after `exec`.
+    while unrelated or nonexistent children are rejected. Boot also verifies
+    that a live child is not reaped and that its exit code survives until the
+    parent collects it. FSH exercises the wait ABI immediately after `exec`.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

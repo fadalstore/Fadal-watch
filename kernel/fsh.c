@@ -10,6 +10,7 @@ typedef unsigned int u32;
 #define SYSCALL_GET_RING 16
 #define SYSCALL_GET_DEVICE 17
 #define SYSCALL_SET_PRIORITY 18
+#define SYSCALL_NET_LOOPBACK 19
 #define SYSCALL_READ 4
 #define SYSCALL_WRITE 5
 #define SYSCALL_OPEN 6
@@ -133,6 +134,8 @@ void fsh_entry(void) {
     fsh_syscall3(SYSCALL_GET_RING, 0, 0, 0);
     fsh_syscall3(SYSCALL_GET_DEVICE, 0, 0, 0);
     fsh_syscall3(SYSCALL_SET_PRIORITY, 2, 0, 0);
+    fsh_syscall3(SYSCALL_NET_LOOPBACK, (u32)prompt, 6, 0);
+    fsh_syscall3(SYSCALL_NET_LOOPBACK, (u32)input, sizeof(input), 1);
     fsh_syscall3(SYSCALL_SLEEP, 1, 0, 0);
     fsh_syscall3(SYSCALL_MMAP, 32, 0, 0);
     for (;;) {

@@ -140,6 +140,11 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     Timer-driven multitasking now chooses the highest-priority ready process;
     equal-priority candidates retain bounded round-robin ordering. FSH raises
     its priority to `2`, and the smoke test verifies the scheduler update.
+38. Syscall `19` (`netloop`) provides the first network-stack boundary: mode
+    `0` transmits a bounded packet into the kernel loopback queue and mode `1`
+    receives it into a validated user buffer. FSH sends and receives a probe
+    packet from ring 3, establishing packet ownership and copy-in/copy-out
+    behavior before a physical NIC driver is added.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

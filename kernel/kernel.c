@@ -56,6 +56,7 @@ typedef unsigned int u32;
 #define SYSCALL_GET_RING 16
 #define SYSCALL_GET_DEVICE 17
 #define SYSCALL_SET_PRIORITY 18
+#define SYSCALL_NET_LOOPBACK 19
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
 #define PROCESS_READY 1
@@ -97,6 +98,9 @@ static volatile u8 mmap_reported;
 static volatile u8 get_ring_reported;
 static volatile u8 get_device_reported;
 static volatile u8 set_priority_reported;
+static volatile u8 net_loopback_reported;
+static u8 net_loopback_buffer[256];
+static u32 net_loopback_length;
 static volatile u8 timer_scheduler_reported;
 static volatile u8 page_fault_reported;
 static u32 scheduler_ticks;
@@ -301,6 +305,7 @@ static void serial_write(const char *text);
 static void *page_alloc(void);
 static void page_free(void *address);
 static void process_context_init(struct process *process);
+static u8 user_range_valid(u32 address, u32 length);
 
 static void write_u32(u32 value) {
     char digits[11];
@@ -1309,6 +1314,30 @@ static void shell_write_bytes(const u8 *data, u32 size) {
     }
 }
 
+static u32 net_loopback_send(const u8 *data, u32 length) {
+    if (length == 0 || length > sizeof(net_loopback_buffer) ||
+        !user_range_valid((u32)data, length)) {
+        return 0xffffffff;
+    }
+    for (u32 index = 0; index < length; index++) {
+        net_loopback_buffer[index] = data[index];
+    }
+    net_loopback_length = length;
+    return length;
+}
+
+static u32 net_loopback_receive(u8 *data, u32 capacity) {
+    if (capacity == 0 || !user_range_valid((u32)data, capacity)) {
+        return 0xffffffff;
+    }
+    u32 amount = net_loopback_length < capacity ? net_loopback_length : capacity;
+    for (u32 index = 0; index < amount; index++) {
+        data[index] = net_loopback_buffer[index];
+    }
+    net_loopback_length = 0;
+    return amount;
+}
+
 static void scheduler_wake_reason(u32 reason) {
     for (u32 index = 0; index < MAX_PROCESSES; index++) {
         struct process *process = process_table[index];
@@ -1638,6 +1667,15 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
         if (!set_priority_reported) {
             set_priority_reported = 1;
             serial_write("syscall: setpriority dispatch; scheduler priority updated\n");
+        }
+    } else if (frame->eax == SYSCALL_NET_LOOPBACK) {
+        frame->eax = frame->edx == 0 ?
+            net_loopback_send((const u8 *)frame->ebx, frame->ecx) :
+            frame->edx == 1 ? net_loopback_receive((u8 *)frame->ebx, frame->ecx) :
+            0xffffffff;
+        if (!net_loopback_reported) {
+            net_loopback_reported = 1;
+            serial_write("syscall: netloop dispatch; loopback packet delivered\n");
         }
     } else if (frame->eax == SYSCALL_SLEEP) {
         u32 slot = process_slot_for_pid(current_pid);

@@ -43,14 +43,17 @@ static u8 fsh_equal(const char *left, u32 left_length, const char *right) {
 }
 
 static void fsh_write(const char *text) {
-    fsh_syscall3(SYSCALL_WRITE, (u32)text, fsh_length(text), 0);
+    fsh_syscall3(SYSCALL_WRITE, (u32)text, fsh_length(text), 1);
+}
+
+static void fsh_write_bytes(const char *text, u32 length) {
+    fsh_syscall3(SYSCALL_WRITE, (u32)text, length, 1);
 }
 
 static void fsh_command(const char *line, u32 length) {
     static const char help[] = "commands: help mount ls cat KERNEL.TXT exit\n";
     static const char mounted[] = "FAT12 root mounted through VFS\n";
     static const char listing[] = "KERNEL.TXT FSH.BIN\n";
-    static const char cat[] = "Fadal FAT12 write\n";
     static const char unknown[] = "unknown command; try help\n";
     if (fsh_equal(line, length, "help")) {
         fsh_write(help);
@@ -60,8 +63,12 @@ static void fsh_command(const char *line, u32 length) {
         fsh_write(listing);
     } else if (fsh_equal(line, length, "cat KERNEL.TXT")) {
         u32 fd = fsh_syscall3(SYSCALL_OPEN, (u32)"KERNEL.TXT", 10, 0);
-        fsh_write(cat);
         if (fd != 0xffffffff) {
+            static char contents[64];
+            u32 count = fsh_syscall3(SYSCALL_READ, (u32)contents, sizeof(contents), fd);
+            if (count != 0xffffffff) {
+                fsh_write_bytes(contents, count);
+            }
             fsh_syscall3(SYSCALL_CLOSE, fd, 0, 0);
         }
     } else if (!fsh_equal(line, length, "exit")) {

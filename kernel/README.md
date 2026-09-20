@@ -83,8 +83,13 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
 25. Processes now own eight bounded file-descriptor slots. Descriptors `0`,
     `1`, and `2` represent TTY input/output/error, while `open` allocates a
     kernel-file handle from slot `3` onward and syscall `9` (`close`) releases
-    it. FSH exercises allocation and release when opening `KERNEL.TXT`; actual
-    descriptor-directed file I/O remains the next userspace ABI step.
+    it. FSH exercises allocation and release when opening `KERNEL.TXT`.
+26. Descriptor-directed I/O is active: syscall `read` and `write` accept the
+    descriptor in `EDX`. TTY input uses descriptor `0`, console output uses
+    descriptors `1` and `2`, and an opened `KERNEL.TXT` handle reads from a
+    bounded kernel-backed file buffer with a per-descriptor offset. FSH's
+    `cat KERNEL.TXT` command now opens, reads, writes, and closes the handle
+    instead of emitting hardcoded file contents.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

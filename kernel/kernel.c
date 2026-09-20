@@ -183,6 +183,8 @@ struct address_space {
 struct file_descriptor {
     u8 used;
     u8 kind;
+    u32 offset;
+    u32 size;
 };
 
 struct process {
@@ -217,6 +219,7 @@ static u32 active_processes;
 static struct heap_allocation heap_allocations[MAX_HEAP_ALLOCS];
 static u32 heap_allocation_count;
 static u32 heap_used_bytes;
+static u8 file_read_buffer[128];
 
 extern void default_isr(void);
 extern void gdt_flush(const struct gdt_pointer *pointer);
@@ -475,6 +478,8 @@ static void process_manager_init(void) {
             for (u32 fd = 0; fd < MAX_FDS; fd++) {
                 process_table[index]->fds[fd].used = 0;
                 process_table[index]->fds[fd].kind = 0;
+                process_table[index]->fds[fd].offset = 0;
+                process_table[index]->fds[fd].size = 0;
             }
         }
     }
@@ -517,13 +522,18 @@ static u32 process_create(u32 entry, u32 user_stack_top) {
         for (u32 fd = 0; fd < MAX_FDS; fd++) {
             process->fds[fd].used = 0;
             process->fds[fd].kind = 0;
+            process->fds[fd].offset = 0;
+            process->fds[fd].size = 0;
         }
         process->fds[0].used = 1;
         process->fds[0].kind = 1;
+        process->fds[0].size = 0xffffffff;
         process->fds[1].used = 1;
         process->fds[1].kind = 2;
+        process->fds[1].size = 0xffffffff;
         process->fds[2].used = 1;
         process->fds[2].kind = 2;
+        process->fds[2].size = 0xffffffff;
         process_total++;
         active_processes++;
         return process->pid;
@@ -617,6 +627,10 @@ static u32 fd_open_kernel_file(void) {
         if (process != (struct process *)0 && !process->fds[index].used) {
             process->fds[index].used = 1;
             process->fds[index].kind = 3;
+            process->fds[index].offset = 0;
+            process->fds[index].size = 0;
+            vfs_read_file("KERNEL.TXT", file_read_buffer,
+                          sizeof(file_read_buffer), &process->fds[index].size);
             return index;
         }
     }
@@ -637,6 +651,37 @@ static u8 fd_close_current(u32 fd) {
         return 1;
     }
     return 0;
+}
+
+static struct process *current_process(void) {
+    for (u32 slot = 0; slot < MAX_PROCESSES; slot++) {
+        if (process_table[slot] != (struct process *)0 &&
+            process_table[slot]->pid == current_pid) {
+            return process_table[slot];
+        }
+    }
+    return (struct process *)0;
+}
+
+static u32 fd_read_file(u32 fd, u8 *output, u32 capacity) {
+    struct process *process = current_process();
+    if (process == (struct process *)0 || fd >= MAX_FDS ||
+        !process->fds[fd].used || process->fds[fd].kind != 3) {
+        return 0xffffffff;
+    }
+    struct file_descriptor *descriptor = &process->fds[fd];
+    if (descriptor->offset >= descriptor->size) {
+        return 0;
+    }
+    u32 amount = descriptor->size - descriptor->offset;
+    if (amount > capacity) {
+        amount = capacity;
+    }
+    for (u32 index = 0; index < amount; index++) {
+        output[index] = file_read_buffer[descriptor->offset + index];
+    }
+    descriptor->offset += amount;
+    return amount;
 }
 
 static u8 user_range_valid(u32 address, u32 length) {
@@ -1193,7 +1238,9 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
         }
     } else if (frame->eax == SYSCALL_READ) {
         if (user_range_valid(frame->ebx, frame->ecx) && frame->ecx != 0) {
-            frame->eax = tty_read_available((u8 *)frame->ebx, frame->ecx);
+            frame->eax = frame->edx >= 3 ?
+                fd_read_file(frame->edx, (u8 *)frame->ebx, frame->ecx) :
+                tty_read_available((u8 *)frame->ebx, frame->ecx);
         } else {
             frame->eax = 0xffffffff;
         }
@@ -1202,7 +1249,8 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
             serial_write("syscall: read dispatch; nonblocking TTY queue read\n");
         }
     } else if (frame->eax == SYSCALL_WRITE) {
-        if (user_range_valid(frame->ebx, frame->ecx)) {
+        if ((frame->edx == 0 || frame->edx == 1 || frame->edx == 2) &&
+            user_range_valid(frame->ebx, frame->ecx)) {
             shell_write_bytes((const u8 *)frame->ebx, frame->ecx);
             frame->eax = frame->ecx;
         } else {
@@ -1443,6 +1491,19 @@ void kernel_main(void) {
             kernel_write("process: address-space cleanup and PID-slot reuse passed\n");
         } else {
             kernel_write("process: address-space cleanup self-test failed\n");
+        }
+        u32 file_probe_fd = fd_open_kernel_file();
+        u32 file_probe_size = file_probe_fd == 0xffffffff ? 0xffffffff :
+            fd_read_file(file_probe_fd, file_read_buffer, sizeof(file_read_buffer));
+        u8 file_probe_ok = file_probe_size != 0xffffffff && file_probe_size > 0 &&
+            file_probe_size < sizeof(file_read_buffer);
+        if (file_probe_fd != 0xffffffff) {
+            fd_close_current(file_probe_fd);
+        }
+        if (file_probe_ok) {
+            kernel_write("filesystem: descriptor-backed KERNEL.TXT read verified\n");
+        } else {
+            kernel_write("filesystem: descriptor-backed read self-test failed\n");
         }
     }
     kernel_write("memory: 16 MiB identity paging online\n");

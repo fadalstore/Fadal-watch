@@ -120,6 +120,7 @@ check: independence $(OUT)/fadal-kernel.img
 		@grep -q "syscall: write dispatch; user buffer validated" $(OUT)/smoke.log
 					@grep -q "syscall: open dispatch; descriptor allocated" $(OUT)/smoke.log
 					@grep -q "syscall: close dispatch; descriptor released" $(OUT)/smoke.log
+					@grep -q "filesystem: descriptor-backed KERNEL.TXT read verified" $(OUT)/smoke.log
 		@grep -q "syscall: exec dispatch; process created" $(OUT)/smoke.log
 	@dd if=$(OUT)/fadal-kernel.img bs=512 skip=$(FAT12_DATA_LBA) count=1 status=none | grep -a -q "FADAL FAT12 write"
 	@echo "Fadal Kernel boot smoke test passed"

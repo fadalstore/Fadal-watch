@@ -11,19 +11,19 @@ install_debian() {
     ${SUDO} apt-get update
     DEBIAN_FRONTEND=noninteractive ${SUDO} apt-get install -y \
         build-essential gcc-multilib binutils make qemu-system-x86 git \
-        dosfstools mtools util-linux fdisk
+        dosfstools mtools util-linux fdisk gnu-efi
 }
 
 install_fedora() {
     ${SUDO} dnf install -y \
         gcc glibc-devel.i686 binutils make qemu-system-x86 git \
-        dosfstools mtools util-linux
+        dosfstools mtools util-linux gnu-efi-devel
 }
 
 install_arch() {
     ${SUDO} pacman -Sy --needed --noconfirm \
         base-devel gcc lib32-glibc binutils make qemu-desktop git \
-        dosfstools mtools util-linux
+        dosfstools mtools util-linux gnu-efi
 }
 
 if [[ "${FADAL_SKIP_INSTALL:-0}" != "1" ]]; then

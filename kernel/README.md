@@ -252,6 +252,22 @@ Custom output and image size can be selected with `UEFI_IMAGE` and
 `tools/create-uefi-image.sh`. The image builder uses `sfdisk`, `mkfs.fat`, and
 `mtools`, so `scripts/install-dependencies.sh` installs those tools.
 
+The GNU-EFI loader build is isolated under `kernel/uefi`. After adding the
+loader implementation as `kernel/uefi/boot.c`, build and validate the PE/COFF
+application with:
+
+```sh
+make -C kernel/uefi check
+make -C kernel/uefi image UEFI_KERNEL=out/fadal-uefi.krn
+```
+
+The Makefile discovers the GNU-EFI headers, `crt0-efi-x86_64.o`, linker script,
+and `libefi.a`/`libgnuefi.a`; paths can be overridden with `EFI_INC`,
+`EFI_ARCH_INC`, `EFI_CRT`, `EFI_LDSCRIPT`, and `EFI_LIBDIR`. It emits
+`kernel/uefi/out/BOOTX64.EFI` and validates that the result is a PE32+ x86_64
+EFI application. This target builds the loader only; the kernel payload must
+be an x86_64 `fadal-uefi.krn` compatible with the loader's handoff contract.
+
 When running with a VGA display, the console accepts keyboard input after the
 `Fadal console ready` prompt. Keyboard input is delivered through the kernel's
 own IRQ1 handler; no Linux, Ubuntu, or external userspace is involved in the

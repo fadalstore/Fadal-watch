@@ -254,6 +254,7 @@ static struct heap_allocation heap_allocations[MAX_HEAP_ALLOCS];
 static u32 heap_allocation_count;
 static u32 heap_used_bytes;
 static u8 file_read_buffer[128];
+static u8 ata_identify_buffer[512];
 
 extern void default_isr(void);
 extern void gdt_flush(const struct gdt_pointer *pointer);
@@ -1724,6 +1725,11 @@ void kernel_main(void) {
     kernel_write("origin: from-scratch, no Linux dependency\n");
     kernel_write("status: boot path verified\n");
     memory_init();
+    if (ata_identify(ata_identify_buffer)) {
+        kernel_write("disk: ATA primary-master IDENTIFY passed\n");
+    } else {
+        kernel_write("disk: ATA primary-master IDENTIFY failed\n");
+    }
     reserve_page(USER_CODE_ADDRESS);
     reserve_page(USER_STACK_ADDRESS);
     reserve_page(USER_STACK_2_ADDRESS);

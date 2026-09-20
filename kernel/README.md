@@ -124,6 +124,10 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     private page tables at `0x00400000`, and expands validated user ranges.
     Exiting a process returns those physical pages to the allocator; FSH
     exercises a 32-byte mapping during startup.
+34. The primary-master ATA PIO driver now exposes an `IDENTIFY` probe that
+    transfers the controller's 512-byte identity block before FAT12 mount.
+    Boot and QEMU smoke tests require this hardware response, in addition to
+    the existing sector read/write persistence checks behind VFS.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

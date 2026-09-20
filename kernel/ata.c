@@ -10,6 +10,7 @@
 #define ATA_COMMAND 0x1f7
 #define ATA_CMD_READ_SECTORS 0x20
 #define ATA_CMD_WRITE_SECTORS 0x30
+#define ATA_CMD_IDENTIFY 0xec
 #define ATA_STATUS_ERR 0x01
 #define ATA_STATUS_DRQ 0x08
 #define ATA_STATUS_DF 0x20
@@ -118,4 +119,32 @@ ata_u8 ata_read_sectors(ata_u32 lba, ata_u8 *data, ata_u32 sectors) {
         }
     }
     return 1;
+}
+
+ata_u8 ata_identify(ata_u8 *data) {
+    if (data == (ata_u8 *)0) {
+        return 0;
+    }
+    ata_delay();
+    outb(ATA_DRIVE, 0xe0);
+    outb(ATA_SECTOR_COUNT, 0);
+    outb(ATA_LBA_LOW, 0);
+    outb(ATA_LBA_MID, 0);
+    outb(ATA_LBA_HIGH, 0);
+    outb(ATA_COMMAND, ATA_CMD_IDENTIFY);
+    for (ata_u32 attempt = 0; attempt < ATA_TIMEOUT; attempt++) {
+        ata_u8 status = inb(ATA_STATUS);
+        if (status == 0 || (status & (ATA_STATUS_ERR | ATA_STATUS_DF)) != 0) {
+            return 0;
+        }
+        if ((status & ATA_STATUS_BSY) == 0 && (status & ATA_STATUS_DRQ) != 0) {
+            for (ata_u32 word = 0; word < 256; word++) {
+                unsigned short value = inw(ATA_DATA);
+                data[word * 2] = (ata_u8)(value & 0xff);
+                data[word * 2 + 1] = (ata_u8)(value >> 8);
+            }
+            return 1;
+        }
+    }
+    return 0;
 }

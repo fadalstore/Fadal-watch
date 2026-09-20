@@ -6,5 +6,6 @@ typedef unsigned int ata_u32;
 
 ata_u8 ata_write_sectors(ata_u32 lba, const ata_u8 *data, ata_u32 sectors);
 ata_u8 ata_read_sectors(ata_u32 lba, ata_u8 *data, ata_u32 sectors);
+ata_u8 ata_identify(ata_u8 *data);
 
 #endif

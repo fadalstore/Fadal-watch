@@ -231,6 +231,27 @@ serial output remains attached to the launching terminal. `make run` is the
 headless serial-output mode and is useful for logs, but it cannot receive
 physical keyboard input while QEMU's display is disabled.
 
+### UEFI image packaging
+
+The repository also provides an EFI System Partition image packager. It creates
+a 64 MiB MBR-partitioned FAT32 image with the ESP aligned at the 1 MiB boundary
+and installs the standard removable-media path `EFI/BOOT/BOOTX64.EFI` plus the
+kernel payload `FADAL.KRN`:
+
+```sh
+make -C kernel uefi-image \
+    UEFI_BOOTLOADER=out/BOOTX64.EFI \
+    UEFI_KERNEL=out/fadal-uefi.krn
+```
+
+The output is `kernel/out/fadal-uefi.img`. The UEFI loader and kernel payload
+must already exist; this target packages them but does not yet compile a UEFI
+loader or convert the current 32-bit BIOS kernel into an x86_64 EFI payload.
+Custom output and image size can be selected with `UEFI_IMAGE` and
+`UEFI_IMAGE_SIZE_MIB`, or by passing the corresponding options to
+`tools/create-uefi-image.sh`. The image builder uses `sfdisk`, `mkfs.fat`, and
+`mtools`, so `scripts/install-dependencies.sh` installs those tools.
+
 When running with a VGA display, the console accepts keyboard input after the
 `Fadal console ready` prompt. Keyboard input is delivered through the kernel's
 own IRQ1 handler; no Linux, Ubuntu, or external userspace is involved in the

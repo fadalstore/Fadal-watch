@@ -10,17 +10,20 @@ fi
 install_debian() {
     ${SUDO} apt-get update
     DEBIAN_FRONTEND=noninteractive ${SUDO} apt-get install -y \
-        build-essential gcc-multilib binutils make qemu-system-x86 git
+        build-essential gcc-multilib binutils make qemu-system-x86 git \
+        dosfstools mtools util-linux fdisk
 }
 
 install_fedora() {
     ${SUDO} dnf install -y \
-        gcc glibc-devel.i686 binutils make qemu-system-x86 git
+        gcc glibc-devel.i686 binutils make qemu-system-x86 git \
+        dosfstools mtools util-linux
 }
 
 install_arch() {
     ${SUDO} pacman -Sy --needed --noconfirm \
-        base-devel gcc lib32-glibc binutils make qemu-desktop git
+        base-devel gcc lib32-glibc binutils make qemu-desktop git \
+        dosfstools mtools util-linux
 }
 
 if [[ "${FADAL_SKIP_INSTALL:-0}" != "1" ]]; then
@@ -41,7 +44,7 @@ else
     echo "[fadal] package installation skipped (FADAL_SKIP_INSTALL=1)"
 fi
 
-required=(cc ld as objcopy make qemu-system-i386 git)
+required=(cc ld as objcopy make qemu-system-i386 git sfdisk mkfs.fat mcopy)
 for command_name in "${required[@]}"; do
     if ! command -v "${command_name}" >/dev/null 2>&1; then
         echo "error: required command not found: ${command_name}" >&2

@@ -3,6 +3,7 @@ AS ?= as
 LD ?= ld
 OBJCOPY ?= objcopy
 QEMU ?= qemu-system-i386
+UEFI_IMAGE_TOOL ?= ../tools/create-uefi-image.sh
 
 OUT := out
 BOOT_SECTORS := 112
@@ -10,13 +11,16 @@ FAT12_LBA := 113
 FAT12_SECTORS := 64
 FAT12_DATA_LBA := 117
 KERNEL_BYTES := $(shell expr $(BOOT_SECTORS) \* 512)
+UEFI_IMAGE ?= $(OUT)/fadal-uefi.img
+UEFI_BOOTLOADER ?= $(OUT)/BOOTX64.EFI
+UEFI_KERNEL ?= $(OUT)/fadal-uefi.krn
 
 CFLAGS := -m32 -ffreestanding -fno-pie -fno-stack-protector -fno-builtin \
 	-mno-sse -mno-sse2 -mno-mmx -msoft-float -fno-tree-vectorize \
 	-Wall -Wextra -Werror -O2 -nostdinc
 LDFLAGS := -m elf_i386 -T linker.ld -nostdlib
 
-.PHONY: all clean check independence run run-vga
+.PHONY: all clean check independence run run-vga uefi-image
 
 all: $(OUT)/fadal-kernel.img
 
@@ -165,6 +169,12 @@ run: $(OUT)/fadal-kernel.img
 run-vga: $(OUT)/fadal-kernel.img
 	$(QEMU) -accel tcg -boot c -drive format=raw,file=$(OUT)/fadal-kernel.img \
 		-serial stdio -no-reboot -no-shutdown
+
+uefi-image:
+	UEFI_IMAGE="$(UEFI_IMAGE)" \
+	UEFI_BOOTLOADER="$(UEFI_BOOTLOADER)" \
+	UEFI_KERNEL="$(UEFI_KERNEL)" \
+		$(UEFI_IMAGE_TOOL)
 
 clean:
 	rm -rf $(OUT)

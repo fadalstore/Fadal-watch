@@ -159,6 +159,10 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     The TTY queue and loopback packet queue use these locks, and boot runs a
     primitive self-test. Syscall `22` (`getsync`) exposes the result to FSH so
     synchronization readiness is verified before true multi-core execution.
+42. The VFS abstraction now exposes backend-independent `vfs_lookup_file`.
+    Syscall `23` (`getfs`) returns the mounted filesystem type, root-entry
+    count, or generic `KERNEL.TXT` metadata size. FSH exercises lookup through
+    this VFS boundary instead of depending directly on FAT12 internals.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

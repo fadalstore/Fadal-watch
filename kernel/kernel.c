@@ -60,6 +60,7 @@ typedef unsigned int u32;
 #define SYSCALL_GET_CPUS 20
 #define SYSCALL_GET_IPI 21
 #define SYSCALL_GET_SYNC 22
+#define SYSCALL_GET_FS 23
 #define LAPIC_BASE 0xfee00000
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
@@ -110,6 +111,7 @@ static u8 smp_bsp_apic_id;
 static u8 smp_ipi_state;
 static volatile u8 get_ipi_reported;
 static volatile u8 get_sync_reported;
+static volatile u8 get_fs_reported;
 struct spinlock {
     volatile u32 locked;
 };
@@ -1797,6 +1799,16 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
         if (!get_sync_reported) {
             get_sync_reported = 1;
             serial_write("syscall: getsync dispatch; spinlock and mutex status returned\n");
+        }
+    } else if (frame->eax == SYSCALL_GET_FS) {
+        u32 file_size = 0;
+        frame->eax = frame->ebx == 0 ? (u32)vfs_type() :
+            frame->ebx == 1 ? vfs_root_entries() :
+            frame->ebx == 2 && vfs_lookup_file("KERNEL.TXT", &file_size) ? file_size :
+            0xffffffff;
+        if (!get_fs_reported) {
+            get_fs_reported = 1;
+            serial_write("syscall: getfs dispatch; generic VFS lookup returned\n");
         }
     } else if (frame->eax == SYSCALL_SLEEP) {
         u32 slot = process_slot_for_pid(current_pid);

@@ -76,3 +76,11 @@ vfs_u8 vfs_read_file(const char *name, vfs_u8 *output, vfs_u32 capacity, vfs_u32
     }
     return root_mount.ops->read_file(name, output, capacity, size);
 }
+
+vfs_u8 vfs_lookup_file(const char *name, vfs_u32 *size) {
+    static vfs_u8 lookup_buffer[512];
+    if (!vfs_is_mounted() || size == (vfs_u32 *)0) {
+        return 0;
+    }
+    return root_mount.ops->read_file(name, lookup_buffer, sizeof(lookup_buffer), size);
+}

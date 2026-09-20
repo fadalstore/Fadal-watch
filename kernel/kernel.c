@@ -33,6 +33,8 @@ typedef unsigned int u32;
 #define USER_CODE_ADDRESS 0x00200000
 #define USER_STACK_ADDRESS 0x00300000
 #define USER_STACK_2_ADDRESS 0x00301000
+#define USER_HEAP_ADDRESS 0x00400000
+#define MAX_HEAP_PAGES 4
 #define USER_CODE_PAGE (USER_CODE_ADDRESS / PAGE_SIZE)
 #define USER_STACK_PAGE (USER_STACK_ADDRESS / PAGE_SIZE)
 #define USER_STACK_2_PAGE (USER_STACK_2_ADDRESS / PAGE_SIZE)
@@ -50,6 +52,7 @@ typedef unsigned int u32;
 #define SYSCALL_WAIT 12
 #define SYSCALL_GET_PPID 13
 #define SYSCALL_SLEEP 14
+#define SYSCALL_MMAP 15
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
 #define PROCESS_READY 1
@@ -87,6 +90,7 @@ static volatile u8 seek_reported;
 static volatile u8 wait_reported;
 static volatile u8 get_ppid_reported;
 static volatile u8 sleep_reported;
+static volatile u8 mmap_reported;
 static volatile u8 timer_scheduler_reported;
 static volatile u8 page_fault_reported;
 static u32 scheduler_ticks;
@@ -220,6 +224,8 @@ struct process {
     u32 wait_reason;
     u32 wake_tick;
     u32 exit_code;
+    u32 heap_pages;
+    u32 heap_physical[MAX_HEAP_PAGES];
     interrupt_frame context;
     u8 context_valid;
     struct file_descriptor fds[MAX_FDS];
@@ -507,6 +513,10 @@ static void process_manager_init(void) {
             process_table[index]->wait_reason = WAIT_NONE;
             process_table[index]->wake_tick = 0;
             process_table[index]->exit_code = 0;
+            process_table[index]->heap_pages = 0;
+            for (u32 page = 0; page < MAX_HEAP_PAGES; page++) {
+                process_table[index]->heap_physical[page] = 0;
+            }
             process_table[index]->context_valid = 0;
             process_table[index]->context.eip = 0;
             process_table[index]->context.user_esp = 0;
@@ -556,6 +566,10 @@ static u32 process_create(u32 entry, u32 user_stack_top) {
         process->wait_reason = WAIT_NONE;
         process->wake_tick = 0;
         process->exit_code = 0;
+        process->heap_pages = 0;
+        for (u32 page = 0; page < MAX_HEAP_PAGES; page++) {
+            process->heap_physical[page] = 0;
+        }
         process_context_init(process);
         for (u32 fd = 0; fd < MAX_FDS; fd++) {
             process->fds[fd].used = 0;
@@ -636,6 +650,14 @@ static u32 process_parent_pid(u32 pid) {
     return 0xffffffff;
 }
 
+static void process_heap_destroy(struct process *process) {
+    for (u32 page = 0; page < process->heap_pages; page++) {
+        page_free((void *)process->heap_physical[page]);
+        process->heap_physical[page] = 0;
+    }
+    process->heap_pages = 0;
+}
+
 static u8 process_exit_current(u32 exit_code) {
     for (u32 index = 0; index < MAX_PROCESSES; index++) {
         struct process *process = process_table[index];
@@ -647,6 +669,7 @@ static u8 process_exit_current(u32 exit_code) {
         }
         process->state = PROCESS_EXITED;
         process->exit_code = exit_code;
+        process_heap_destroy(process);
         address_space_destroy(index, process->address_space);
         if (active_processes > 0) {
             active_processes--;
@@ -675,6 +698,10 @@ static u8 process_reap_slot(u32 index) {
     process->wait_reason = WAIT_NONE;
     process->wake_tick = 0;
     process->exit_code = 0;
+    process->heap_pages = 0;
+    for (u32 page = 0; page < MAX_HEAP_PAGES; page++) {
+        process->heap_physical[page] = 0;
+    }
     process->context_valid = 0;
     process->context.eip = 0;
     process->context.user_esp = 0;
@@ -813,6 +840,52 @@ static struct process *current_process(void) {
     return (struct process *)0;
 }
 
+static u32 process_mmap(u32 bytes) {
+    struct process *process = current_process();
+    if (process == (struct process *)0 || bytes == 0) {
+        return 0xffffffff;
+    }
+    u32 pages = (bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+    if (pages > MAX_HEAP_PAGES - process->heap_pages) {
+        return 0xffffffff;
+    }
+    struct address_space *space = process->address_space;
+    u32 base_page = (USER_HEAP_ADDRESS / PAGE_SIZE) + process->heap_pages;
+    for (u32 offset = 0; offset < pages; offset++) {
+        u32 physical = (u32)page_alloc();
+        if (physical == 0) {
+            for (u32 rollback = 0; rollback < offset; rollback++) {
+                space->page_tables[base_page + rollback] =
+                    ((base_page + rollback) * PAGE_SIZE) | PAGE_KERNEL_FLAGS;
+                page_free((void *)process->heap_physical[process->heap_pages + rollback]);
+                process->heap_physical[process->heap_pages + rollback] = 0;
+            }
+            return 0xffffffff;
+        }
+        process->heap_physical[process->heap_pages + offset] = physical;
+        space->page_tables[base_page + offset] = physical | PAGE_USER_RW_FLAGS;
+    }
+    space->page_directory[base_page / 1024] |= PAGE_USER;
+    process->heap_pages += pages;
+    return base_page * PAGE_SIZE;
+}
+
+static u8 process_mmap_self_test(u32 init_pid) {
+    u32 saved_pid = current_pid;
+    u32 free_before = free_page_count;
+    current_pid = init_pid;
+    u32 address = process_mmap(1);
+    struct process *process = current_process();
+    u8 allocated = address == USER_HEAP_ADDRESS && process != (struct process *)0 &&
+        process->heap_pages == 1 && free_page_count + 1 == free_before;
+    if (process != (struct process *)0) {
+        process_heap_destroy(process);
+    }
+    u8 released = free_page_count == free_before;
+    current_pid = saved_pid;
+    return allocated && released;
+}
+
 static u32 fd_read_file(u32 fd, u8 *output, u32 capacity) {
     struct process *process = current_process();
     if (process == (struct process *)0 || fd >= MAX_FDS ||
@@ -867,7 +940,12 @@ static u8 user_range_valid(u32 address, u32 length) {
     if (address >= USER_STACK_ADDRESS && end <= USER_STACK_ADDRESS + PAGE_SIZE) {
         return 1;
     }
-    return address >= USER_STACK_2_ADDRESS && end <= USER_STACK_2_ADDRESS + PAGE_SIZE;
+    if (address >= USER_STACK_2_ADDRESS && end <= USER_STACK_2_ADDRESS + PAGE_SIZE) {
+        return 1;
+    }
+    struct process *process = current_process();
+    return process != (struct process *)0 && address >= USER_HEAP_ADDRESS &&
+        end <= USER_HEAP_ADDRESS + process->heap_pages * PAGE_SIZE;
 }
 
 static u8 user_path_is_kernel(const char *path, u32 length) {
@@ -1533,6 +1611,12 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
             sleep_reported = 1;
             serial_write("syscall: sleep dispatch; timer wake scheduled\n");
         }
+    } else if (frame->eax == SYSCALL_MMAP) {
+        frame->eax = process_mmap(frame->ebx);
+        if (!mmap_reported) {
+            mmap_reported = 1;
+            serial_write("syscall: mmap dispatch; user page mapped\n");
+        }
     } else if (frame->eax == SYSCALL_EXIT) {
         frame->eax = process_exit_current(frame->ebx) ? 0 : 0xffffffff;
         if (!exit_reported) {
@@ -1833,6 +1917,11 @@ void kernel_main(void) {
             kernel_write("scheduler: initial ring-3 contexts validated\n");
         } else {
             kernel_write("scheduler: initial ring-3 context validation failed\n");
+        }
+        if (process_mmap_self_test(init_pid)) {
+            kernel_write("memory: private user-page map and release passed\n");
+        } else {
+            kernel_write("memory: private user-page map self-test failed\n");
         }
         if (process_cleanup_self_test(init_pid)) {
             kernel_write("process: address-space cleanup and PID-slot reuse passed\n");

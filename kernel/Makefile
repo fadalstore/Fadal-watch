@@ -106,6 +106,7 @@ check: independence $(OUT)/fadal-kernel.img
 						@grep -q "memory: per-process address-space isolation verified" $(OUT)/smoke.log
 						@grep -q "scheduler: round-robin ready selection passed" $(OUT)/smoke.log
 						@grep -q "scheduler: initial ring-3 contexts validated" $(OUT)/smoke.log
+						@grep -q "memory: private user-page map and release passed" $(OUT)/smoke.log
 						@grep -q "process: address-space cleanup and PID-slot reuse passed" $(OUT)/smoke.log
 						@grep -q "process: parent-child wait status and reaping passed" $(OUT)/smoke.log
 						@grep -q "keyboard: PS/2 IRQ1 interactive shell online" $(OUT)/smoke.log
@@ -123,6 +124,7 @@ check: independence $(OUT)/fadal-kernel.img
 	@grep -q "syscall: get_ticks dispatch" $(OUT)/smoke.log
 	@grep -q "syscall: getppid dispatch; parent PID returned" $(OUT)/smoke.log
 	@grep -q "syscall: sleep dispatch; timer wake scheduled" $(OUT)/smoke.log
+	@grep -q "syscall: mmap dispatch; user page mapped" $(OUT)/smoke.log
 		@grep -q "syscall: get_pid dispatch" $(OUT)/smoke.log
 			@grep -q "syscall: read dispatch; nonblocking TTY queue read" $(OUT)/smoke.log
 			@grep -q "syscall: yield dispatch; cooperative scheduler point" $(OUT)/smoke.log

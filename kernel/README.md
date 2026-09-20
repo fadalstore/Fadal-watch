@@ -119,6 +119,11 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     caller `BLOCKED`, and records a wake deadline. Timer IRQ0 moves expired
     sleepers back to `READY`; FSH exercises a one-tick sleep through the
     userspace ABI and the smoke test verifies the dispatch path.
+33. Syscall `15` (`mmap`) allocates up to four anonymous user pages from the
+    physical page allocator, maps them writable in the current process's
+    private page tables at `0x00400000`, and expands validated user ranges.
+    Exiting a process returns those physical pages to the allocator; FSH
+    exercises a 32-byte mapping during startup.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

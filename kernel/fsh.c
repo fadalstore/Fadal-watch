@@ -11,6 +11,7 @@ typedef unsigned int u32;
 #define SYSCALL_YIELD 8
 #define SYSCALL_CLOSE 9
 #define SYSCALL_STAT 10
+#define SYSCALL_SEEK 11
 
 static u32 fsh_syscall3(u32 number, u32 first, u32 second, u32 third) {
     u32 result;
@@ -61,6 +62,17 @@ static void fsh_stat_kernel(void) {
     }
 }
 
+static void fsh_seek_probe(void) {
+    static const char path[] = "KERNEL.TXT";
+    static char first_byte[1];
+    u32 fd = fsh_syscall3(SYSCALL_OPEN, (u32)path, sizeof(path) - 1, 0);
+    if (fd != 0xffffffff &&
+        fsh_syscall3(SYSCALL_SEEK, fd, 0, 0) == 0) {
+        fsh_syscall3(SYSCALL_READ, (u32)first_byte, sizeof(first_byte), fd);
+        fsh_syscall3(SYSCALL_CLOSE, fd, 0, 0);
+    }
+}
+
 static void fsh_command(const char *line, u32 length) {
     static const char help[] = "commands: help mount ls cat stat KERNEL.TXT exit\n";
     static const char mounted[] = "FAT12 root mounted through VFS\n";
@@ -102,6 +114,7 @@ void fsh_entry(void) {
         fsh_syscall3(SYSCALL_CLOSE, boot_fd, 0, 0);
     }
     fsh_stat_kernel();
+    fsh_seek_probe();
     fsh_syscall3(SYSCALL_EXEC, 0x00200000, 0, 0);
     fsh_syscall3(SYSCALL_GET_TICKS, 0, 0, 0);
     fsh_syscall3(SYSCALL_GET_PID, 0, 0, 0);

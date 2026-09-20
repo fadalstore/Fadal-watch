@@ -113,6 +113,7 @@ check: independence $(OUT)/fadal-kernel.img
 				@grep -q "fsh: disk executable online" $(OUT)/smoke.log
 					@grep -q "commands: help mount ls cat stat KERNEL.TXT exit" $(OUT)/smoke.log
 					@grep -q "syscall: stat dispatch; metadata copyout validated" $(OUT)/smoke.log
+					@grep -q "syscall: seek dispatch; file offset validated" $(OUT)/smoke.log
 	@grep -q "syscall: ring-3 entry" $(OUT)/smoke.log
 	@grep -q "syscall: get_ticks dispatch" $(OUT)/smoke.log
 		@grep -q "syscall: get_pid dispatch" $(OUT)/smoke.log

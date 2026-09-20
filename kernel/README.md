@@ -93,6 +93,10 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
 27. Syscall `10` (`stat`) validates a `KERNEL.TXT` path and copies its size and
     regular-file type into a userspace metadata structure. FSH exercises the
     ABI during startup and exposes `stat KERNEL.TXT` as a shell command.
+28. Syscall `11` (`seek`) changes a regular-file descriptor offset using
+    `EDX` as the whence (`0` absolute, `1` relative, `2` end-relative) and
+    returns the new offset. Requests beyond the bounded file are rejected;
+    FSH performs an absolute-zero seek and one-byte read probe at startup.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

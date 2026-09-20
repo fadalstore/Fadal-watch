@@ -46,6 +46,7 @@ typedef unsigned int u32;
 #define SYSCALL_YIELD 8
 #define SYSCALL_CLOSE 9
 #define SYSCALL_STAT 10
+#define SYSCALL_SEEK 11
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
 #define PROCESS_READY 1
@@ -78,6 +79,7 @@ static volatile u8 exec_reported;
 static volatile u8 yield_reported;
 static volatile u8 close_reported;
 static volatile u8 stat_reported;
+static volatile u8 seek_reported;
 static volatile u8 page_fault_reported;
 static u32 scheduler_ticks;
 static u32 scheduler_ready_pid;
@@ -689,6 +691,28 @@ static u32 fd_read_file(u32 fd, u8 *output, u32 capacity) {
     }
     descriptor->offset += amount;
     return amount;
+}
+
+static u32 fd_seek_current(u32 fd, u32 offset, u32 whence) {
+    struct process *process = current_process();
+    if (process == (struct process *)0 || fd >= MAX_FDS ||
+        !process->fds[fd].used || process->fds[fd].kind != 3) {
+        return 0xffffffff;
+    }
+    struct file_descriptor *descriptor = &process->fds[fd];
+    u32 target = offset;
+    if (whence == 1) {
+        target = descriptor->offset + offset;
+    } else if (whence == 2) {
+        target = descriptor->size + offset;
+    } else if (whence != 0) {
+        return 0xffffffff;
+    }
+    if (target > descriptor->size) {
+        return 0xffffffff;
+    }
+    descriptor->offset = target;
+    return target;
 }
 
 static u8 user_range_valid(u32 address, u32 length) {
@@ -1311,6 +1335,12 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
         if (!stat_reported) {
             stat_reported = 1;
             serial_write("syscall: stat dispatch; metadata copyout validated\n");
+        }
+    } else if (frame->eax == SYSCALL_SEEK) {
+        frame->eax = fd_seek_current(frame->ebx, frame->ecx, frame->edx);
+        if (!seek_reported) {
+            seek_reported = 1;
+            serial_write("syscall: seek dispatch; file offset validated\n");
         }
     } else {
         frame->eax = 0xffffffff;

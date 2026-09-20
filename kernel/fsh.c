@@ -88,10 +88,11 @@ static void fsh_seek_probe(void) {
 }
 
 static void fsh_command(const char *line, u32 length) {
-    static const char help[] = "commands: help mount ls cat stat KERNEL.TXT exit\n";
+    static const char help[] = "commands: help mount ls cat stat github KERNEL.TXT exit\n";
     static const char mounted[] = "FAT12 root mounted through VFS\n";
     static const char listing[] = "KERNEL.TXT FSH.BIN\n";
     static const char unknown[] = "unknown command; try help\n";
+    static const char github[] = "GitHub: https://github.com/fadalstore/Fadal-watch\nHost terminal: gh repo clone fadalstore/Fadal-watch\n";
     if (fsh_equal(line, length, "help")) {
         fsh_write(help);
     } else if (fsh_equal(line, length, "mount")) {
@@ -110,6 +111,8 @@ static void fsh_command(const char *line, u32 length) {
         }
     } else if (fsh_equal(line, length, "stat KERNEL.TXT")) {
         fsh_stat_kernel();
+    } else if (fsh_equal(line, length, "github")) {
+        fsh_write(github);
     } else if (!fsh_equal(line, length, "exit")) {
         fsh_write(unknown);
     }

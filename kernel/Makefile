@@ -99,7 +99,7 @@ check: independence $(OUT)/fadal-kernel.img
 		@grep -q "memory: heap stress passed (30 blocks; allocator limit verified)" $(OUT)/smoke.log
 		@grep -Eq "filesystem: FAT12 formatted; KERNEL.TXT written|vfs: FAT12 backend mounted; root directory recognized" $(OUT)/smoke.log
 		@grep -q "vfs: FAT12 backend mounted; root directory recognized (2 entries)" $(OUT)/smoke.log
-				@grep -Eq "filesystem: allocated clusters (3; free clusters 56|4; free clusters 55)|filesystem: mounted KERNEL.TXT verified" $(OUT)/smoke.log
+				@grep -Eq "filesystem: allocated clusters (3; free clusters 56|4; free clusters 55|5; free clusters 54)|filesystem: mounted KERNEL.TXT verified" $(OUT)/smoke.log
 	@grep -Eq "disk: ATA LBA28 persisted FAT12 volume|disk: FAT12 remount read-only verification passed" $(OUT)/smoke.log
 	@grep -q "disk: ATA sector cache served read-back" $(OUT)/smoke.log
 		@grep -Eq "filesystem: ATA read-back verified KERNEL.TXT|filesystem: mounted KERNEL.TXT verified" $(OUT)/smoke.log
@@ -120,7 +120,7 @@ check: independence $(OUT)/fadal-kernel.img
 				@grep -q "shell: FSH disk executable selected" $(OUT)/smoke.log
 				@grep -q "Fadal TTY ready; FSH.BIN owns user shell" $(OUT)/smoke.log
 				@grep -q "fsh: disk executable online" $(OUT)/smoke.log
-					@grep -q "commands: help mount ls cat stat KERNEL.TXT exit" $(OUT)/smoke.log
+						@grep -q "commands: help mount ls cat stat github KERNEL.TXT exit" $(OUT)/smoke.log
 					@grep -q "syscall: stat dispatch; metadata copyout validated" $(OUT)/smoke.log
 					@grep -q "syscall: seek dispatch; file offset validated" $(OUT)/smoke.log
 						@grep -q "syscall: wait dispatch; child status validated" $(OUT)/smoke.log

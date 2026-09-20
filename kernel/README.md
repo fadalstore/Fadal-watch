@@ -175,6 +175,11 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     initialization, and checksum validation independent of ATA/FAT12. Syscall
     `25` (`getramdisk`) exposes the boot integrity result to FSH; boot requires
     a write/read pattern verification before the real disk filesystem mounts.
+46. FSH now accepts `github`, printing the Fadal-watch repository URL and the
+    host-side `gh repo clone fadalstore/Fadal-watch` command. The freestanding
+    kernel intentionally does not claim to open HTTPS or a host terminal; the
+    command is a safe bridge from the kernel shell to the configured GitHub
+    environment.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

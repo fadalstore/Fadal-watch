@@ -59,6 +59,7 @@ typedef unsigned int u32;
 #define SYSCALL_NET_LOOPBACK 19
 #define SYSCALL_GET_CPUS 20
 #define SYSCALL_GET_IPI 21
+#define SYSCALL_GET_SYNC 22
 #define LAPIC_BASE 0xfee00000
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
@@ -108,6 +109,17 @@ static u8 smp_apic_present;
 static u8 smp_bsp_apic_id;
 static u8 smp_ipi_state;
 static volatile u8 get_ipi_reported;
+static volatile u8 get_sync_reported;
+struct spinlock {
+    volatile u32 locked;
+};
+struct mutex {
+    struct spinlock lock;
+};
+static struct spinlock net_lock;
+static struct spinlock tty_lock;
+static struct mutex sync_test_mutex;
+static u8 sync_self_test_passed;
 static u8 net_loopback_buffer[256];
 static u32 net_loopback_length;
 static volatile u8 timer_scheduler_reported;
@@ -1315,7 +1327,29 @@ static void kernel_write(const char *text) {
     vga_write(text);
     serial_write(text);
 }
-
+static void spin_lock(struct spinlock *lock) {
+    u32 value = 1;
+    do {
+        __asm__ volatile ("xchgl %0, %1" : "+r"(value), "+m"(lock->locked) : : "memory");
+    } while (value != 0);
+}
+static void spin_unlock(struct spinlock *lock) {
+    __asm__ volatile ("movl $0, %0" : : "m"(lock->locked) : "memory");
+}
+static void mutex_lock(struct mutex *mutex) {
+    spin_lock(&mutex->lock);
+}
+static void mutex_unlock(struct mutex *mutex) {
+    spin_unlock(&mutex->lock);
+}
+static u8 synchronization_self_test(void) {
+    struct spinlock local_spin = {0};
+    spin_lock(&local_spin);
+    spin_unlock(&local_spin);
+    mutex_lock(&sync_test_mutex);
+    mutex_unlock(&sync_test_mutex);
+    return local_spin.locked == 0 && sync_test_mutex.lock.locked == 0;
+}
 static void smp_probe(void) {
     u32 eax = 1;
     u32 ebx;
@@ -1377,10 +1411,12 @@ static u32 net_loopback_send(const u8 *data, u32 length) {
         !user_range_valid((u32)data, length)) {
         return 0xffffffff;
     }
+    spin_lock(&net_lock);
     for (u32 index = 0; index < length; index++) {
         net_loopback_buffer[index] = data[index];
     }
     net_loopback_length = length;
+    spin_unlock(&net_lock);
     return length;
 }
 
@@ -1388,11 +1424,13 @@ static u32 net_loopback_receive(u8 *data, u32 capacity) {
     if (capacity == 0 || !user_range_valid((u32)data, capacity)) {
         return 0xffffffff;
     }
+    spin_lock(&net_lock);
     u32 amount = net_loopback_length < capacity ? net_loopback_length : capacity;
     for (u32 index = 0; index < amount; index++) {
         data[index] = net_loopback_buffer[index];
     }
     net_loopback_length = 0;
+    spin_unlock(&net_lock);
     return amount;
 }
 
@@ -1583,18 +1621,23 @@ static char keyboard_ascii(u8 scancode) {
 }
 
 static void tty_enqueue(char value) {
+    spin_lock(&tty_lock);
     if (tty_count >= TTY_BUFFER_SIZE) {
+        spin_unlock(&tty_lock);
         return;
     }
     tty_buffer[tty_write_index] = value;
     tty_write_index = (tty_write_index + 1) % TTY_BUFFER_SIZE;
     tty_count++;
+    spin_unlock(&tty_lock);
     scheduler_wake_reason(WAIT_TTY);
 }
 
 static u32 tty_read_available(u8 *output, u32 capacity) {
+    spin_lock(&tty_lock);
     __asm__ volatile ("cli" : : : "memory");
     if (tty_count == 0) {
+        spin_unlock(&tty_lock);
         __asm__ volatile ("sti" : : : "memory");
         return 0xffffffff;
     }
@@ -1604,6 +1647,7 @@ static u32 tty_read_available(u8 *output, u32 capacity) {
         tty_read_index = (tty_read_index + 1) % TTY_BUFFER_SIZE;
     }
     tty_count -= amount;
+    spin_unlock(&tty_lock);
     __asm__ volatile ("sti" : : : "memory");
     return amount;
 }
@@ -1748,6 +1792,12 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
             get_ipi_reported = 1;
             serial_write("syscall: getipi dispatch; AP startup/IPI state reported\n");
         }
+    } else if (frame->eax == SYSCALL_GET_SYNC) {
+        frame->eax = sync_self_test_passed;
+        if (!get_sync_reported) {
+            get_sync_reported = 1;
+            serial_write("syscall: getsync dispatch; spinlock and mutex status returned\n");
+        }
     } else if (frame->eax == SYSCALL_SLEEP) {
         u32 slot = process_slot_for_pid(current_pid);
         if (frame->ebx == 0) {
@@ -1880,6 +1930,10 @@ void kernel_main(void) {
     memory_init();
     smp_probe();
     smp_startup_prepare();
+    sync_self_test_passed = synchronization_self_test();
+    kernel_write(sync_self_test_passed ?
+        "sync: spinlock and mutex self-test passed\n" :
+        "sync: spinlock and mutex self-test failed\n");
     kernel_write("smp: CPUID topology detected (");
     write_u32(smp_cpu_count);
     kernel_write(" logical CPUs; APIC ");

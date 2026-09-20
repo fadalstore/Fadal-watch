@@ -155,6 +155,10 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     and the BSP-only IPI path is marked armed without sending a nonexistent AP
     an INIT/SIPI sequence. Syscall `21` (`getipi`) exposes this state; multi-CPU
     bring-up remains gated behind the discovered topology.
+41. The kernel now provides atomic `spin_lock`/`spin_unlock` and mutex wrappers.
+    The TTY queue and loopback packet queue use these locks, and boot runs a
+    primitive self-test. Syscall `22` (`getsync`) exposes the result to FSH so
+    synchronization readiness is verified before true multi-core execution.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

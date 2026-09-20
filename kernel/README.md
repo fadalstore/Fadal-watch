@@ -80,6 +80,11 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     while retrying an empty TTY read. It deliberately does not claim to switch
     CPU registers yet; the later context-switch implementation will consume
     this established ABI point.
+25. Processes now own eight bounded file-descriptor slots. Descriptors `0`,
+    `1`, and `2` represent TTY input/output/error, while `open` allocates a
+    kernel-file handle from slot `3` onward and syscall `9` (`close`) releases
+    it. FSH exercises allocation and release when opening `KERNEL.TXT`; actual
+    descriptor-directed file I/O remains the next userspace ABI step.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

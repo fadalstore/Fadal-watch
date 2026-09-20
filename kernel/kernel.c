@@ -44,6 +44,7 @@ typedef unsigned int u32;
 #define SYSCALL_OPEN 6
 #define SYSCALL_EXEC 7
 #define SYSCALL_YIELD 8
+#define SYSCALL_CLOSE 9
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
 #define PROCESS_READY 1
@@ -52,6 +53,7 @@ typedef unsigned int u32;
 #define PROCESS_BLOCKED 4
 #define WAIT_NONE 0
 #define WAIT_TTY 1
+#define MAX_FDS 8
 #define MAX_HEAP_ALLOCS 32
 #define TTY_BUFFER_SIZE 256
 
@@ -73,6 +75,7 @@ static volatile u8 write_reported;
 static volatile u8 open_reported;
 static volatile u8 exec_reported;
 static volatile u8 yield_reported;
+static volatile u8 close_reported;
 static volatile u8 page_fault_reported;
 static u32 scheduler_ticks;
 static u32 scheduler_ready_pid;
@@ -177,6 +180,11 @@ struct address_space {
     u32 refcount;
 };
 
+struct file_descriptor {
+    u8 used;
+    u8 kind;
+};
+
 struct process {
     u32 pid;
     u32 state;
@@ -184,6 +192,7 @@ struct process {
     u32 user_stack_top;
     struct address_space *address_space;
     u32 wait_reason;
+    struct file_descriptor fds[MAX_FDS];
 };
 
 struct heap_allocation {
@@ -463,6 +472,10 @@ static void process_manager_init(void) {
             process_table[index]->user_stack_top = 0;
             process_table[index]->address_space = (struct address_space *)0;
             process_table[index]->wait_reason = WAIT_NONE;
+            for (u32 fd = 0; fd < MAX_FDS; fd++) {
+                process_table[index]->fds[fd].used = 0;
+                process_table[index]->fds[fd].kind = 0;
+            }
         }
     }
     next_pid = 1;
@@ -501,6 +514,16 @@ static u32 process_create(u32 entry, u32 user_stack_top) {
         process->user_stack_top = USER_STACK_ADDRESS + PAGE_SIZE;
         process->address_space = space;
         process->wait_reason = WAIT_NONE;
+        for (u32 fd = 0; fd < MAX_FDS; fd++) {
+            process->fds[fd].used = 0;
+            process->fds[fd].kind = 0;
+        }
+        process->fds[0].used = 1;
+        process->fds[0].kind = 1;
+        process->fds[1].used = 1;
+        process->fds[1].kind = 2;
+        process->fds[2].used = 1;
+        process->fds[2].kind = 2;
         process_total++;
         active_processes++;
         return process->pid;
@@ -579,6 +602,41 @@ static u8 process_cleanup_self_test(u32 init_pid) {
         current_pid = init_pid;
     }
     return page_returned && slot_reused;
+}
+
+static u32 fd_open_kernel_file(void) {
+    for (u32 index = 3; index < MAX_FDS; index++) {
+        struct process *process = (struct process *)0;
+        for (u32 slot = 0; slot < MAX_PROCESSES; slot++) {
+            if (process_table[slot] != (struct process *)0 &&
+                process_table[slot]->pid == current_pid) {
+                process = process_table[slot];
+                break;
+            }
+        }
+        if (process != (struct process *)0 && !process->fds[index].used) {
+            process->fds[index].used = 1;
+            process->fds[index].kind = 3;
+            return index;
+        }
+    }
+    return 0xffffffff;
+}
+
+static u8 fd_close_current(u32 fd) {
+    for (u32 slot = 0; slot < MAX_PROCESSES; slot++) {
+        struct process *process = process_table[slot];
+        if (process == (struct process *)0 || process->pid != current_pid) {
+            continue;
+        }
+        if (fd >= MAX_FDS || fd < 3 || !process->fds[fd].used) {
+            return 0;
+        }
+        process->fds[fd].used = 0;
+        process->fds[fd].kind = 0;
+        return 1;
+    }
+    return 0;
 }
 
 static u8 user_range_valid(u32 address, u32 length) {
@@ -1156,10 +1214,10 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
         }
     } else if (frame->eax == SYSCALL_OPEN) {
         frame->eax = user_path_is_kernel((const char *)frame->ebx, frame->ecx) &&
-            vfs_is_mounted() ? 1 : 0xffffffff;
+            vfs_is_mounted() ? fd_open_kernel_file() : 0xffffffff;
         if (!open_reported) {
             open_reported = 1;
-            serial_write("syscall: open dispatch; VFS path checked\n");
+            serial_write("syscall: open dispatch; descriptor allocated\n");
         }
     } else if (frame->eax == SYSCALL_EXEC) {
         frame->eax = frame->ebx == USER_CODE_ADDRESS ?
@@ -1174,6 +1232,12 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
         if (!yield_reported) {
             yield_reported = 1;
             serial_write("syscall: yield dispatch; cooperative scheduler point\n");
+        }
+    } else if (frame->eax == SYSCALL_CLOSE) {
+        frame->eax = fd_close_current(frame->ebx) ? 0 : 0xffffffff;
+        if (!close_reported) {
+            close_reported = 1;
+            serial_write("syscall: close dispatch; descriptor released\n");
         }
     } else {
         frame->eax = 0xffffffff;

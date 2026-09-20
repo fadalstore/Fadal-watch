@@ -9,6 +9,7 @@ typedef unsigned int u32;
 #define SYSCALL_OPEN 6
 #define SYSCALL_EXEC 7
 #define SYSCALL_YIELD 8
+#define SYSCALL_CLOSE 9
 
 static u32 fsh_syscall3(u32 number, u32 first, u32 second, u32 third) {
     u32 result;
@@ -58,8 +59,11 @@ static void fsh_command(const char *line, u32 length) {
     } else if (fsh_equal(line, length, "ls")) {
         fsh_write(listing);
     } else if (fsh_equal(line, length, "cat KERNEL.TXT")) {
-        fsh_syscall3(SYSCALL_OPEN, (u32)"KERNEL.TXT", 10, 0);
+        u32 fd = fsh_syscall3(SYSCALL_OPEN, (u32)"KERNEL.TXT", 10, 0);
         fsh_write(cat);
+        if (fd != 0xffffffff) {
+            fsh_syscall3(SYSCALL_CLOSE, fd, 0, 0);
+        }
     } else if (!fsh_equal(line, length, "exit")) {
         fsh_write(unknown);
     }
@@ -73,7 +77,10 @@ void fsh_entry(void) {
     static char input[64];
     u8 prompt_pending = 1;
     fsh_write(banner);
-    fsh_syscall3(SYSCALL_OPEN, (u32)path, sizeof(path) - 1, 0);
+    u32 boot_fd = fsh_syscall3(SYSCALL_OPEN, (u32)path, sizeof(path) - 1, 0);
+    if (boot_fd != 0xffffffff) {
+        fsh_syscall3(SYSCALL_CLOSE, boot_fd, 0, 0);
+    }
     fsh_syscall3(SYSCALL_EXEC, 0x00200000, 0, 0);
     fsh_syscall3(SYSCALL_GET_TICKS, 0, 0, 0);
     fsh_syscall3(SYSCALL_GET_PID, 0, 0, 0);

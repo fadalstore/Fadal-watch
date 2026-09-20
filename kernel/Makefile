@@ -55,6 +55,8 @@ $(OUT)/fsh.bin: $(OUT)/fsh.elf
 
 $(OUT)/fsh_blob.o: $(OUT)/fsh.bin
 	$(OBJCOPY) -I binary -O elf32-i386 -B i386 $< $@
+	$(OBJCOPY) --add-section .note.GNU-stack=/dev/null \
+		--set-section-flags .note.GNU-stack=readonly,contents $@
 
 $(OUT)/interrupts.o: interrupts.S kernel.c | $(OUT)
 	$(AS) --32 -o $@ $<

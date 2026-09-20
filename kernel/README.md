@@ -132,6 +132,10 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     in the ring-3 interrupt frame and returns `3` only for user execution.
     FSH invokes it during startup, making the transition through the TSS,
     user segments, `iret`, and `int 0x80` ABI observable in the smoke log.
+36. Syscall `17` (`getdevice`) exposes basic device-driver state: device `0`
+    reports the PS/2 keyboard IRQ path as online, while device `1` returns the
+    current TTY input queue depth. FSH invokes the keyboard status query from
+    ring 3, and the smoke test verifies the IRQ/TTY driver boundary.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

@@ -54,6 +54,7 @@ typedef unsigned int u32;
 #define SYSCALL_SLEEP 14
 #define SYSCALL_MMAP 15
 #define SYSCALL_GET_RING 16
+#define SYSCALL_GET_DEVICE 17
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
 #define PROCESS_READY 1
@@ -93,6 +94,7 @@ static volatile u8 get_ppid_reported;
 static volatile u8 sleep_reported;
 static volatile u8 mmap_reported;
 static volatile u8 get_ring_reported;
+static volatile u8 get_device_reported;
 static volatile u8 timer_scheduler_reported;
 static volatile u8 page_fault_reported;
 static u32 scheduler_ticks;
@@ -1602,6 +1604,18 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
         if (!get_ring_reported) {
             get_ring_reported = 1;
             serial_write("syscall: getring dispatch; ring-3 confirmed\n");
+        }
+    } else if (frame->eax == SYSCALL_GET_DEVICE) {
+        if (frame->ebx == 0) {
+            frame->eax = 1;
+        } else if (frame->ebx == 1) {
+            frame->eax = tty_count;
+        } else {
+            frame->eax = 0xffffffff;
+        }
+        if (!get_device_reported) {
+            get_device_reported = 1;
+            serial_write("syscall: getdevice dispatch; keyboard and TTY status returned\n");
         }
     } else if (frame->eax == SYSCALL_SLEEP) {
         u32 slot = process_slot_for_pid(current_pid);

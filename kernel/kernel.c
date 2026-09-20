@@ -47,6 +47,7 @@ typedef unsigned int u32;
 #define SYSCALL_CLOSE 9
 #define SYSCALL_STAT 10
 #define SYSCALL_SEEK 11
+#define SYSCALL_WAIT 12
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
 #define PROCESS_READY 1
@@ -80,6 +81,7 @@ static volatile u8 yield_reported;
 static volatile u8 close_reported;
 static volatile u8 stat_reported;
 static volatile u8 seek_reported;
+static volatile u8 wait_reported;
 static volatile u8 page_fault_reported;
 static u32 scheduler_ticks;
 static u32 scheduler_ready_pid;
@@ -198,11 +200,13 @@ struct file_stat {
 
 struct process {
     u32 pid;
+    u32 parent_pid;
     u32 state;
     u32 entry;
     u32 user_stack_top;
     struct address_space *address_space;
     u32 wait_reason;
+    u32 exit_code;
     struct file_descriptor fds[MAX_FDS];
 };
 
@@ -479,11 +483,13 @@ static void process_manager_init(void) {
         process_table[index] = (struct process *)slab_alloc(&process_slab_cache);
         if (process_table[index] != (struct process *)0) {
             process_table[index]->pid = 0;
+            process_table[index]->parent_pid = 0;
             process_table[index]->state = PROCESS_UNUSED;
             process_table[index]->entry = 0;
             process_table[index]->user_stack_top = 0;
             process_table[index]->address_space = (struct address_space *)0;
             process_table[index]->wait_reason = WAIT_NONE;
+            process_table[index]->exit_code = 0;
             for (u32 fd = 0; fd < MAX_FDS; fd++) {
                 process_table[index]->fds[fd].used = 0;
                 process_table[index]->fds[fd].kind = 0;
@@ -523,11 +529,13 @@ static u32 process_create(u32 entry, u32 user_stack_top) {
             continue;
         }
         process->pid = next_pid++;
+        process->parent_pid = current_pid;
         process->state = PROCESS_READY;
         process->entry = entry;
         process->user_stack_top = USER_STACK_ADDRESS + PAGE_SIZE;
         process->address_space = space;
         process->wait_reason = WAIT_NONE;
+        process->exit_code = 0;
         for (u32 fd = 0; fd < MAX_FDS; fd++) {
             process->fds[fd].used = 0;
             process->fds[fd].kind = 0;
@@ -559,7 +567,8 @@ static u8 process_set_running(u32 pid) {
         if (process->state == PROCESS_RUNNING) {
             process->state = PROCESS_READY;
         }
-        if (process->pid == pid && process->state != PROCESS_UNUSED) {
+        if (process->pid == pid && process->state != PROCESS_UNUSED &&
+            process->state != PROCESS_EXITED) {
             process->state = PROCESS_RUNNING;
             current_pid = pid;
             load_address_space(process->address_space);
@@ -569,7 +578,17 @@ static u8 process_set_running(u32 pid) {
     return 0;
 }
 
-static u8 process_exit_current(void) {
+static u32 process_slot_for_pid(u32 pid) {
+    for (u32 index = 0; index < MAX_PROCESSES; index++) {
+        if (process_table[index] != (struct process *)0 &&
+            process_table[index]->pid == pid) {
+            return index;
+        }
+    }
+    return MAX_PROCESSES;
+}
+
+static u8 process_exit_current(u32 exit_code) {
     for (u32 index = 0; index < MAX_PROCESSES; index++) {
         struct process *process = process_table[index];
         if (process == (struct process *)0) {
@@ -579,6 +598,7 @@ static u8 process_exit_current(void) {
             continue;
         }
         process->state = PROCESS_EXITED;
+        process->exit_code = exit_code;
         address_space_destroy(index, process->address_space);
         if (active_processes > 0) {
             active_processes--;
@@ -587,15 +607,52 @@ static u8 process_exit_current(void) {
             process_total--;
         }
         current_pid = 0;
-        process->pid = 0;
-        process->state = PROCESS_UNUSED;
-        process->entry = 0;
-        process->user_stack_top = 0;
-        process->address_space = (struct address_space *)0;
-        process->wait_reason = WAIT_NONE;
         return 1;
     }
     return 0;
+}
+
+static u8 process_reap_slot(u32 index) {
+    if (index >= MAX_PROCESSES || process_table[index] == (struct process *)0 ||
+        process_table[index]->state != PROCESS_EXITED) {
+        return 0;
+    }
+    struct process *process = process_table[index];
+    process->pid = 0;
+    process->parent_pid = 0;
+    process->state = PROCESS_UNUSED;
+    process->entry = 0;
+    process->user_stack_top = 0;
+    process->address_space = (struct address_space *)0;
+    process->wait_reason = WAIT_NONE;
+    process->exit_code = 0;
+    for (u32 fd = 0; fd < MAX_FDS; fd++) {
+        process->fds[fd].used = 0;
+        process->fds[fd].kind = 0;
+        process->fds[fd].offset = 0;
+        process->fds[fd].size = 0;
+    }
+    return 1;
+}
+
+static u32 process_wait_child(u32 child_pid, u32 *status) {
+    for (u32 index = 0; index < MAX_PROCESSES; index++) {
+        struct process *process = process_table[index];
+        if (process == (struct process *)0 || process->parent_pid != current_pid ||
+            (child_pid != 0 && process->pid != child_pid)) {
+            continue;
+        }
+        if (process->state != PROCESS_EXITED) {
+            return 0xffffffff;
+        }
+        u32 pid = process->pid;
+        if (status != (u32 *)0) {
+            *status = process->exit_code;
+        }
+        process_reap_slot(index);
+        return pid;
+    }
+    return 0xffffffff;
 }
 
 static u8 process_cleanup_self_test(u32 init_pid) {
@@ -607,9 +664,13 @@ static u8 process_cleanup_self_test(u32 init_pid) {
     /* Keep the boot CPU on the init address space while exercising teardown;
        loading a probe CR3 is the job of the later context-switch path. */
     current_pid = probe_pid;
-    if (!process_exit_current()) {
+    if (!process_exit_current(0)) {
         current_pid = init_pid;
         return 0;
+    }
+    u32 probe_slot = process_slot_for_pid(probe_pid);
+    if (probe_slot < MAX_PROCESSES) {
+        process_reap_slot(probe_slot);
     }
     current_pid = init_pid;
     u8 page_returned = free_page_count == free_before;
@@ -617,7 +678,11 @@ static u8 process_cleanup_self_test(u32 init_pid) {
     u8 slot_reused = reused_pid != 0;
     if (slot_reused) {
         current_pid = reused_pid;
-        slot_reused = process_exit_current();
+        slot_reused = process_exit_current(0);
+        u32 reused_slot = process_slot_for_pid(reused_pid);
+        if (reused_slot < MAX_PROCESSES) {
+            slot_reused = slot_reused && process_reap_slot(reused_slot);
+        }
         current_pid = init_pid;
     }
     return page_returned && slot_reused;
@@ -1262,7 +1327,7 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
             serial_write("syscall: get_pid dispatch\n");
         }
     } else if (frame->eax == SYSCALL_EXIT) {
-        frame->eax = process_exit_current() ? 0 : 0xffffffff;
+        frame->eax = process_exit_current(frame->ebx) ? 0 : 0xffffffff;
         if (!exit_reported) {
             exit_reported = 1;
             serial_write("syscall: exit dispatch; process marked exited\n");
@@ -1341,6 +1406,16 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
         if (!seek_reported) {
             seek_reported = 1;
             serial_write("syscall: seek dispatch; file offset validated\n");
+        }
+    } else if (frame->eax == SYSCALL_WAIT) {
+        if (user_range_valid(frame->ecx, sizeof(u32))) {
+            frame->eax = process_wait_child(frame->ebx, (u32 *)frame->ecx);
+        } else {
+            frame->eax = 0xffffffff;
+        }
+        if (!wait_reported) {
+            wait_reported = 1;
+            serial_write("syscall: wait dispatch; child status validated\n");
         }
     } else {
         frame->eax = 0xffffffff;

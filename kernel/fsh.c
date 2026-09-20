@@ -12,6 +12,7 @@ typedef unsigned int u32;
 #define SYSCALL_CLOSE 9
 #define SYSCALL_STAT 10
 #define SYSCALL_SEEK 11
+#define SYSCALL_WAIT 12
 
 static u32 fsh_syscall3(u32 number, u32 first, u32 second, u32 third) {
     u32 result;
@@ -115,7 +116,11 @@ void fsh_entry(void) {
     }
     fsh_stat_kernel();
     fsh_seek_probe();
-    fsh_syscall3(SYSCALL_EXEC, 0x00200000, 0, 0);
+    u32 child_pid = fsh_syscall3(SYSCALL_EXEC, 0x00200000, 0, 0);
+    static u32 child_status;
+    if (child_pid != 0xffffffff) {
+        fsh_syscall3(SYSCALL_WAIT, child_pid, (u32)&child_status, 0);
+    }
     fsh_syscall3(SYSCALL_GET_TICKS, 0, 0, 0);
     fsh_syscall3(SYSCALL_GET_PID, 0, 0, 0);
     for (;;) {

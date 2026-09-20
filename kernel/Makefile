@@ -126,6 +126,7 @@ check: independence $(OUT)/fadal-kernel.img
 	@grep -q "syscall: getppid dispatch; parent PID returned" $(OUT)/smoke.log
 	@grep -q "syscall: sleep dispatch; timer wake scheduled" $(OUT)/smoke.log
 	@grep -q "syscall: mmap dispatch; user page mapped" $(OUT)/smoke.log
+	@grep -q "syscall: getring dispatch; ring-3 confirmed" $(OUT)/smoke.log
 		@grep -q "syscall: get_pid dispatch" $(OUT)/smoke.log
 			@grep -q "syscall: read dispatch; nonblocking TTY queue read" $(OUT)/smoke.log
 			@grep -q "syscall: yield dispatch; cooperative scheduler point" $(OUT)/smoke.log

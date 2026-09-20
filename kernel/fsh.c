@@ -7,6 +7,7 @@ typedef unsigned int u32;
 #define SYSCALL_GET_PPID 13
 #define SYSCALL_SLEEP 14
 #define SYSCALL_MMAP 15
+#define SYSCALL_GET_RING 16
 #define SYSCALL_READ 4
 #define SYSCALL_WRITE 5
 #define SYSCALL_OPEN 6
@@ -127,6 +128,7 @@ void fsh_entry(void) {
     fsh_syscall3(SYSCALL_GET_TICKS, 0, 0, 0);
     fsh_syscall3(SYSCALL_GET_PID, 0, 0, 0);
     fsh_syscall3(SYSCALL_GET_PPID, 0, 0, 0);
+    fsh_syscall3(SYSCALL_GET_RING, 0, 0, 0);
     fsh_syscall3(SYSCALL_SLEEP, 1, 0, 0);
     fsh_syscall3(SYSCALL_MMAP, 32, 0, 0);
     for (;;) {

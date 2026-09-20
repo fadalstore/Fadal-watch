@@ -53,6 +53,7 @@ typedef unsigned int u32;
 #define SYSCALL_GET_PPID 13
 #define SYSCALL_SLEEP 14
 #define SYSCALL_MMAP 15
+#define SYSCALL_GET_RING 16
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
 #define PROCESS_READY 1
@@ -91,6 +92,7 @@ static volatile u8 wait_reported;
 static volatile u8 get_ppid_reported;
 static volatile u8 sleep_reported;
 static volatile u8 mmap_reported;
+static volatile u8 get_ring_reported;
 static volatile u8 timer_scheduler_reported;
 static volatile u8 page_fault_reported;
 static u32 scheduler_ticks;
@@ -1594,6 +1596,12 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
         if (!get_ppid_reported) {
             get_ppid_reported = 1;
             serial_write("syscall: getppid dispatch; parent PID returned\n");
+        }
+    } else if (frame->eax == SYSCALL_GET_RING) {
+        frame->eax = (frame->cs & 0x3) == 0x3 ? 3 : 0;
+        if (!get_ring_reported) {
+            get_ring_reported = 1;
+            serial_write("syscall: getring dispatch; ring-3 confirmed\n");
         }
     } else if (frame->eax == SYSCALL_SLEEP) {
         u32 slot = process_slot_for_pid(current_pid);

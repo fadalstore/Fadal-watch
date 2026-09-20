@@ -128,6 +128,10 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     transfers the controller's 512-byte identity block before FAT12 mount.
     Boot and QEMU smoke tests require this hardware response, in addition to
     the existing sector read/write persistence checks behind VFS.
+35. Syscall `16` (`getring`) derives the privilege ring from the saved `CS`
+    in the ring-3 interrupt frame and returns `3` only for user execution.
+    FSH invokes it during startup, making the transition through the TSS,
+    user segments, `iret`, and `int 0x80` ABI observable in the smoke log.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

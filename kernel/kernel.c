@@ -180,7 +180,13 @@ struct syscall_frame {
     u32 edx;
     u32 ecx;
     u32 eax;
+    u32 eip;
+    u32 cs;
+    u32 eflags;
+    u32 user_esp;
+    u32 user_ss;
 };
+typedef struct syscall_frame interrupt_frame;
 
 struct address_space {
     u32 *page_directory;
@@ -210,6 +216,8 @@ struct process {
     struct address_space *address_space;
     u32 wait_reason;
     u32 exit_code;
+    interrupt_frame context;
+    u8 context_valid;
     struct file_descriptor fds[MAX_FDS];
 };
 
@@ -274,6 +282,7 @@ static void kernel_write(const char *text);
 static void serial_write(const char *text);
 static void *page_alloc(void);
 static void page_free(void *address);
+static void process_context_init(struct process *process);
 
 static void write_u32(u32 value) {
     char digits[11];
@@ -493,6 +502,9 @@ static void process_manager_init(void) {
             process_table[index]->address_space = (struct address_space *)0;
             process_table[index]->wait_reason = WAIT_NONE;
             process_table[index]->exit_code = 0;
+            process_table[index]->context_valid = 0;
+            process_table[index]->context.eip = 0;
+            process_table[index]->context.user_esp = 0;
             for (u32 fd = 0; fd < MAX_FDS; fd++) {
                 process_table[index]->fds[fd].used = 0;
                 process_table[index]->fds[fd].kind = 0;
@@ -511,7 +523,6 @@ static void process_manager_init(void) {
 }
 
 static u32 process_create(u32 entry, u32 user_stack_top) {
-    (void)user_stack_top;
     for (u32 index = 0; index < MAX_PROCESSES; index++) {
         struct process *process = process_table[index];
         if (process == (struct process *)0) {
@@ -535,10 +546,11 @@ static u32 process_create(u32 entry, u32 user_stack_top) {
         process->parent_pid = current_pid;
         process->state = PROCESS_READY;
         process->entry = entry;
-        process->user_stack_top = USER_STACK_ADDRESS + PAGE_SIZE;
+        process->user_stack_top = user_stack_top;
         process->address_space = space;
         process->wait_reason = WAIT_NONE;
         process->exit_code = 0;
+        process_context_init(process);
         for (u32 fd = 0; fd < MAX_FDS; fd++) {
             process->fds[fd].used = 0;
             process->fds[fd].kind = 0;
@@ -591,6 +603,23 @@ static u32 process_slot_for_pid(u32 pid) {
     return MAX_PROCESSES;
 }
 
+static void process_context_init(struct process *process) {
+    process->context.edi = 0;
+    process->context.esi = 0;
+    process->context.ebp = 0;
+    process->context.original_esp = 0;
+    process->context.ebx = 0;
+    process->context.edx = 0;
+    process->context.ecx = 0;
+    process->context.eax = 0;
+    process->context.eip = process->entry;
+    process->context.cs = 0x1b;
+    process->context.eflags = 0x202;
+    process->context.user_esp = process->user_stack_top;
+    process->context.user_ss = 0x23;
+    process->context_valid = 1;
+}
+
 static u32 process_parent_pid(u32 pid) {
     for (u32 index = 0; index < MAX_PROCESSES; index++) {
         struct process *process = process_table[index];
@@ -639,6 +668,9 @@ static u8 process_reap_slot(u32 index) {
     process->address_space = (struct address_space *)0;
     process->wait_reason = WAIT_NONE;
     process->exit_code = 0;
+    process->context_valid = 0;
+    process->context.eip = 0;
+    process->context.user_esp = 0;
     for (u32 fd = 0; fd < MAX_FDS; fd++) {
         process->fds[fd].used = 0;
         process->fds[fd].kind = 0;
@@ -1228,6 +1260,74 @@ static u8 scheduler_round_robin_self_test(u32 init_pid, u32 worker_pid) {
     return selected_worker;
 }
 
+static u8 process_context_self_test(u32 init_pid, u32 worker_pid) {
+    u32 init_slot = process_slot_for_pid(init_pid);
+    u32 worker_slot = process_slot_for_pid(worker_pid);
+    if (init_slot >= MAX_PROCESSES || worker_slot >= MAX_PROCESSES) {
+        return 0;
+    }
+    struct process *init = process_table[init_slot];
+    struct process *worker = process_table[worker_slot];
+    return init->context_valid && worker->context_valid &&
+        init->context.eip == init->entry && worker->context.eip == worker->entry &&
+        init->context.cs == 0x1b && worker->context.cs == 0x1b &&
+        init->context.user_ss == 0x23 && worker->context.user_ss == 0x23 &&
+        init->context.user_esp == init->user_stack_top &&
+        worker->context.user_esp == worker->user_stack_top;
+}
+
+static void process_context_copy(interrupt_frame *destination,
+                                 const interrupt_frame *source) {
+    destination->edi = source->edi;
+    destination->esi = source->esi;
+    destination->ebp = source->ebp;
+    destination->original_esp = source->original_esp;
+    destination->ebx = source->ebx;
+    destination->edx = source->edx;
+    destination->ecx = source->ecx;
+    destination->eax = source->eax;
+    destination->eip = source->eip;
+    destination->cs = source->cs;
+    destination->eflags = source->eflags;
+    destination->user_esp = source->user_esp;
+    destination->user_ss = source->user_ss;
+}
+
+static interrupt_frame *scheduler_timer_switch(interrupt_frame *frame) {
+    u32 current_slot = process_slot_for_pid(current_pid);
+    if (current_slot < MAX_PROCESSES) {
+        struct process *current = process_table[current_slot];
+        process_context_copy(&current->context, frame);
+        current->context_valid = 1;
+        if (current->state == PROCESS_RUNNING) {
+            current->state = PROCESS_READY;
+        }
+    }
+
+    scheduler_select_next_ready();
+    u32 next_slot = process_slot_for_pid(scheduler_ready_pid);
+    if (next_slot >= MAX_PROCESSES) {
+        if (current_slot < MAX_PROCESSES) {
+            process_table[current_slot]->state = PROCESS_RUNNING;
+            return &process_table[current_slot]->context;
+        }
+        return frame;
+    }
+
+    struct process *next = process_table[next_slot];
+    if (!next->context_valid) {
+        return frame;
+    }
+    next->state = PROCESS_RUNNING;
+    current_pid = next->pid;
+    load_address_space(next->address_space);
+    if (!timer_scheduler_reported) {
+        timer_scheduler_reported = 1;
+        serial_write("scheduler: timer context switch and CR3 reload passed\n");
+    }
+    return &next->context;
+}
+
 static char keyboard_ascii(u8 scancode) {
     switch (scancode) {
         case 0x02: return '1';
@@ -1361,16 +1461,13 @@ void keyboard_interrupt_handler(void) {
     keyboard_handle(inb(0x60));
 }
 
-void timer_interrupt_handler(void) {
+interrupt_frame *timer_interrupt_handler(interrupt_frame *frame) {
     timer_ticks++;
     scheduler_ticks++;
-    if ((scheduler_ticks % 10) == 0) {
-        scheduler_select_next_ready();
-        if (scheduler_ready_pid != 0 && !timer_scheduler_reported) {
-            timer_scheduler_reported = 1;
-            serial_write("scheduler: timer selected next ready PID\n");
-        }
+    if ((scheduler_ticks % 10) != 0) {
+        return frame;
     }
+    return scheduler_timer_switch(frame);
 }
 
 void syscall_interrupt_handler(struct syscall_frame *frame) {
@@ -1693,6 +1790,11 @@ void kernel_main(void) {
             kernel_write("scheduler: round-robin ready selection passed\n");
         } else {
             kernel_write("scheduler: round-robin ready selection failed\n");
+        }
+        if (process_context_self_test(init_pid, worker_pid)) {
+            kernel_write("scheduler: initial ring-3 contexts validated\n");
+        } else {
+            kernel_write("scheduler: initial ring-3 context validation failed\n");
         }
         if (process_cleanup_self_test(init_pid)) {
             kernel_write("process: address-space cleanup and PID-slot reuse passed\n");

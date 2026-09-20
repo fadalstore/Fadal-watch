@@ -108,13 +108,13 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
 30. Syscall `13` (`getppid`) returns the current process's recorded parent PID
     directly from the kernel process table. FSH invokes it during startup, and
     the smoke test verifies its freestanding interrupt dispatch path.
-31. The scheduler now performs bounded round-robin selection from timer IRQ0
-    and cooperative `yield`, skipping the current PID and wrapping across the
-    process table. Boot verifies selection of the next ready process, while
-    the timer emits a one-time selection trace. This milestone deliberately
-    does not swap CPU register frames or `CR3`; that protected context-switch
-    step remains separate so an address space is never changed underneath a
-    live user stack.
+31. The scheduler performs bounded round-robin selection from timer IRQ0 and
+    cooperative `yield`, skipping the current PID and wrapping across the
+    process table. Each process now owns an initial ring-3 register frame;
+    timer IRQ0 saves the interrupted `pusha`/`iret` frame, reloads the selected
+    process `CR3`, and restores the selected frame through `popa`/`iret`.
+    Boot validates initial contexts, and the smoke test requires the first
+    real timer context switch trace.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

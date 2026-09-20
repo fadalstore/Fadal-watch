@@ -39,9 +39,13 @@ keyboard_isr:
 
 .global timer_isr
 .type timer_isr, @function
+# C receives the pusha frame and returns the frame pointer to restore.
 timer_isr:
     pusha
+    pushl %esp
     call timer_interrupt_handler
+    addl $4, %esp
+    movl %eax, %esp
     movb $0x20, %al
     outb %al, $0x20
     popa

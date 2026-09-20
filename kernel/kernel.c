@@ -45,6 +45,7 @@ typedef unsigned int u32;
 #define SYSCALL_EXEC 7
 #define SYSCALL_YIELD 8
 #define SYSCALL_CLOSE 9
+#define SYSCALL_STAT 10
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
 #define PROCESS_READY 1
@@ -76,6 +77,7 @@ static volatile u8 open_reported;
 static volatile u8 exec_reported;
 static volatile u8 yield_reported;
 static volatile u8 close_reported;
+static volatile u8 stat_reported;
 static volatile u8 page_fault_reported;
 static u32 scheduler_ticks;
 static u32 scheduler_ready_pid;
@@ -185,6 +187,11 @@ struct file_descriptor {
     u8 kind;
     u32 offset;
     u32 size;
+};
+
+struct file_stat {
+    u32 size;
+    u32 type;
 };
 
 struct process {
@@ -1286,6 +1293,24 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
         if (!close_reported) {
             close_reported = 1;
             serial_write("syscall: close dispatch; descriptor released\n");
+        }
+    } else if (frame->eax == SYSCALL_STAT) {
+        struct file_stat *result = (struct file_stat *)frame->edx;
+        u32 file_size = 0;
+        u8 valid = user_path_is_kernel((const char *)frame->ebx, frame->ecx) &&
+            vfs_is_mounted() && user_range_valid(frame->edx, sizeof(*result)) &&
+            vfs_read_file("KERNEL.TXT", file_read_buffer,
+                          sizeof(file_read_buffer), &file_size);
+        if (valid) {
+            result->size = file_size;
+            result->type = 1;
+            frame->eax = 0;
+        } else {
+            frame->eax = 0xffffffff;
+        }
+        if (!stat_reported) {
+            stat_reported = 1;
+            serial_write("syscall: stat dispatch; metadata copyout validated\n");
         }
     } else {
         frame->eax = 0xffffffff;

@@ -90,6 +90,9 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     bounded kernel-backed file buffer with a per-descriptor offset. FSH's
     `cat KERNEL.TXT` command now opens, reads, writes, and closes the handle
     instead of emitting hardcoded file contents.
+27. Syscall `10` (`stat`) validates a `KERNEL.TXT` path and copies its size and
+    regular-file type into a userspace metadata structure. FSH exercises the
+    ABI during startup and exposes `stat KERNEL.TXT` as a shell command.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

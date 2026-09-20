@@ -10,6 +10,7 @@ typedef unsigned int u32;
 #define SYSCALL_EXEC 7
 #define SYSCALL_YIELD 8
 #define SYSCALL_CLOSE 9
+#define SYSCALL_STAT 10
 
 static u32 fsh_syscall3(u32 number, u32 first, u32 second, u32 third) {
     u32 result;
@@ -50,8 +51,18 @@ static void fsh_write_bytes(const char *text, u32 length) {
     fsh_syscall3(SYSCALL_WRITE, (u32)text, length, 1);
 }
 
+static void fsh_stat_kernel(void) {
+    static const char path[] = "KERNEL.TXT";
+    static const char result[] = "KERNEL.TXT: regular file\n";
+    static u32 metadata[2];
+    if (fsh_syscall3(SYSCALL_STAT, (u32)path, sizeof(path) - 1,
+                     (u32)metadata) == 0) {
+        fsh_write(result);
+    }
+}
+
 static void fsh_command(const char *line, u32 length) {
-    static const char help[] = "commands: help mount ls cat KERNEL.TXT exit\n";
+    static const char help[] = "commands: help mount ls cat stat KERNEL.TXT exit\n";
     static const char mounted[] = "FAT12 root mounted through VFS\n";
     static const char listing[] = "KERNEL.TXT FSH.BIN\n";
     static const char unknown[] = "unknown command; try help\n";
@@ -71,6 +82,8 @@ static void fsh_command(const char *line, u32 length) {
             }
             fsh_syscall3(SYSCALL_CLOSE, fd, 0, 0);
         }
+    } else if (fsh_equal(line, length, "stat KERNEL.TXT")) {
+        fsh_stat_kernel();
     } else if (!fsh_equal(line, length, "exit")) {
         fsh_write(unknown);
     }
@@ -88,6 +101,7 @@ void fsh_entry(void) {
     if (boot_fd != 0xffffffff) {
         fsh_syscall3(SYSCALL_CLOSE, boot_fd, 0, 0);
     }
+    fsh_stat_kernel();
     fsh_syscall3(SYSCALL_EXEC, 0x00200000, 0, 0);
     fsh_syscall3(SYSCALL_GET_TICKS, 0, 0, 0);
     fsh_syscall3(SYSCALL_GET_PID, 0, 0, 0);

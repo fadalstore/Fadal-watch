@@ -130,6 +130,8 @@ check: independence $(OUT)/fadal-kernel.img
 	@grep -q "syscall: getdevice dispatch; keyboard and TTY status returned" $(OUT)/smoke.log
 	@grep -q "syscall: setpriority dispatch; scheduler priority updated" $(OUT)/smoke.log
 	@grep -q "syscall: netloop dispatch; loopback packet delivered" $(OUT)/smoke.log
+	@grep -q "smp: CPUID topology detected" $(OUT)/smoke.log
+	@grep -q "syscall: getcpus dispatch; SMP topology reported" $(OUT)/smoke.log
 		@grep -q "syscall: get_pid dispatch" $(OUT)/smoke.log
 			@grep -q "syscall: read dispatch; nonblocking TTY queue read" $(OUT)/smoke.log
 			@grep -q "syscall: yield dispatch; cooperative scheduler point" $(OUT)/smoke.log

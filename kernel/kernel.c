@@ -57,6 +57,7 @@ typedef unsigned int u32;
 #define SYSCALL_GET_DEVICE 17
 #define SYSCALL_SET_PRIORITY 18
 #define SYSCALL_NET_LOOPBACK 19
+#define SYSCALL_GET_CPUS 20
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
 #define PROCESS_READY 1
@@ -99,6 +100,9 @@ static volatile u8 get_ring_reported;
 static volatile u8 get_device_reported;
 static volatile u8 set_priority_reported;
 static volatile u8 net_loopback_reported;
+static volatile u8 get_cpus_reported;
+static u32 smp_cpu_count = 1;
+static u8 smp_apic_present;
 static u8 net_loopback_buffer[256];
 static u32 net_loopback_length;
 static volatile u8 timer_scheduler_reported;
@@ -1307,6 +1311,22 @@ static void kernel_write(const char *text) {
     serial_write(text);
 }
 
+static void smp_probe(void) {
+    u32 eax = 1;
+    u32 ebx;
+    u32 ecx;
+    u32 edx;
+    __asm__ volatile ("cpuid"
+        : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
+    smp_apic_present = (edx & (1 << 9)) != 0;
+    if ((edx & (1 << 28)) != 0) {
+        u32 logical = (ebx >> 16) & 0xff;
+        if (logical != 0) {
+            smp_cpu_count = logical;
+        }
+    }
+}
+
 static void shell_write_bytes(const u8 *data, u32 size) {
     for (u32 index = 0; index < size; index++) {
         vga_putc((char)data[index]);
@@ -1677,6 +1697,13 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
             net_loopback_reported = 1;
             serial_write("syscall: netloop dispatch; loopback packet delivered\n");
         }
+    } else if (frame->eax == SYSCALL_GET_CPUS) {
+        frame->eax = frame->ebx == 0 ? smp_cpu_count :
+            frame->ebx == 1 ? smp_apic_present : 0xffffffff;
+        if (!get_cpus_reported) {
+            get_cpus_reported = 1;
+            serial_write("syscall: getcpus dispatch; SMP topology reported\n");
+        }
     } else if (frame->eax == SYSCALL_SLEEP) {
         u32 slot = process_slot_for_pid(current_pid);
         if (frame->ebx == 0) {
@@ -1807,6 +1834,11 @@ void kernel_main(void) {
     kernel_write("origin: from-scratch, no Linux dependency\n");
     kernel_write("status: boot path verified\n");
     memory_init();
+    smp_probe();
+    kernel_write("smp: CPUID topology detected (");
+    write_u32(smp_cpu_count);
+    kernel_write(" logical CPUs; APIC ");
+    kernel_write(smp_apic_present ? "present)\n" : "absent)\n");
     if (ata_identify(ata_identify_buffer)) {
         kernel_write("disk: ATA primary-master IDENTIFY passed\n");
     } else {

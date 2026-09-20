@@ -145,6 +145,11 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     receives it into a validated user buffer. FSH sends and receives a probe
     packet from ring 3, establishing packet ownership and copy-in/copy-out
     behavior before a physical NIC driver is added.
+39. The bootstrap processor now runs CPUID leaf 1 discovery, reporting logical
+    CPU topology and local-APIC capability. Syscall `20` (`getcpus`) exposes
+    the discovered logical CPU count (`EBX=0`) and APIC readiness (`EBX=1`).
+    This is the SMP prerequisite layer; AP startup/IPI bring-up and per-CPU
+    scheduler state remain the next SMP milestone.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

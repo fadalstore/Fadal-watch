@@ -185,6 +185,17 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     consumes that backend output instead of a hardcoded listing. It is kept
     separate from remote syscall `13` (`getppid`) so the expanded ABI remains
     compatible with the scheduler, RAMFS, FScan, and GitHub bridge additions.
+48. Fadal now contains a freestanding physical NIC path for QEMU's RTL8139:
+    PCI configuration-space discovery finds the vendor/device, enables bus
+    mastering, records the legacy IRQ, initializes the RX DMA ring and four TX
+    buffers, acknowledges NIC interrupts, and exposes bounded packet receive
+    and transmit operations. The QEMU smoke test boots with a virtual RTL8139
+    and verifies discovery at IRQ 11.
+49. The first lower network layer is now present above the NIC. FNet builds
+    Ethernet-II ARP request frames, sends a gateway probe through the RTL8139,
+    and validates the IPv4 header checksum algorithm. This is deliberately a
+    pre-TCP foundation: ARP reply parsing, IPv4 routing, UDP/TCP, DHCP, and
+    TLS/HTTPS remain staged after receive-path validation.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

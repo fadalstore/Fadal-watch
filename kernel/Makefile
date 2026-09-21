@@ -30,7 +30,7 @@ $(OUT):
 $(OUT)/boot.o: boot.S | $(OUT)
 	$(AS) --32 -o $@ $<
 
-$(OUT)/kernel.o: kernel.c fat12.h ata.h ramdisk.h slab.h vfs.h | $(OUT)
+$(OUT)/kernel.o: kernel.c fat12.h ata.h ramdisk.h slab.h vfs.h rtl8139.h fnet.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(OUT)/fat12.o: fat12.c fat12.h | $(OUT)
@@ -54,6 +54,12 @@ $(OUT)/ramfs.o: ramfs.c ramfs.h ramdisk.h vfs.h | $(OUT)
 $(OUT)/fscan.o: fscan.c fscan.h vfs.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+$(OUT)/rtl8139.o: rtl8139.c rtl8139.h | $(OUT)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(OUT)/fnet.o: fnet.c fnet.h rtl8139.h | $(OUT)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 $(OUT)/fsh.o: fsh.c | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
@@ -71,8 +77,8 @@ $(OUT)/fsh_blob.o: $(OUT)/fsh.bin
 $(OUT)/interrupts.o: interrupts.S kernel.c | $(OUT)
 	$(AS) --32 -o $@ $<
 
-$(OUT)/kernel.elf: $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/ramfs.o $(OUT)/fscan.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/ramfs.o $(OUT)/fscan.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o
+$(OUT)/kernel.elf: $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/ramfs.o $(OUT)/fscan.o $(OUT)/rtl8139.o $(OUT)/fnet.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/ramfs.o $(OUT)/fscan.o $(OUT)/rtl8139.o $(OUT)/fnet.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o
 
 $(OUT)/kernel.bin: $(OUT)/kernel.elf
 	$(OBJCOPY) -O binary $< $@
@@ -98,12 +104,15 @@ independence: $(OUT)/kernel.elf
 check: independence $(OUT)/fadal-kernel.img
 	@command -v $(QEMU) >/dev/null || \
 		(echo "$(QEMU) is required for the boot smoke test" >&2; exit 1)
-	@timeout 5s $(QEMU) -accel tcg -boot c -drive format=raw,file=$(OUT)/fadal-kernel.img \
+		@timeout 5s $(QEMU) -accel tcg -boot c -drive format=raw,file=$(OUT)/fadal-kernel.img \
+			-netdev user,id=fadalnet -device rtl8139,netdev=fadalnet \
 		-serial file:$(OUT)/smoke.log -display none -no-reboot -no-shutdown >/dev/null 2>&1 || \
 		test $$? -eq 124
 		@grep -q "FADAL KERNEL ONLINE" $(OUT)/smoke.log
 	@grep -q "memory: BIOS E820 map accepted" $(OUT)/smoke.log
-	@grep -q "disk: ATA primary-master IDENTIFY passed" $(OUT)/smoke.log
+		@grep -q "disk: ATA primary-master IDENTIFY passed" $(OUT)/smoke.log
+		@grep -q "network: RTL8139 PCI NIC detected; RX/TX DMA online" $(OUT)/smoke.log
+		@grep -q "network: Ethernet II + ARP + IPv4 checksum foundation passed" $(OUT)/smoke.log
 		@grep -q "memory: 16 MiB identity paging online" $(OUT)/smoke.log
 		@grep -q "memory: slab caches online (process, fat12_dirent)" $(OUT)/smoke.log
 		@grep -q "memory: slab allocation/reuse self-test passed" $(OUT)/smoke.log
@@ -173,12 +182,14 @@ check: independence $(OUT)/fadal-kernel.img
 	@echo "Fadal Kernel boot smoke test passed"
 
 run: $(OUT)/fadal-kernel.img
-	$(QEMU) -accel tcg -boot c -drive format=raw,file=$(OUT)/fadal-kernel.img \
-		-serial stdio -display none -no-reboot -no-shutdown
+		$(QEMU) -accel tcg -boot c -drive format=raw,file=$(OUT)/fadal-kernel.img \
+			-netdev user,id=fadalnet -device rtl8139,netdev=fadalnet \
+			-serial stdio -display none -no-reboot -no-shutdown
 
 run-vga: $(OUT)/fadal-kernel.img
-	$(QEMU) -accel tcg -boot c -drive format=raw,file=$(OUT)/fadal-kernel.img \
-		-serial stdio -no-reboot -no-shutdown
+		$(QEMU) -accel tcg -boot c -drive format=raw,file=$(OUT)/fadal-kernel.img \
+			-netdev user,id=fadalnet -device rtl8139,netdev=fadalnet \
+			-serial stdio -no-reboot -no-shutdown
 
 uefi-image:
 	UEFI_IMAGE="$(UEFI_IMAGE)" \

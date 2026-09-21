@@ -37,6 +37,30 @@ keyboard_isr:
     iret
 .size keyboard_isr, .-keyboard_isr
 
+.global rtl8139_irq10_isr
+.type rtl8139_irq10_isr, @function
+rtl8139_irq10_isr:
+    pusha
+    call rtl8139_interrupt_handler
+    movb $0x20, %al
+    outb %al, $0xa0
+    outb %al, $0x20
+    popa
+    iret
+.size rtl8139_irq10_isr, .-rtl8139_irq10_isr
+
+.global rtl8139_irq11_isr
+.type rtl8139_irq11_isr, @function
+rtl8139_irq11_isr:
+    pusha
+    call rtl8139_interrupt_handler
+    movb $0x20, %al
+    outb %al, $0xa0
+    outb %al, $0x20
+    popa
+    iret
+.size rtl8139_irq11_isr, .-rtl8139_irq11_isr
+
 .global timer_isr
 .type timer_isr, @function
 # C receives the pusha frame and returns the frame pointer to restore.

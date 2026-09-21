@@ -5,6 +5,8 @@
 #include "ramfs.h"
 #include "slab.h"
 #include "vfs.h"
+#include "rtl8139.h"
+#include "fnet.h"
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -303,6 +305,7 @@ static u32 heap_allocation_count;
 static u32 heap_used_bytes;
 static u8 file_read_buffer[128];
 static u8 ata_identify_buffer[512];
+static u8 rtl8139_reported;
 
 extern void default_isr(void);
 extern void gdt_flush(const struct gdt_pointer *pointer);
@@ -310,6 +313,12 @@ extern void timer_isr(void);
 extern void keyboard_isr(void);
 extern void syscall_isr(void);
 extern void page_fault_isr(void);
+extern void rtl8139_irq10_isr(void);
+extern void rtl8139_irq11_isr(void);
+
+void rtl8139_interrupt_handler(void) {
+    rtl8139_interrupt();
+}
 
 static inline void outb(u16 port, u8 value) {
     __asm__ volatile ("outb %0, %1" : : "a"(value), "Nd"(port));
@@ -1219,6 +1228,8 @@ static void idt_init(void) {
     }
     idt_set_gate(TIMER_VECTOR, timer_isr, 0x8e);
     idt_set_gate(KEYBOARD_VECTOR, keyboard_isr, 0x8e);
+    idt_set_gate(0x2a, rtl8139_irq10_isr, 0x8e);
+    idt_set_gate(0x2b, rtl8139_irq11_isr, 0x8e);
     idt_set_gate(0x0e, page_fault_isr, 0x8e);
     /* DPL 3 makes the ABI callable by a future user process. */
     idt_set_gate(SYSCALL_VECTOR, syscall_isr, 0xee);
@@ -1251,9 +1262,9 @@ static void pic_init(void) {
     outb(0xa1, 0x01);
     io_wait();
 
-    /* Keep only timer and keyboard IRQs unmasked during this milestone. */
+    /* Keep timer, keyboard, and the legacy PCI NIC IRQ path unmasked. */
     outb(0x21, 0xfc);
-    outb(0xa1, 0xff);
+    outb(0xa1, 0xf3);
 }
 
 static void timer_init(void) {
@@ -2308,6 +2319,20 @@ void kernel_main(void) {
     }
     pic_init();
     timer_init();
+    if (rtl8139_probe()) {
+        kernel_write("network: RTL8139 PCI NIC detected; RX/TX DMA online (IRQ ");
+        write_u32(rtl8139_irq());
+        kernel_write(")\n");
+        rtl8139_reported = 1;
+        if (fnet_init() && fnet_self_test()) {
+            kernel_write("network: Ethernet II + ARP + IPv4 checksum foundation passed\n");
+            fnet_arp_probe(0x0202000a);
+        } else {
+            kernel_write("network: Ethernet/ARP foundation self-test failed\n");
+        }
+    } else {
+        kernel_write("network: no RTL8139 PCI NIC detected; loopback remains active\n");
+    }
     kernel_write("interrupts: IDT + PIC online\n");
     kernel_write("timer: PIT IRQ0 online at 100 Hz\n");
     kernel_write("syscalls: int 0x80 ABI gate online\n");

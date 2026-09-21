@@ -7,6 +7,7 @@
 #include "vfs.h"
 #include "rtl8139.h"
 #include "fnet.h"
+#include "gitpack.h"
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -2400,6 +2401,11 @@ void kernel_main(void) {
         }
     } else {
         kernel_write("network: no RTL8139 PCI NIC detected; loopback remains active\n");
+    }
+    if (gitpack_self_test()) {
+        kernel_write("storage: Git SHA-1 and packfile checksum self-test passed\n");
+    } else {
+        kernel_write("storage: Git SHA-1 and packfile checksum self-test failed\n");
     }
     kernel_write("interrupts: IDT + PIC online\n");
     kernel_write("timer: PIT IRQ0 online at 100 Hz\n");

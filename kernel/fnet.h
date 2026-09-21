@@ -23,6 +23,12 @@ fnet_u8 fnet_tcp_connect(fnet_u32 destination_ip, fnet_u16 destination_port,
                          fnet_u16 local_port);
 fnet_u8 fnet_tcp_receive(const fnet_u8 *frame, fnet_u32 length);
 fnet_u8 fnet_tcp_state(void);
+fnet_u16 fnet_tcp_read(fnet_u8 *payload, fnet_u16 capacity);
+fnet_u32 fnet_tcp_write(const fnet_u8 *payload, fnet_u16 length);
+fnet_u16 fnet_git_build_upload_pack_request(const fnet_u8 *path, const fnet_u8 *host,
+                                            fnet_u8 *output, fnet_u16 capacity);
+fnet_u16 fnet_git_pktline_length(const fnet_u8 *packet, fnet_u16 length);
+fnet_u8 fnet_git_parse_advertisement(const fnet_u8 *packet, fnet_u16 length, fnet_u8 *head_oid);
 fnet_u32 fnet_dhcp_discover(void);
 fnet_u8 fnet_dhcp_receive(const fnet_u8 *frame, fnet_u32 length);
 fnet_u8 fnet_dhcp_is_bound(void);

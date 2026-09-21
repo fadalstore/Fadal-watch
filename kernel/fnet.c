@@ -9,6 +9,7 @@
 #define TCP_SYN 0x02
 #define TCP_RST 0x04
 #define TCP_ACK 0x10
+#define FNET_TCP_PAYLOAD_MAX 128
 #define DHCP_CLIENT_PORT 68
 #define DHCP_SERVER_PORT 67
 #define DHCP_MAGIC 0x63825363
@@ -55,6 +56,8 @@ struct fnet_tcp_connection {
     fnet_u32 remote_ip;
     fnet_u32 send_next;
     fnet_u32 receive_next;
+    fnet_u16 payload_length;
+    fnet_u8 payload[FNET_TCP_PAYLOAD_MAX];
 };
 static struct fnet_tcp_connection tcp_connection;
 
@@ -87,6 +90,7 @@ static void arp_cache_clear(void) {
     }
     tcp_connection.valid = 0;
     tcp_connection.state = FNET_TCP_CLOSED;
+    tcp_connection.payload_length = 0;
 }
 static void arp_cache_store(fnet_u32 ip, const fnet_u8 *mac) {
     fnet_u32 slot = FNET_ARP_CACHE_SIZE;
@@ -268,7 +272,7 @@ fnet_u32 fnet_udp_send(fnet_u32 destination_ip, fnet_u16 source_port,
 static fnet_u16 tcp_checksum(fnet_u32 source_ip, fnet_u32 destination_ip,
                              const fnet_u8 *tcp, fnet_u32 length) {
     fnet_u8 pseudo[160];
-    if (length > 140) return 0;
+    if (length > 148) return 0;
     put32(pseudo, source_ip); put32(pseudo + 4, destination_ip);
     pseudo[8] = 0; pseudo[9] = IPV4_TCP; put16(pseudo + 10, (fnet_u16)length);
     for (fnet_u32 index = 0; index < length; index++) pseudo[12 + index] = tcp[index];
@@ -333,9 +337,100 @@ fnet_u8 fnet_tcp_receive(const fnet_u8 *frame, fnet_u32 length) {
                          tcp_connection.receive_next, TCP_ACK);
         return 2;
     }
+    fnet_u32 tcp_payload_length = total_length - ip_header_length - tcp_header_length;
+    if (tcp_connection.state == FNET_TCP_ESTABLISHED && tcp_payload_length != 0 &&
+        sequence == tcp_connection.receive_next && tcp_connection.payload_length == 0) {
+        fnet_u32 copy_length = tcp_payload_length < FNET_TCP_PAYLOAD_MAX ?
+            tcp_payload_length : FNET_TCP_PAYLOAD_MAX;
+        for (fnet_u32 index = 0; index < copy_length; index++)
+            tcp_connection.payload[index] = tcp[tcp_header_length + index];
+        tcp_connection.payload_length = (fnet_u16)copy_length;
+        tcp_connection.receive_next += tcp_payload_length;
+        fnet_tcp_segment(tcp_connection.remote_ip, tcp_connection.local_port,
+                         tcp_connection.remote_port, tcp_connection.send_next,
+                         tcp_connection.receive_next, TCP_ACK);
+        return 3;
+    }
     return tcp_connection.state == FNET_TCP_ESTABLISHED;
 }
 fnet_u8 fnet_tcp_state(void) { return tcp_connection.state; }
+fnet_u16 fnet_tcp_read(fnet_u8 *payload, fnet_u16 capacity) {
+    if (!payload || capacity == 0 || tcp_connection.payload_length == 0) return 0;
+    fnet_u16 length = tcp_connection.payload_length < capacity ?
+        tcp_connection.payload_length : capacity;
+    for (fnet_u32 index = 0; index < length; index++) payload[index] = tcp_connection.payload[index];
+    tcp_connection.payload_length = 0;
+    return length;
+}
+fnet_u32 fnet_tcp_write(const fnet_u8 *payload, fnet_u16 length) {
+    if (!payload || length == 0 || length > FNET_TCP_PAYLOAD_MAX ||
+        !tcp_connection.valid || tcp_connection.state != FNET_TCP_ESTABLISHED) return 0;
+    fnet_u8 frame[FNET_FRAME_MAX], mac[6];
+    fnet_u32 next_hop;
+    if (!fnet_ipv4_route(tcp_connection.remote_ip, &next_hop, mac)) return 0;
+    copy_mac(frame, mac); copy_mac(frame + 6, local_mac); put16(frame + 12, ETH_IPV4);
+    frame[14] = 0x45; frame[15] = 0; put16(frame + 16, (fnet_u16)(40 + length));
+    put16(frame + 18, 0); put16(frame + 20, 0); frame[22] = 64; frame[23] = IPV4_TCP; put16(frame + 24, 0);
+    put32(frame + 26, local_ip); put32(frame + 30, tcp_connection.remote_ip);
+    put16(frame + 24, fnet_ipv4_checksum(frame + 14, 20));
+    put16(frame + 34, tcp_connection.local_port); put16(frame + 36, tcp_connection.remote_port);
+    put32(frame + 38, tcp_connection.send_next); put32(frame + 42, tcp_connection.receive_next);
+    frame[46] = 0x50; frame[47] = TCP_ACK; put16(frame + 48, 4096); put16(frame + 50, 0); put16(frame + 52, 0);
+    for (fnet_u32 index = 0; index < length; index++) frame[54 + index] = payload[index];
+    put16(frame + 50, tcp_checksum(local_ip, tcp_connection.remote_ip, frame + 34, 20 + length));
+    fnet_u32 sent = rtl8139_tx(frame, 60 > 54 + length ? 60 : 54 + length);
+    if (sent != 0) tcp_connection.send_next += length;
+    return sent;
+}
+static fnet_u8 git_hex_value(fnet_u8 value) {
+    if (value >= '0' && value <= '9') return (fnet_u8)(value - '0');
+    if (value >= 'a' && value <= 'f') return (fnet_u8)(value - 'a' + 10);
+    if (value >= 'A' && value <= 'F') return (fnet_u8)(value - 'A' + 10);
+    return 0xff;
+}
+static fnet_u32 git_text_length(const fnet_u8 *text) {
+    fnet_u32 length = 0;
+    while (text[length] != 0 && length < 120) length++;
+    return length;
+}
+fnet_u16 fnet_git_build_upload_pack_request(const fnet_u8 *path, const fnet_u8 *host,
+                                            fnet_u8 *output, fnet_u16 capacity) {
+    static const fnet_u8 prefix[] = "git-upload-pack ";
+    static const fnet_u8 host_prefix[] = "host=";
+    fnet_u32 path_length = git_text_length(path);
+    fnet_u32 host_length = git_text_length(host);
+    fnet_u32 payload_length = sizeof(prefix) - 1 + path_length + 1 + sizeof(host_prefix) - 1 + host_length + 1;
+    fnet_u32 packet_length = payload_length + 4;
+    if (!path || !host || !output || capacity < packet_length || packet_length > 0xffff) return 0;
+    static const fnet_u8 hex[] = "0123456789abcdef";
+    output[0] = hex[(packet_length >> 12) & 0xf]; output[1] = hex[(packet_length >> 8) & 0xf];
+    output[2] = hex[(packet_length >> 4) & 0xf]; output[3] = hex[packet_length & 0xf];
+    fnet_u32 offset = 4;
+    for (fnet_u32 index = 0; index < sizeof(prefix) - 1; index++) output[offset++] = prefix[index];
+    for (fnet_u32 index = 0; index < path_length; index++) output[offset++] = path[index];
+    output[offset++] = 0;
+    for (fnet_u32 index = 0; index < sizeof(host_prefix) - 1; index++) output[offset++] = host_prefix[index];
+    for (fnet_u32 index = 0; index < host_length; index++) output[offset++] = host[index];
+    output[offset++] = 0;
+    return (fnet_u16)offset;
+}
+fnet_u16 fnet_git_pktline_length(const fnet_u8 *packet, fnet_u16 length) {
+    if (!packet || length < 4) return 0;
+    fnet_u8 high = git_hex_value(packet[0]), middle_high = git_hex_value(packet[1]);
+    fnet_u8 middle_low = git_hex_value(packet[2]), low = git_hex_value(packet[3]);
+    if (high == 0xff || middle_high == 0xff || middle_low == 0xff || low == 0xff) return 0;
+    fnet_u16 packet_length = (fnet_u16)((high << 12) | (middle_high << 8) | (middle_low << 4) | low);
+    return packet_length <= length ? packet_length : 0;
+}
+fnet_u8 fnet_git_parse_advertisement(const fnet_u8 *packet, fnet_u16 length, fnet_u8 *head_oid) {
+    fnet_u16 packet_length = fnet_git_pktline_length(packet, length);
+    if (!packet || !head_oid || packet_length < 45 || packet_length > length) return 0;
+    for (fnet_u32 index = 0; index < 40; index++) {
+        if (git_hex_value(packet[4 + index]) == 0xff) return 0;
+        head_oid[index] = packet[4 + index];
+    }
+    return packet[44] == ' ';
+}
 fnet_u32 fnet_dhcp_discover(void) {
     fnet_u8 frame[FNET_FRAME_MAX];
     fnet_u8 *ip = frame + 14;
@@ -409,6 +504,7 @@ fnet_u32 fnet_poll(void) {
 }
 fnet_u8 fnet_self_test(void) {
     fnet_u8 header[20], reply[ARP_FRAME_LENGTH], cached_mac[6], ipv4[64], udp_readback[8], tcp[60];
+    fnet_u8 git_request[128], git_advertisement[64], git_oid[40];
     fnet_u32 next_hop, source_ip;
     fnet_u16 source_port;
     for (fnet_u32 index = 0; index < sizeof(header); index++) header[index] = 0;
@@ -457,6 +553,19 @@ fnet_u8 fnet_self_test(void) {
     put16(tcp + 48, 4096); put16(tcp + 50, 0);
     put16(tcp + 50, tcp_checksum(gateway_ip, local_ip, tcp + 34, 20));
     if (fnet_tcp_receive(tcp, sizeof(tcp)) != 2 || fnet_tcp_state() != FNET_TCP_ESTABLISHED) return 0;
+    put16(tcp + 16, 42); put32(tcp + 38, 0x1001); put32(tcp + 42, 0x46444c54);
+    tcp[54] = 'O'; tcp[55] = 'K'; put16(tcp + 50, 0);
+    put16(tcp + 50, tcp_checksum(gateway_ip, local_ip, tcp + 34, 22));
+    if (fnet_tcp_receive(tcp, sizeof(tcp)) != 3 || tcp_connection.payload_length != 2 ||
+        fnet_tcp_read(cached_mac, sizeof(cached_mac)) != 2 || cached_mac[0] != 'O' || cached_mac[1] != 'K') return 0;
+    fnet_u16 request_length = fnet_git_build_upload_pack_request(
+        (const fnet_u8 *)"/fadalstore/Fadal-watch.git", (const fnet_u8 *)"github.com",
+        git_request, sizeof(git_request));
+    if (request_length == 0 || fnet_git_pktline_length(git_request, request_length) != request_length) return 0;
+    git_advertisement[0] = '0'; git_advertisement[1] = '0'; git_advertisement[2] = '2'; git_advertisement[3] = 'd';
+    for (fnet_u32 index = 0; index < 40; index++) git_advertisement[4 + index] = 'a';
+    git_advertisement[44] = ' ';
+    if (!fnet_git_parse_advertisement(git_advertisement, 45, git_oid) || git_oid[0] != 'a' || git_oid[39] != 'a') return 0;
     return fnet_arp_probe(gateway_ip) == 60;
 }
 fnet_u8 fnet_is_ready(void) { return ready; }

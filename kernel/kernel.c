@@ -2389,6 +2389,7 @@ void kernel_main(void) {
             kernel_write("network: IPv4 receive and next-hop routing self-test passed\n");
             kernel_write("network: UDP bind, checksum, receive, and read self-test passed\n");
             kernel_write("network: TCP SYN, SYN-ACK, and ACK handshake self-test passed\n");
+            kernel_write("network: TCP payload and Git pkt-line self-test passed\n");
             if (fnet_dhcp_discover() != 0) {
                 kernel_write("network: DHCP discover transmitted; waiting for lease\n");
             } else {

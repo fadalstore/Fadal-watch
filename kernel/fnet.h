@@ -12,6 +12,13 @@ fnet_u8 fnet_arp_receive(const fnet_u8 *frame, fnet_u32 length);
 fnet_u8 fnet_arp_lookup(fnet_u32 ip, fnet_u8 *mac);
 fnet_u8 fnet_ipv4_receive(const fnet_u8 *frame, fnet_u32 length);
 fnet_u8 fnet_ipv4_route(fnet_u32 destination, fnet_u32 *next_hop, fnet_u8 *mac);
+fnet_u8 fnet_udp_bind(fnet_u16 port);
+fnet_u16 fnet_udp_read(fnet_u16 port, fnet_u8 *payload, fnet_u16 capacity,
+                       fnet_u32 *source_ip, fnet_u16 *source_port);
+fnet_u8 fnet_udp_receive(const fnet_u8 *frame, fnet_u32 length);
+fnet_u32 fnet_udp_send(fnet_u32 destination_ip, fnet_u16 source_port,
+                       fnet_u16 destination_port, const fnet_u8 *payload,
+                       fnet_u16 payload_length);
 fnet_u32 fnet_poll(void);
 fnet_u16 fnet_ipv4_checksum(const fnet_u8 *header, fnet_u32 length);
 fnet_u8 fnet_is_ready(void);

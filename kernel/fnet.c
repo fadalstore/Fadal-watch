@@ -3,12 +3,15 @@
 
 #define ETH_ARP 0x0806
 #define ETH_IPV4 0x0800
+#define IPV4_UDP 17
 #define ARP_REPLY 2
 #define ARP_ETHERNET 1
 #define ARP_IPV4 0x0800
 #define ARP_FRAME_LENGTH 42
-#define FNET_FRAME_MAX 128
+#define FNET_FRAME_MAX 256
 #define FNET_ARP_CACHE_SIZE 8
+#define FNET_UDP_SOCKET_COUNT 8
+#define FNET_UDP_PAYLOAD_MAX 128
 #define FNET_IPV4_LOCAL 1
 #define FNET_IPV4_NOT_LOCAL 0
 
@@ -22,6 +25,15 @@ static fnet_u8 arp_cache_valid[FNET_ARP_CACHE_SIZE];
 static fnet_u8 arp_cache_next;
 static fnet_u32 ipv4_rx_count;
 static fnet_u32 ipv4_drop_count;
+struct fnet_udp_socket {
+    fnet_u8 valid;
+    fnet_u16 port;
+    fnet_u32 source_ip;
+    fnet_u16 source_port;
+    fnet_u16 length;
+    fnet_u8 payload[FNET_UDP_PAYLOAD_MAX];
+};
+static struct fnet_udp_socket udp_sockets[FNET_UDP_SOCKET_COUNT];
 
 static void put16(fnet_u8 *p, fnet_u16 value) { p[0] = (fnet_u8)(value >> 8); p[1] = (fnet_u8)value; }
 static void put32(fnet_u8 *p, fnet_u32 value) {
@@ -44,6 +56,10 @@ static void arp_cache_clear(void) {
     arp_cache_next = 0;
     ipv4_rx_count = 0;
     ipv4_drop_count = 0;
+    for (fnet_u32 index = 0; index < FNET_UDP_SOCKET_COUNT; index++) {
+        udp_sockets[index].valid = 0;
+        udp_sockets[index].length = 0;
+    }
 }
 static void arp_cache_store(fnet_u32 ip, const fnet_u8 *mac) {
     fnet_u32 slot = FNET_ARP_CACHE_SIZE;
@@ -134,6 +150,92 @@ fnet_u8 fnet_ipv4_route(fnet_u32 destination, fnet_u32 *next_hop, fnet_u8 *mac) 
     fnet_arp_probe(selected);
     return 0;
 }
+static fnet_u16 udp_checksum(fnet_u32 source_ip, fnet_u32 destination_ip,
+                             const fnet_u8 *udp, fnet_u32 length) {
+    fnet_u8 pseudo[160];
+    if (length > 140) return 0;
+    put32(pseudo, source_ip); put32(pseudo + 4, destination_ip);
+    pseudo[8] = 0; pseudo[9] = IPV4_UDP; put16(pseudo + 10, (fnet_u16)length);
+    for (fnet_u32 index = 0; index < length; index++) pseudo[12 + index] = udp[index];
+    return fnet_ipv4_checksum(pseudo, 12 + length);
+}
+fnet_u8 fnet_udp_bind(fnet_u16 port) {
+    if (!ready || port == 0) return 0;
+    for (fnet_u32 index = 0; index < FNET_UDP_SOCKET_COUNT; index++) {
+        if (udp_sockets[index].valid && udp_sockets[index].port == port) return 1;
+    }
+    for (fnet_u32 index = 0; index < FNET_UDP_SOCKET_COUNT; index++) {
+        if (!udp_sockets[index].valid) {
+            udp_sockets[index].valid = 1;
+            udp_sockets[index].port = port;
+            udp_sockets[index].length = 0;
+            return 1;
+        }
+    }
+    return 0;
+}
+fnet_u16 fnet_udp_read(fnet_u16 port, fnet_u8 *payload, fnet_u16 capacity,
+                       fnet_u32 *source_ip, fnet_u16 *source_port) {
+    if (!payload || capacity == 0) return 0;
+    for (fnet_u32 index = 0; index < FNET_UDP_SOCKET_COUNT; index++) {
+        struct fnet_udp_socket *socket = &udp_sockets[index];
+        if (!socket->valid || socket->port != port || socket->length == 0) continue;
+        fnet_u16 length = socket->length < capacity ? socket->length : capacity;
+        for (fnet_u32 byte = 0; byte < length; byte++) payload[byte] = socket->payload[byte];
+        if (source_ip) *source_ip = socket->source_ip;
+        if (source_port) *source_port = socket->source_port;
+        socket->length = 0;
+        return length;
+    }
+    return 0;
+}
+fnet_u8 fnet_udp_receive(const fnet_u8 *frame, fnet_u32 length) {
+    if (!ready || !frame || length < 42 || get16(frame + 12) != ETH_IPV4) return 0;
+    const fnet_u8 *ip = frame + 14;
+    fnet_u32 header_length = (fnet_u32)(ip[0] & 0x0f) * 4;
+    fnet_u32 total_length = get16(ip + 2);
+    if ((ip[0] >> 4) != 4 || ip[9] != IPV4_UDP || header_length < 20 ||
+        total_length < header_length + 8 || total_length > length) return 0;
+    const fnet_u8 *udp = ip + header_length;
+    fnet_u16 udp_length = get16(udp + 4);
+    fnet_u16 checksum = get16(udp + 6);
+    if (udp_length < 8 || udp_length > total_length - header_length ||
+        (checksum != 0 && udp_checksum(get32(ip + 12), get32(ip + 16), udp, udp_length) != 0)) return 0;
+    fnet_u16 destination_port = get16(udp + 2);
+    for (fnet_u32 index = 0; index < FNET_UDP_SOCKET_COUNT; index++) {
+        struct fnet_udp_socket *socket = &udp_sockets[index];
+        if (!socket->valid || socket->port != destination_port || socket->length != 0) continue;
+        socket->source_ip = get32(ip + 12);
+        socket->source_port = get16(udp);
+        socket->length = (fnet_u16)(udp_length - 8);
+        if (socket->length > FNET_UDP_PAYLOAD_MAX) socket->length = FNET_UDP_PAYLOAD_MAX;
+        for (fnet_u32 byte = 0; byte < socket->length; byte++) socket->payload[byte] = udp[8 + byte];
+        return 1;
+    }
+    return 0;
+}
+fnet_u32 fnet_udp_send(fnet_u32 destination_ip, fnet_u16 source_port,
+                       fnet_u16 destination_port, const fnet_u8 *payload,
+                       fnet_u16 payload_length) {
+    fnet_u8 frame[FNET_FRAME_MAX], mac[6];
+    fnet_u32 next_hop;
+    fnet_u32 udp_length = (fnet_u32)payload_length + 8;
+    if (!ready || !payload || source_port == 0 || destination_port == 0 ||
+        payload_length > FNET_UDP_PAYLOAD_MAX || !fnet_ipv4_route(destination_ip, &next_hop, mac)) return 0;
+    copy_mac(frame, mac); copy_mac(frame + 6, local_mac); put16(frame + 12, ETH_IPV4);
+    frame[14] = 0x45; frame[15] = 0; put16(frame + 16, (fnet_u16)(20 + udp_length));
+    put16(frame + 18, 0); frame[20] = 64; frame[21] = IPV4_UDP; put16(frame + 24, 0);
+    put32(frame + 26, local_ip); put32(frame + 30, destination_ip);
+    put16(frame + 24, fnet_ipv4_checksum(frame + 14, 20));
+    put16(frame + 34, source_port); put16(frame + 36, destination_port);
+    put16(frame + 38, (fnet_u16)udp_length); put16(frame + 40, 0);
+    for (fnet_u32 byte = 0; byte < payload_length; byte++) frame[42 + byte] = payload[byte];
+    put16(frame + 40, udp_checksum(local_ip, destination_ip, frame + 34, udp_length));
+    fnet_u32 wire_length = 14 + 20 + udp_length;
+    if (wire_length < 60) wire_length = 60;
+    for (fnet_u32 byte = 14 + 20 + udp_length; byte < wire_length; byte++) frame[byte] = 0;
+    return rtl8139_tx(frame, wire_length);
+}
 fnet_u32 fnet_poll(void) {
     fnet_u8 frame[FNET_FRAME_MAX];
     fnet_u32 parsed = 0;
@@ -144,14 +246,16 @@ fnet_u32 fnet_poll(void) {
         if (get16(frame + 12) == ETH_ARP) {
             if (fnet_arp_receive(frame, length)) parsed++;
         } else if (fnet_ipv4_receive(frame, length)) {
+            if (frame[14 + 9] == IPV4_UDP) fnet_udp_receive(frame, length);
             parsed++;
         }
     }
     return parsed;
 }
 fnet_u8 fnet_self_test(void) {
-    fnet_u8 header[20], reply[ARP_FRAME_LENGTH], cached_mac[6], ipv4[34];
-    fnet_u32 next_hop;
+    fnet_u8 header[20], reply[ARP_FRAME_LENGTH], cached_mac[6], ipv4[64], udp_readback[8];
+    fnet_u32 next_hop, source_ip;
+    fnet_u16 source_port;
     for (fnet_u32 index = 0; index < sizeof(header); index++) header[index] = 0;
     header[0] = 0x45; header[8] = 64; header[9] = 1; put16(header + 2, 20);
     put32(header + 12, local_ip); put32(header + 16, gateway_ip); put16(header + 10, 0);
@@ -175,6 +279,18 @@ fnet_u8 fnet_self_test(void) {
     put16(ipv4 + 24, 0);
     put16(ipv4 + 24, fnet_ipv4_checksum(ipv4 + 14, 20));
     if (fnet_ipv4_receive(ipv4, sizeof(ipv4)) != FNET_IPV4_LOCAL) return 0;
+    if (!fnet_udp_bind(5353)) return 0;
+    put16(ipv4 + 16, 31);
+    ipv4[23] = IPV4_UDP;
+    put16(ipv4 + 34, 4000); put16(ipv4 + 36, 5353); put16(ipv4 + 38, 11); put16(ipv4 + 40, 0);
+    ipv4[42] = 'd'; ipv4[43] = 'n'; ipv4[44] = 's';
+    put16(ipv4 + 24, 0);
+    put16(ipv4 + 24, fnet_ipv4_checksum(ipv4 + 14, 20));
+    put16(ipv4 + 40, udp_checksum(0x02020014, local_ip, ipv4 + 34, 11));
+    if (!fnet_udp_receive(ipv4, 45) ||
+        fnet_udp_read(5353, udp_readback, sizeof(udp_readback), &source_ip, &source_port) != 3 ||
+        source_ip != 0x02020014 || source_port != 4000 || udp_readback[0] != 'd' ||
+        udp_readback[1] != 'n' || udp_readback[2] != 's') return 0;
     if (!fnet_ipv4_route(0x08080808, &next_hop, cached_mac) || next_hop != gateway_ip) return 0;
     return fnet_arp_probe(gateway_ip) == 60;
 }

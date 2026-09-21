@@ -2342,6 +2342,7 @@ void kernel_main(void) {
             kernel_write("network: Ethernet II + ARP + IPv4 checksum foundation passed\n");
             kernel_write("network: ARP reply parser and cache self-test passed\n");
             kernel_write("network: IPv4 receive and next-hop routing self-test passed\n");
+            kernel_write("network: UDP bind, checksum, receive, and read self-test passed\n");
             fnet_arp_probe(0x0202000a);
         } else {
             kernel_write("network: Ethernet/ARP foundation self-test failed\n");

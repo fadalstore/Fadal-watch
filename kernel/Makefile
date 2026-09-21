@@ -45,7 +45,10 @@ $(OUT)/ramdisk.o: ramdisk.c ramdisk.h | $(OUT)
 $(OUT)/slab.o: slab.c slab.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(OUT)/vfs.o: vfs.c vfs.h fat12.h | $(OUT)
+$(OUT)/vfs.o: vfs.c vfs.h fat12.h ramfs.h | $(OUT)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(OUT)/ramfs.o: ramfs.c ramfs.h ramdisk.h vfs.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(OUT)/fsh.o: fsh.c | $(OUT)
@@ -65,8 +68,8 @@ $(OUT)/fsh_blob.o: $(OUT)/fsh.bin
 $(OUT)/interrupts.o: interrupts.S kernel.c | $(OUT)
 	$(AS) --32 -o $@ $<
 
-$(OUT)/kernel.elf: $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o
+$(OUT)/kernel.elf: $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/ramfs.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/ramfs.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o
 
 $(OUT)/kernel.bin: $(OUT)/kernel.elf
 	$(OBJCOPY) -O binary $< $@
@@ -145,9 +148,10 @@ check: independence $(OUT)/fadal-kernel.img
 	@grep -q "smp: AP startup guarded; single-BSP IPI path armed" $(OUT)/smoke.log
 	@grep -q "syscall: getipi dispatch; AP startup/IPI state reported" $(OUT)/smoke.log
 	@grep -q "sync: spinlock and mutex self-test passed" $(OUT)/smoke.log
-	@grep -q "syscall: getsync dispatch; spinlock and mutex status returned" $(OUT)/smoke.log
-	@grep -q "syscall: getfs dispatch; generic VFS lookup returned" $(OUT)/smoke.log
-	@grep -q "\[KLOG 1 #1\] structured logging online" $(OUT)/smoke.log
+		@grep -q "syscall: getsync dispatch; spinlock and mutex status returned" $(OUT)/smoke.log
+		@grep -q "syscall: getfs dispatch; generic VFS lookup returned" $(OUT)/smoke.log
+		@grep -q "vfs: RAMFS driver mounted at /ram; read/write self-test passed" $(OUT)/smoke.log
+		@grep -q "\[KLOG 1 #1\] structured logging online" $(OUT)/smoke.log
 	@grep -q "syscall: getlog dispatch; structured log state returned" $(OUT)/smoke.log
 	@grep -q "storage: RAM-disk sector read/write and checksum passed" $(OUT)/smoke.log
 	@grep -q "syscall: getramdisk dispatch; RAM-disk integrity returned" $(OUT)/smoke.log

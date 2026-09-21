@@ -268,6 +268,14 @@ and `libefi.a`/`libgnuefi.a`; paths can be overridden with `EFI_INC`,
 EFI application. This target builds the loader only; the kernel payload must
 be an x86_64 `fadal-uefi.krn` compatible with the loader's handoff contract.
 
+The VFS now registers both the FAT12 and RAMFS drivers. RAMFS is mounted at
+`/ram` during boot and stores bounded files in the 32-sector RAM disk using
+fixed metadata slots. The boot self-test writes and reads `/ram/BOOT.TXT`, and
+the QEMU smoke test requires the `vfs: RAMFS driver mounted at /ram;
+read/write self-test passed` trace. Additional filesystem drivers can be
+registered through `vfs_register_driver()` and mounted with
+`vfs_mount_driver()` without changing filesystem-independent callers.
+
 When running with a VGA display, the console accepts keyboard input after the
 `Fadal console ready` prompt. Keyboard input is delivered through the kernel's
 own IRQ1 handler; no Linux, Ubuntu, or external userspace is involved in the

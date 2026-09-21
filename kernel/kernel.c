@@ -1,6 +1,7 @@
 #include "fat12.h"
 #include "ata.h"
 #include "ramdisk.h"
+#include "ramfs.h"
 #include "slab.h"
 #include "vfs.h"
 
@@ -2097,6 +2098,35 @@ void kernel_main(void) {
         FAT12_DISK_LBA,
         fat12_volume_buffer(),
         fat12_volume_sectors()) && vfs_mount_fat12();
+    if (vfs_mount_driver(VFS_FS_RAMDISK, "/ram")) {
+        static const vfs_u8 ramfs_probe[] = "FADAL RAMFS write\n";
+        vfs_u8 ramfs_readback[32];
+        vfs_u32 ramfs_size = 0;
+        vfs_u8 ramfs_ok = vfs_write_path(
+            "/ram/BOOT.TXT",
+            ramfs_probe,
+            sizeof(ramfs_probe) - 1) != 0;
+        ramfs_ok = ramfs_ok && vfs_read_path(
+            "/ram/BOOT.TXT",
+            ramfs_readback,
+            sizeof(ramfs_readback),
+            &ramfs_size);
+        if (ramfs_ok && ramfs_size == sizeof(ramfs_probe) - 1) {
+            for (u32 index = 0; index < ramfs_size; index++) {
+                if (ramfs_readback[index] != ramfs_probe[index]) {
+                    ramfs_ok = 0;
+                    break;
+                }
+            }
+        } else {
+            ramfs_ok = 0;
+        }
+        kernel_write(ramfs_ok ?
+            "vfs: RAMFS driver mounted at /ram; read/write self-test passed\n" :
+            "vfs: RAMFS read/write self-test failed\n");
+    } else {
+        kernel_write("vfs: RAMFS driver mount failed\n");
+    }
     if (existing_volume) {
         kernel_write("vfs: FAT12 backend mounted; root directory recognized (");
         write_u32(vfs_root_entries());

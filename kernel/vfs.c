@@ -1,5 +1,6 @@
 #include "vfs.h"
 #include "fat12.h"
+#include "ramfs.h"
 
 static struct vfs_driver drivers[VFS_MAX_DRIVERS];
 static struct vfs_mount mounts[VFS_MAX_MOUNTS];
@@ -31,6 +32,14 @@ static const struct vfs_mount_ops fat12_ops = {
     .root_entries = fat12_root_entries_backend,
     .write_file = fat12_write_backend,
     .read_file = fat12_read_backend,
+};
+
+static const struct vfs_mount_ops ramfs_ops = {
+    .mount = ramfs_mount,
+    .unmount = ramfs_unmount,
+    .root_entries = ramfs_root_entries,
+    .write_file = ramfs_write_file,
+    .read_file = ramfs_read_file,
 };
 
 static vfs_u8 string_equal(const char *left, const char *right) {
@@ -160,6 +169,7 @@ void vfs_init(void) {
         mounts[index].ops = (const struct vfs_mount_ops *)0;
     }
     vfs_register_driver(VFS_FS_FAT12, "FAT12", &fat12_ops);
+    vfs_register_driver(VFS_FS_RAMDISK, "RAMFS", &ramfs_ops);
 }
 
 vfs_u8 vfs_register_driver(enum vfs_filesystem_type type,

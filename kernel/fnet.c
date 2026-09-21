@@ -60,6 +60,10 @@ struct fnet_tcp_connection {
     fnet_u8 payload[FNET_TCP_PAYLOAD_MAX];
 };
 static struct fnet_tcp_connection tcp_connection;
+static fnet_u8 git_clone_state;
+static fnet_u8 git_clone_host[64];
+static fnet_u8 git_clone_path[96];
+static fnet_u8 git_clone_head_oid[40];
 
 static void put16(fnet_u8 *p, fnet_u16 value) { p[0] = (fnet_u8)(value >> 8); p[1] = (fnet_u8)value; }
 static void put32(fnet_u8 *p, fnet_u32 value) {
@@ -91,6 +95,7 @@ static void arp_cache_clear(void) {
     tcp_connection.valid = 0;
     tcp_connection.state = FNET_TCP_CLOSED;
     tcp_connection.payload_length = 0;
+    git_clone_state = 0;
 }
 static void arp_cache_store(fnet_u32 ip, const fnet_u8 *mac) {
     fnet_u32 slot = FNET_ARP_CACHE_SIZE;
@@ -431,6 +436,42 @@ fnet_u8 fnet_git_parse_advertisement(const fnet_u8 *packet, fnet_u16 length, fne
     }
     return packet[44] == ' ';
 }
+fnet_u8 fnet_git_clone_start(fnet_u32 remote_ip, const fnet_u8 *host, const fnet_u8 *path) {
+    if (!ready || !host || !path || git_clone_state != 0) return 0;
+    fnet_u32 host_length = git_text_length(host);
+    fnet_u32 path_length = git_text_length(path);
+    if (host_length >= sizeof(git_clone_host) || path_length >= sizeof(git_clone_path)) return 0;
+    for (fnet_u32 index = 0; index <= host_length; index++) git_clone_host[index] = host[index];
+    for (fnet_u32 index = 0; index <= path_length; index++) git_clone_path[index] = path[index];
+    if (!fnet_tcp_connect(remote_ip, 9418, 55000)) return 0;
+    git_clone_state = 1;
+    return 1;
+}
+fnet_u8 fnet_git_clone_poll(void) {
+    fnet_u8 packet[FNET_TCP_PAYLOAD_MAX];
+    fnet_u16 length;
+    if (git_clone_state == 0) return 0;
+    if (git_clone_state == 1 && fnet_tcp_state() == FNET_TCP_ESTABLISHED) {
+        fnet_u8 request[192];
+        fnet_u16 request_length = fnet_git_build_upload_pack_request(
+            git_clone_path, git_clone_host, request, sizeof(request));
+        if (request_length == 0 || fnet_tcp_write(request, request_length) == 0) return 0;
+        git_clone_state = 2;
+        return 1;
+    }
+    if (git_clone_state == 2) {
+        length = fnet_tcp_read(packet, sizeof(packet));
+        if (length == 0) return 0;
+        if (!fnet_git_parse_advertisement(packet, length, git_clone_head_oid)) {
+            git_clone_state = 4;
+            return 0;
+        }
+        git_clone_state = 3;
+        return 1;
+    }
+    return git_clone_state == 3;
+}
+fnet_u8 fnet_git_clone_state(void) { return git_clone_state; }
 fnet_u32 fnet_dhcp_discover(void) {
     fnet_u8 frame[FNET_FRAME_MAX];
     fnet_u8 *ip = frame + 14;

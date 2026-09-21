@@ -29,6 +29,9 @@ fnet_u16 fnet_git_build_upload_pack_request(const fnet_u8 *path, const fnet_u8 *
                                             fnet_u8 *output, fnet_u16 capacity);
 fnet_u16 fnet_git_pktline_length(const fnet_u8 *packet, fnet_u16 length);
 fnet_u8 fnet_git_parse_advertisement(const fnet_u8 *packet, fnet_u16 length, fnet_u8 *head_oid);
+fnet_u8 fnet_git_clone_start(fnet_u32 remote_ip, const fnet_u8 *host, const fnet_u8 *path);
+fnet_u8 fnet_git_clone_poll(void);
+fnet_u8 fnet_git_clone_state(void);
 fnet_u32 fnet_dhcp_discover(void);
 fnet_u8 fnet_dhcp_receive(const fnet_u8 *frame, fnet_u32 length);
 fnet_u8 fnet_dhcp_is_bound(void);

@@ -235,7 +235,7 @@ fnet_u32 fnet_udp_send(fnet_u32 destination_ip, fnet_u16 source_port,
         payload_length > FNET_UDP_PAYLOAD_MAX || !fnet_ipv4_route(destination_ip, &next_hop, mac)) return 0;
     copy_mac(frame, mac); copy_mac(frame + 6, local_mac); put16(frame + 12, ETH_IPV4);
     frame[14] = 0x45; frame[15] = 0; put16(frame + 16, (fnet_u16)(20 + udp_length));
-    put16(frame + 18, 0); frame[20] = 64; frame[21] = IPV4_UDP; put16(frame + 24, 0);
+    put16(frame + 18, 0); put16(frame + 20, 0); frame[22] = 64; frame[23] = IPV4_UDP; put16(frame + 24, 0);
     put32(frame + 26, local_ip); put32(frame + 30, destination_ip);
     put16(frame + 24, fnet_ipv4_checksum(frame + 14, 20));
     put16(frame + 34, source_port); put16(frame + 36, destination_port);

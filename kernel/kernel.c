@@ -143,6 +143,13 @@ static u32 net_loopback_length;
 static volatile u8 timer_scheduler_reported;
 static volatile u8 page_fault_reported;
 static volatile u8 dhcp_reported;
+static volatile u8 udp_test_state;
+static volatile u32 udp_test_ticks;
+static const u8 udp_test_query[] = {
+    0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x07, 'e', 'x', 'a', 'm', 'p', 'l', 'e',
+    0x03, 'c', 'o', 'm', 0x00, 0x00, 0x01, 0x00, 0x01
+};
 static u32 scheduler_ticks;
 static u32 scheduler_ready_pid;
 static u32 page_directory[1024] __attribute__((aligned(PAGE_SIZE)));
@@ -1766,6 +1773,38 @@ interrupt_frame *timer_interrupt_handler(interrupt_frame *frame) {
     if (!dhcp_reported && fnet_dhcp_is_bound()) {
         dhcp_reported = 1;
         serial_write("network: DHCP lease applied\n");
+    }
+    if (fnet_dhcp_is_bound() && udp_test_state == 0) {
+        if (fnet_udp_bind(53000)) {
+            fnet_arp_probe(fnet_dhcp_dns_server());
+            udp_test_state = 1;
+            udp_test_ticks = timer_ticks;
+            serial_write("network: UDP socket test bound; resolving DNS endpoint\n");
+        }
+    } else if (udp_test_state == 1) {
+        if (fnet_udp_send(fnet_dhcp_dns_server(), 53000, 53,
+                          udp_test_query, sizeof(udp_test_query)) != 0) {
+            udp_test_state = 2;
+            udp_test_ticks = timer_ticks;
+            serial_write("network: UDP socket test send passed\n");
+        } else if (timer_ticks - udp_test_ticks > 300) {
+            udp_test_state = 4;
+            serial_write("network: UDP socket test send timed out\n");
+        }
+    } else if (udp_test_state == 2) {
+        u8 response[256];
+        u32 source_ip = 0;
+        u16 source_port = 0;
+        u16 length = fnet_udp_read(53000, response, sizeof(response),
+                                   &source_ip, &source_port);
+        if (length >= 12 && response[0] == 0x12 && response[1] == 0x34 &&
+            (response[2] & 0x80) != 0 && source_port == 53) {
+            udp_test_state = 3;
+            serial_write("network: UDP socket send/receive test passed\n");
+        } else if (timer_ticks - udp_test_ticks > 300) {
+            udp_test_state = 4;
+            serial_write("network: UDP socket test receive timed out\n");
+        }
     }
     if ((scheduler_ticks % 10) != 0 || (frame->cs & 0x3) != 0x3) {
         return frame;

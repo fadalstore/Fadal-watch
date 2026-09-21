@@ -4,11 +4,14 @@
 #define ETH_ARP 0x0806
 #define ETH_IPV4 0x0800
 #define IPV4_UDP 17
+#define DHCP_CLIENT_PORT 68
+#define DHCP_SERVER_PORT 67
+#define DHCP_MAGIC 0x63825363
 #define ARP_REPLY 2
 #define ARP_ETHERNET 1
 #define ARP_IPV4 0x0800
 #define ARP_FRAME_LENGTH 42
-#define FNET_FRAME_MAX 256
+#define FNET_FRAME_MAX 512
 #define FNET_ARP_CACHE_SIZE 8
 #define FNET_UDP_SOCKET_COUNT 8
 #define FNET_UDP_PAYLOAD_MAX 128
@@ -19,6 +22,10 @@ static fnet_u8 ready;
 static fnet_u8 local_mac[6];
 static fnet_u32 local_ip = 0x0f02000a;
 static fnet_u32 gateway_ip = 0x0202000a;
+static fnet_u32 netmask = 0xffffff00;
+static fnet_u32 dns_server_ip;
+static fnet_u32 dhcp_xid = 0x46444c31;
+static fnet_u8 dhcp_bound;
 static fnet_u32 arp_cache_ip[FNET_ARP_CACHE_SIZE];
 static fnet_u8 arp_cache_mac[FNET_ARP_CACHE_SIZE][6];
 static fnet_u8 arp_cache_valid[FNET_ARP_CACHE_SIZE];
@@ -56,6 +63,8 @@ static void arp_cache_clear(void) {
     arp_cache_next = 0;
     ipv4_rx_count = 0;
     ipv4_drop_count = 0;
+    dhcp_bound = 0;
+    dns_server_ip = 0;
     for (fnet_u32 index = 0; index < FNET_UDP_SOCKET_COUNT; index++) {
         udp_sockets[index].valid = 0;
         udp_sockets[index].length = 0;
@@ -132,9 +141,11 @@ fnet_u8 fnet_ipv4_receive(const fnet_u8 *frame, fnet_u32 length) {
     fnet_u32 header_length = (fnet_u32)(header[0] & 0x0f) * 4;
     fnet_u32 total_length = get16(header + 2);
     fnet_u32 destination = get32(header + 16);
+    fnet_u8 dhcp_destination = header[9] == IPV4_UDP && total_length >= header_length + 8 &&
+        get16(header + header_length + 2) == DHCP_CLIENT_PORT;
     if (version != 4 || header_length < 20 || total_length < header_length ||
         total_length > length || fnet_ipv4_checksum(header, header_length) != 0 ||
-        (destination != local_ip && destination != 0xffffffff)) {
+        (destination != local_ip && destination != 0xffffffff && !dhcp_destination)) {
         ipv4_drop_count++;
         return FNET_IPV4_NOT_LOCAL;
     }
@@ -142,7 +153,7 @@ fnet_u8 fnet_ipv4_receive(const fnet_u8 *frame, fnet_u32 length) {
     return FNET_IPV4_LOCAL;
 }
 fnet_u8 fnet_ipv4_route(fnet_u32 destination, fnet_u32 *next_hop, fnet_u8 *mac) {
-    fnet_u32 selected = (destination & 0xffffff00) == (local_ip & 0xffffff00) ?
+    fnet_u32 selected = (destination & netmask) == (local_ip & netmask) ?
         destination : gateway_ip;
     if (next_hop == (fnet_u32 *)0 || mac == (fnet_u8 *)0 || !ready) return 0;
     *next_hop = selected;
@@ -236,6 +247,58 @@ fnet_u32 fnet_udp_send(fnet_u32 destination_ip, fnet_u16 source_port,
     for (fnet_u32 byte = 14 + 20 + udp_length; byte < wire_length; byte++) frame[byte] = 0;
     return rtl8139_tx(frame, wire_length);
 }
+fnet_u32 fnet_dhcp_discover(void) {
+    fnet_u8 frame[FNET_FRAME_MAX];
+    fnet_u8 *ip = frame + 14;
+    fnet_u8 *udp = frame + 34;
+    fnet_u8 *dhcp = frame + 42;
+    fnet_u32 dhcp_length = 251;
+    if (!ready) return 0;
+    for (fnet_u32 index = 0; index < sizeof(frame); index++) frame[index] = 0;
+    for (fnet_u32 index = 0; index < 6; index++) frame[index] = 0xff;
+    copy_mac(frame + 6, local_mac); put16(frame + 12, ETH_IPV4);
+    ip[0] = 0x45; put16(ip + 2, (fnet_u16)(20 + 8 + dhcp_length)); ip[8] = 64; ip[9] = IPV4_UDP;
+    put32(ip + 12, 0); put32(ip + 16, 0xffffffff); put16(ip + 10, 0);
+    put16(ip + 10, fnet_ipv4_checksum(ip, 20));
+    put16(udp, DHCP_CLIENT_PORT); put16(udp + 2, DHCP_SERVER_PORT); put16(udp + 4, (fnet_u16)(8 + dhcp_length)); put16(udp + 6, 0);
+    dhcp[0] = 1; dhcp[1] = 1; dhcp[2] = 6; put32(dhcp + 4, dhcp_xid); put16(dhcp + 10, 0x8000);
+    copy_mac(dhcp + 28, local_mac); put32(dhcp + 236, DHCP_MAGIC);
+    dhcp[240] = 53; dhcp[241] = 1; dhcp[242] = 1;
+    dhcp[243] = 55; dhcp[244] = 3; dhcp[245] = 1; dhcp[246] = 3; dhcp[247] = 6;
+    dhcp[248] = 255;
+    return rtl8139_tx(frame, 14 + 20 + 8 + dhcp_length);
+}
+fnet_u8 fnet_dhcp_receive(const fnet_u8 *frame, fnet_u32 length) {
+    if (!ready || !frame || length < 42 || get16(frame + 12) != ETH_IPV4) return 0;
+    const fnet_u8 *ip = frame + 14;
+    fnet_u32 header_length = (fnet_u32)(ip[0] & 0x0f) * 4;
+    if ((ip[0] >> 4) != 4 || ip[9] != IPV4_UDP || header_length < 20) return 0;
+    const fnet_u8 *udp = ip + header_length;
+    if (get16(udp) != DHCP_SERVER_PORT || get16(udp + 2) != DHCP_CLIENT_PORT) return 0;
+    fnet_u16 udp_length = get16(udp + 4);
+    if (udp_length < 8 + 240 || 14 + header_length + udp_length > length) return 0;
+    const fnet_u8 *dhcp = udp + 8;
+    if (dhcp[0] != 2 || get32(dhcp + 4) != dhcp_xid || get32(dhcp + 236) != DHCP_MAGIC) return 0;
+    local_ip = get32(dhcp + 16);
+    fnet_u32 option = 240;
+    fnet_u32 dhcp_length = (fnet_u32)udp_length - 8;
+    while (option < dhcp_length) {
+        fnet_u8 kind = dhcp[option++];
+        if (kind == 255) break;
+        if (kind == 0) continue;
+        if (option >= dhcp_length) break;
+        fnet_u8 option_length = dhcp[option++];
+        if (option + option_length > dhcp_length) break;
+        if (kind == 1 && option_length == 4) netmask = get32(dhcp + option);
+        if (kind == 3 && option_length >= 4) gateway_ip = get32(dhcp + option);
+        if (kind == 6 && option_length >= 4) dns_server_ip = get32(dhcp + option);
+        option += option_length;
+    }
+    dhcp_bound = local_ip != 0;
+    return dhcp_bound;
+}
+fnet_u8 fnet_dhcp_is_bound(void) { return dhcp_bound; }
+fnet_u32 fnet_dhcp_dns_server(void) { return dns_server_ip; }
 fnet_u32 fnet_poll(void) {
     fnet_u8 frame[FNET_FRAME_MAX];
     fnet_u32 parsed = 0;
@@ -246,7 +309,9 @@ fnet_u32 fnet_poll(void) {
         if (get16(frame + 12) == ETH_ARP) {
             if (fnet_arp_receive(frame, length)) parsed++;
         } else if (fnet_ipv4_receive(frame, length)) {
-            if (frame[14 + 9] == IPV4_UDP) fnet_udp_receive(frame, length);
+            if (frame[14 + 9] == IPV4_UDP) {
+                if (!fnet_dhcp_receive(frame, length)) fnet_udp_receive(frame, length);
+            }
             parsed++;
         }
     }

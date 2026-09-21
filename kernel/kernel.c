@@ -142,6 +142,7 @@ static u8 net_loopback_buffer[256];
 static u32 net_loopback_length;
 static volatile u8 timer_scheduler_reported;
 static volatile u8 page_fault_reported;
+static volatile u8 dhcp_reported;
 static u32 scheduler_ticks;
 static u32 scheduler_ready_pid;
 static u32 page_directory[1024] __attribute__((aligned(PAGE_SIZE)));
@@ -1761,6 +1762,11 @@ interrupt_frame *timer_interrupt_handler(interrupt_frame *frame) {
     timer_ticks++;
     scheduler_ticks++;
     scheduler_wake_sleepers();
+    if (fnet_is_ready()) fnet_poll();
+    if (!dhcp_reported && fnet_dhcp_is_bound()) {
+        dhcp_reported = 1;
+        serial_write("network: DHCP lease applied\n");
+    }
     if ((scheduler_ticks % 10) != 0 || (frame->cs & 0x3) != 0x3) {
         return frame;
     }
@@ -2343,7 +2349,11 @@ void kernel_main(void) {
             kernel_write("network: ARP reply parser and cache self-test passed\n");
             kernel_write("network: IPv4 receive and next-hop routing self-test passed\n");
             kernel_write("network: UDP bind, checksum, receive, and read self-test passed\n");
-            fnet_arp_probe(0x0202000a);
+            if (fnet_dhcp_discover() != 0) {
+                kernel_write("network: DHCP discover transmitted; waiting for lease\n");
+            } else {
+                kernel_write("network: DHCP discover transmit failed\n");
+            }
         } else {
             kernel_write("network: Ethernet/ARP foundation self-test failed\n");
         }

@@ -19,6 +19,10 @@ fnet_u8 fnet_udp_receive(const fnet_u8 *frame, fnet_u32 length);
 fnet_u32 fnet_udp_send(fnet_u32 destination_ip, fnet_u16 source_port,
                        fnet_u16 destination_port, const fnet_u8 *payload,
                        fnet_u16 payload_length);
+fnet_u32 fnet_dhcp_discover(void);
+fnet_u8 fnet_dhcp_receive(const fnet_u8 *frame, fnet_u32 length);
+fnet_u8 fnet_dhcp_is_bound(void);
+fnet_u32 fnet_dhcp_dns_server(void);
 fnet_u32 fnet_poll(void);
 fnet_u16 fnet_ipv4_checksum(const fnet_u8 *header, fnet_u32 length);
 fnet_u8 fnet_is_ready(void);

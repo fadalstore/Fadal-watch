@@ -8,6 +8,9 @@ typedef unsigned int fnet_u32;
 fnet_u8 fnet_init(void);
 fnet_u8 fnet_self_test(void);
 fnet_u32 fnet_arp_probe(fnet_u32 target_ip);
+fnet_u8 fnet_arp_receive(const fnet_u8 *frame, fnet_u32 length);
+fnet_u8 fnet_arp_lookup(fnet_u32 ip, fnet_u8 *mac);
+fnet_u32 fnet_poll(void);
 fnet_u16 fnet_ipv4_checksum(const fnet_u8 *header, fnet_u32 length);
 fnet_u8 fnet_is_ready(void);
 

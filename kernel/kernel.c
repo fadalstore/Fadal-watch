@@ -318,6 +318,7 @@ extern void rtl8139_irq11_isr(void);
 
 void rtl8139_interrupt_handler(void) {
     rtl8139_interrupt();
+    fnet_poll();
 }
 
 static inline void outb(u16 port, u8 value) {
@@ -448,7 +449,8 @@ static void load_address_space(struct address_space *space) {
     __asm__ volatile ("mov %0, %%cr3" : : "r"(directory) : "memory");
 }
 
-static struct address_space *address_space_create(u32 slot, u32 stack_physical) {
+static struct address_space *address_space_create(u32 slot, u32 stack_physical,
+                                                  u32 user_stack_top) {
     if (slot >= MAX_PROCESSES) {
         return (struct address_space *)0;
     }
@@ -468,10 +470,15 @@ static struct address_space *address_space_create(u32 slot, u32 stack_physical) 
         }
         space->page_directory[table] = (u32)target | PAGE_KERNEL_FLAGS;
     }
-    space->page_tables[USER_STACK_PAGE] = stack_physical | PAGE_USER_RW_FLAGS;
+    u32 stack_page = (user_stack_top - PAGE_SIZE) / PAGE_SIZE;
+    if (stack_page != USER_STACK_PAGE && stack_page != USER_STACK_2_PAGE) {
+        return (struct address_space *)0;
+    }
+    space->page_tables[USER_STACK_PAGE] = USER_STACK_ADDRESS | PAGE_KERNEL_FLAGS;
     space->page_tables[USER_STACK_2_PAGE] = USER_STACK_2_ADDRESS | PAGE_KERNEL_FLAGS;
+    space->page_tables[stack_page] = stack_physical | PAGE_USER_RW_FLAGS;
     space->page_directory[USER_CODE_PAGE / 1024] |= PAGE_USER;
-    space->page_directory[USER_STACK_PAGE / 1024] |= PAGE_USER;
+    space->page_directory[stack_page / 1024] |= PAGE_USER;
     return space;
 }
 
@@ -481,7 +488,7 @@ static u8 address_spaces_isolated(struct address_space *first,
         return 0;
     }
     u32 first_stack = first->page_tables[USER_STACK_PAGE];
-    u32 second_stack = second->page_tables[USER_STACK_PAGE];
+    u32 second_stack = second->page_tables[USER_STACK_2_PAGE];
     u32 first_code = first->page_tables[USER_CODE_PAGE];
     u32 second_code = second->page_tables[USER_CODE_PAGE];
     return (first_stack & ~0xfff) != (second_stack & ~0xfff) &&
@@ -489,7 +496,7 @@ static u8 address_spaces_isolated(struct address_space *first,
         (second_stack & PAGE_USER_RW_FLAGS) == PAGE_USER_RW_FLAGS &&
         (first_code & ~0xfff) == (second_code & ~0xfff) &&
         (first->page_directory[USER_STACK_PAGE / 1024] & PAGE_USER) != 0 &&
-        (second->page_directory[USER_STACK_PAGE / 1024] & PAGE_USER) != 0;
+        (second->page_directory[USER_STACK_2_PAGE / 1024] & PAGE_USER) != 0;
 }
 
 static void address_space_destroy(u32 slot, struct address_space *space) {
@@ -613,7 +620,8 @@ static u32 process_create(u32 entry, u32 user_stack_top) {
         if (stack_physical == 0) {
             continue;
         }
-        struct address_space *space = address_space_create(index, stack_physical);
+        struct address_space *space = address_space_create(index, stack_physical,
+                                                            user_stack_top);
         if (space == (struct address_space *)0) {
             continue;
         }
@@ -1201,7 +1209,13 @@ void page_fault_interrupt_handler(const u32 *register_frame) {
     write_u32(address);
     serial_write(" error ");
     write_u32(error_code);
-    serial_write((error_code & 0x4) != 0 ? " user\n" : " kernel\n");
+    serial_write((error_code & 0x4) != 0 ? " user eip " : " kernel eip ");
+    write_u32(register_frame[9]);
+    serial_write(" cs ");
+    write_u32(register_frame[10]);
+    serial_write(" esp ");
+    write_u32(register_frame[12]);
+    serial_write("\n");
     if (!page_fault_reported) {
         page_fault_reported = 1;
         serial_write("memory: page fault handler fail-closed\n");
@@ -1747,7 +1761,7 @@ interrupt_frame *timer_interrupt_handler(interrupt_frame *frame) {
     timer_ticks++;
     scheduler_ticks++;
     scheduler_wake_sleepers();
-    if ((scheduler_ticks % 10) != 0) {
+    if ((scheduler_ticks % 10) != 0 || (frame->cs & 0x3) != 0x3) {
         return frame;
     }
     return scheduler_timer_switch(frame);
@@ -2326,6 +2340,7 @@ void kernel_main(void) {
         rtl8139_reported = 1;
         if (fnet_init() && fnet_self_test()) {
             kernel_write("network: Ethernet II + ARP + IPv4 checksum foundation passed\n");
+            kernel_write("network: ARP reply parser and cache self-test passed\n");
             fnet_arp_probe(0x0202000a);
         } else {
             kernel_write("network: Ethernet/ARP foundation self-test failed\n");

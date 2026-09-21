@@ -194,6 +194,46 @@ fat12_u32 fat12_root_entry_count(void) {
     return root_entries;
 }
 
+fat12_u32 fat12_list_root(char *output, fat12_u32 capacity) {
+    if (!mounted || output == (char *)0 || capacity == 0) {
+        return 0;
+    }
+    fat12_u32 written = 0;
+    fat12_u32 root_offset = (FAT12_RESERVED_SECTORS +
+        FAT12_FAT_COUNT * FAT12_SECTORS_PER_FAT) * FAT12_SECTOR_SIZE;
+    for (fat12_u32 index = 0; index < FAT12_ROOT_ENTRIES; index++) {
+        struct fat12_dirent *entry = (struct fat12_dirent *)
+            (volume + root_offset + index * sizeof(struct fat12_dirent));
+        if (entry->name[0] == 0x00 || entry->name[0] == 0xe5 ||
+            entry->attributes == 0x0f) {
+            continue;
+        }
+        fat12_u32 base_end = 8;
+        while (base_end > 0 && entry->name[base_end - 1] == ' ') {
+            base_end--;
+        }
+        fat12_u32 ext_end = 11;
+        while (ext_end > 8 && entry->name[ext_end - 1] == ' ') {
+            ext_end--;
+        }
+        fat12_u32 needed = base_end + (ext_end > 8 ? 1 + ext_end - 8 : 0) + 1;
+        if (written + needed > capacity) {
+            break;
+        }
+        for (fat12_u32 part = 0; part < base_end; part++) {
+            output[written++] = (char)entry->name[part];
+        }
+        if (ext_end > 8) {
+            output[written++] = '.';
+            for (fat12_u32 part = 8; part < ext_end; part++) {
+                output[written++] = (char)entry->name[part];
+            }
+        }
+        output[written++] = '\n';
+    }
+    return written;
+}
+
 fat12_u32 fat12_write_file(const char *name, const fat12_u8 *data, fat12_u32 size) {
     fat12_u8 short_name[11];
     if (!mounted || !make_short_name(name, short_name) || size > (FAT12_MAX_CLUSTER - 1) * FAT12_SECTOR_SIZE) {

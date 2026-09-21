@@ -180,6 +180,11 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     kernel intentionally does not claim to open HTTPS or a host terminal; the
     command is a safe bridge from the kernel shell to the configured GitHub
     environment.
+47. Syscall `27` (`listdir`) enumerates the mounted VFS root into a validated
+    userspace buffer. FAT12 formats real 8.3 entries, and FSH's `ls` command
+    consumes that backend output instead of a hardcoded listing. It is kept
+    separate from remote syscall `13` (`getppid`) so the expanded ABI remains
+    compatible with the scheduler, RAMFS, FScan, and GitHub bridge additions.
 
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible

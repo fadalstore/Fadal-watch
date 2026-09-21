@@ -18,6 +18,10 @@ static vfs_u32 fat12_root_entries_backend(void) {
     return fat12_root_entry_count();
 }
 
+static vfs_u32 fat12_list_root_backend(char *output, vfs_u32 capacity) {
+    return fat12_list_root(output, capacity);
+}
+
 static vfs_u32 fat12_write_backend(const char *name, const vfs_u8 *data, vfs_u32 size) {
     return fat12_write_file(name, data, size);
 }
@@ -30,6 +34,7 @@ static const struct vfs_mount_ops fat12_ops = {
     .mount = fat12_mount_backend,
     .unmount = fat12_unmount_backend,
     .root_entries = fat12_root_entries_backend,
+    .list_root = fat12_list_root_backend,
     .write_file = fat12_write_backend,
     .read_file = fat12_read_backend,
 };
@@ -279,6 +284,13 @@ vfs_u8 vfs_read_path(const char *path, vfs_u8 *output, vfs_u32 capacity, vfs_u32
 vfs_u8 vfs_lookup_path(const char *path, vfs_u32 *size) {
     static vfs_u8 lookup_buffer[512];
     return vfs_read_path(path, lookup_buffer, sizeof(lookup_buffer), size);
+}
+
+vfs_u32 vfs_list_root(char *output, vfs_u32 capacity) {
+    if (!vfs_is_mounted()) {
+        return 0;
+    }
+    return root_mount.ops->list_root(output, capacity);
 }
 
 vfs_u32 vfs_write_file(const char *name, const vfs_u8 *data, vfs_u32 size) {

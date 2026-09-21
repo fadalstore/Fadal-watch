@@ -27,6 +27,7 @@ typedef unsigned int u32;
 #define SYSCALL_STAT 10
 #define SYSCALL_SEEK 11
 #define SYSCALL_WAIT 12
+#define SYSCALL_LISTDIR 27
 
 static u32 fsh_syscall3(u32 number, u32 first, u32 second, u32 third) {
     u32 result;
@@ -88,10 +89,13 @@ static void fsh_seek_probe(void) {
     }
 }
 
+static u32 fsh_list_root(char *output, u32 capacity) {
+    return fsh_syscall3(SYSCALL_LISTDIR, (u32)output, capacity, 0);
+}
+
 static void fsh_command(const char *line, u32 length) {
     static const char help[] = "commands: help mount ls cat stat fscan github KERNEL.TXT exit\n";
     static const char mounted[] = "FAT12 root mounted through VFS\n";
-    static const char listing[] = "KERNEL.TXT FSH.BIN\n";
     static const char unknown[] = "unknown command; try help\n";
     static const char github[] = "GitHub: https://github.com/fadalstore/Fadal-watch\nHost terminal: gh repo clone fadalstore/Fadal-watch\n";
     static const char fscan_passed[] = "FScan: VFS, FAT12, RAMFS, and loopback boundary passed\n";
@@ -101,7 +105,11 @@ static void fsh_command(const char *line, u32 length) {
     } else if (fsh_equal(line, length, "mount")) {
         fsh_write(mounted);
     } else if (fsh_equal(line, length, "ls")) {
-        fsh_write(listing);
+        static char listing[128];
+        u32 count = fsh_list_root(listing, sizeof(listing));
+        if (count != 0xffffffff) {
+            fsh_write_bytes(listing, count);
+        }
     } else if (fsh_equal(line, length, "cat KERNEL.TXT")) {
         u32 fd = fsh_syscall3(SYSCALL_OPEN, (u32)"KERNEL.TXT", 10, 0);
         if (fd != 0xffffffff) {
@@ -138,6 +146,8 @@ void fsh_entry(void) {
     }
     fsh_stat_kernel();
     fsh_seek_probe();
+    static char root_probe[128];
+    fsh_list_root(root_probe, sizeof(root_probe));
     u32 child_pid = fsh_syscall3(SYSCALL_EXEC, 0x00200000, 0, 0);
     static u32 child_status;
     if (child_pid != 0xffffffff) {

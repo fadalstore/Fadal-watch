@@ -8,6 +8,7 @@ void fat12_format(void);
 fat12_u8 fat12_mount(void);
 fat12_u8 fat12_is_mounted(void);
 fat12_u32 fat12_root_entry_count(void);
+fat12_u32 fat12_list_root(char *output, fat12_u32 capacity);
 fat12_u32 fat12_write_file(const char *name, const fat12_u8 *data, fat12_u32 size);
 fat12_u32 fat12_free_clusters(void);
 fat12_u32 fat12_last_allocated_clusters(void);

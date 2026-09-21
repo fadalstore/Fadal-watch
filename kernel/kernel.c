@@ -67,6 +67,7 @@ typedef unsigned int u32;
 #define SYSCALL_GET_LOG 24
 #define SYSCALL_GET_RAMDISK 25
 #define SYSCALL_GET_SECURITY 26
+#define SYSCALL_LISTDIR 27
 #define LAPIC_BASE 0xfee00000
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
@@ -103,6 +104,7 @@ static volatile u8 close_reported;
 static volatile u8 stat_reported;
 static volatile u8 seek_reported;
 static volatile u8 wait_reported;
+static volatile u8 listdir_reported;
 static volatile u8 get_ppid_reported;
 static volatile u8 sleep_reported;
 static volatile u8 mmap_reported;
@@ -1965,6 +1967,17 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
         if (!wait_reported) {
             wait_reported = 1;
             serial_write("syscall: wait dispatch; child status validated\n");
+        }
+    } else if (frame->eax == SYSCALL_LISTDIR) {
+        if (vfs_is_mounted() && frame->ecx != 0 &&
+            user_range_valid(frame->ebx, frame->ecx)) {
+            frame->eax = vfs_list_root((char *)frame->ebx, frame->ecx);
+        } else {
+            frame->eax = 0xffffffff;
+        }
+        if (!listdir_reported) {
+            listdir_reported = 1;
+            serial_write("syscall: listdir dispatch; VFS root enumerated\n");
         }
     } else {
         frame->eax = 0xffffffff;

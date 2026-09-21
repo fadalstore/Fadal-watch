@@ -135,7 +135,8 @@ check: independence $(OUT)/fadal-kernel.img
 						@grep -q "commands: help mount ls cat stat fscan github KERNEL.TXT exit" $(OUT)/smoke.log
 					@grep -q "syscall: stat dispatch; metadata copyout validated" $(OUT)/smoke.log
 					@grep -q "syscall: seek dispatch; file offset validated" $(OUT)/smoke.log
-						@grep -q "syscall: wait dispatch; child status validated" $(OUT)/smoke.log
+							@grep -q "syscall: wait dispatch; child status validated" $(OUT)/smoke.log
+							@grep -q "syscall: listdir dispatch; VFS root enumerated" $(OUT)/smoke.log
 						@grep -q "scheduler: timer context switch and CR3 reload passed" $(OUT)/smoke.log
 	@grep -q "syscall: ring-3 entry" $(OUT)/smoke.log
 	@grep -q "syscall: get_ticks dispatch" $(OUT)/smoke.log

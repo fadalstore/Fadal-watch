@@ -51,6 +51,9 @@ $(OUT)/vfs.o: vfs.c vfs.h fat12.h ramfs.h | $(OUT)
 $(OUT)/ramfs.o: ramfs.c ramfs.h ramdisk.h vfs.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+$(OUT)/fscan.o: fscan.c fscan.h vfs.h | $(OUT)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 $(OUT)/fsh.o: fsh.c | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
@@ -68,8 +71,8 @@ $(OUT)/fsh_blob.o: $(OUT)/fsh.bin
 $(OUT)/interrupts.o: interrupts.S kernel.c | $(OUT)
 	$(AS) --32 -o $@ $<
 
-$(OUT)/kernel.elf: $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/ramfs.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/ramfs.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o
+$(OUT)/kernel.elf: $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/ramfs.o $(OUT)/fscan.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/ramfs.o $(OUT)/fscan.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o
 
 $(OUT)/kernel.bin: $(OUT)/kernel.elf
 	$(OBJCOPY) -O binary $< $@
@@ -129,7 +132,7 @@ check: independence $(OUT)/fadal-kernel.img
 				@grep -q "shell: FSH disk executable selected" $(OUT)/smoke.log
 				@grep -q "Fadal TTY ready; FSH.BIN owns user shell" $(OUT)/smoke.log
 				@grep -q "fsh: disk executable online" $(OUT)/smoke.log
-						@grep -q "commands: help mount ls cat stat github KERNEL.TXT exit" $(OUT)/smoke.log
+						@grep -q "commands: help mount ls cat stat fscan github KERNEL.TXT exit" $(OUT)/smoke.log
 					@grep -q "syscall: stat dispatch; metadata copyout validated" $(OUT)/smoke.log
 					@grep -q "syscall: seek dispatch; file offset validated" $(OUT)/smoke.log
 						@grep -q "syscall: wait dispatch; child status validated" $(OUT)/smoke.log
@@ -151,10 +154,12 @@ check: independence $(OUT)/fadal-kernel.img
 		@grep -q "syscall: getsync dispatch; spinlock and mutex status returned" $(OUT)/smoke.log
 		@grep -q "syscall: getfs dispatch; generic VFS lookup returned" $(OUT)/smoke.log
 		@grep -q "vfs: RAMFS driver mounted at /ram; read/write self-test passed" $(OUT)/smoke.log
+		@grep -q "security: FScan audit passed; loopback-only boundary verified" $(OUT)/smoke.log
 		@grep -q "\[KLOG 1 #1\] structured logging online" $(OUT)/smoke.log
 	@grep -q "syscall: getlog dispatch; structured log state returned" $(OUT)/smoke.log
 	@grep -q "storage: RAM-disk sector read/write and checksum passed" $(OUT)/smoke.log
-	@grep -q "syscall: getramdisk dispatch; RAM-disk integrity returned" $(OUT)/smoke.log
+		@grep -q "syscall: getramdisk dispatch; RAM-disk integrity returned" $(OUT)/smoke.log
+		@grep -q "syscall: getsecurity dispatch; FScan audit returned" $(OUT)/smoke.log
 		@grep -q "syscall: get_pid dispatch" $(OUT)/smoke.log
 			@grep -q "syscall: read dispatch; nonblocking TTY queue read" $(OUT)/smoke.log
 			@grep -q "syscall: yield dispatch; cooperative scheduler point" $(OUT)/smoke.log

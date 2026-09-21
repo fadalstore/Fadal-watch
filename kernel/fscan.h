@@ -1,0 +1,12 @@
+#ifndef FADAL_FSCAN_H
+#define FADAL_FSCAN_H
+
+#define FSCAN_VFS_ROOT 0x01
+#define FSCAN_FAT12_FILE 0x02
+#define FSCAN_RAMFS_FILE 0x04
+#define FSCAN_LOOPBACK_ONLY 0x08
+#define FSCAN_ALL_OK (FSCAN_VFS_ROOT | FSCAN_FAT12_FILE | FSCAN_RAMFS_FILE | FSCAN_LOOPBACK_ONLY)
+
+unsigned int fscan_audit(void);
+
+#endif

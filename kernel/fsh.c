@@ -17,6 +17,7 @@ typedef unsigned int u32;
 #define SYSCALL_GET_FS 23
 #define SYSCALL_GET_LOG 24
 #define SYSCALL_GET_RAMDISK 25
+#define SYSCALL_GET_SECURITY 26
 #define SYSCALL_READ 4
 #define SYSCALL_WRITE 5
 #define SYSCALL_OPEN 6
@@ -88,11 +89,13 @@ static void fsh_seek_probe(void) {
 }
 
 static void fsh_command(const char *line, u32 length) {
-    static const char help[] = "commands: help mount ls cat stat github KERNEL.TXT exit\n";
+    static const char help[] = "commands: help mount ls cat stat fscan github KERNEL.TXT exit\n";
     static const char mounted[] = "FAT12 root mounted through VFS\n";
     static const char listing[] = "KERNEL.TXT FSH.BIN\n";
     static const char unknown[] = "unknown command; try help\n";
     static const char github[] = "GitHub: https://github.com/fadalstore/Fadal-watch\nHost terminal: gh repo clone fadalstore/Fadal-watch\n";
+    static const char fscan_passed[] = "FScan: VFS, FAT12, RAMFS, and loopback boundary passed\n";
+    static const char fscan_failed[] = "FScan: security audit reported an integrity issue\n";
     if (fsh_equal(line, length, "help")) {
         fsh_write(help);
     } else if (fsh_equal(line, length, "mount")) {
@@ -111,6 +114,9 @@ static void fsh_command(const char *line, u32 length) {
         }
     } else if (fsh_equal(line, length, "stat KERNEL.TXT")) {
         fsh_stat_kernel();
+    } else if (fsh_equal(line, length, "fscan")) {
+        fsh_write(fsh_syscall3(SYSCALL_GET_SECURITY, 0, 0, 0) == 0x0f ?
+            fscan_passed : fscan_failed);
     } else if (fsh_equal(line, length, "github")) {
         fsh_write(github);
     } else if (!fsh_equal(line, length, "exit")) {
@@ -151,6 +157,7 @@ void fsh_entry(void) {
     fsh_syscall3(SYSCALL_GET_FS, 2, 0, 0);
     fsh_syscall3(SYSCALL_GET_LOG, 0, 0, 0);
     fsh_syscall3(SYSCALL_GET_RAMDISK, 0, 0, 0);
+    fsh_syscall3(SYSCALL_GET_SECURITY, 0, 0, 0);
     fsh_syscall3(SYSCALL_SLEEP, 1, 0, 0);
     fsh_syscall3(SYSCALL_MMAP, 32, 0, 0);
     for (;;) {

@@ -276,6 +276,14 @@ read/write self-test passed` trace. Additional filesystem drivers can be
 registered through `vfs_register_driver()` and mounted with
 `vfs_mount_driver()` without changing filesystem-independent callers.
 
+FScan is the kernel's security-audit tool, exposed in FSH as `fscan` and via
+syscall `26` (`getsecurity`). It verifies the FAT12 root, the RAMFS `/ram`
+file, and the current loopback-only network boundary. It is intentionally a
+diagnostic scanner rather than an external port scanner: it sends no packets,
+does not probe hosts, and cannot be used to scan networks outside Fadal.
+Successful boot requires the `security: FScan audit passed;
+loopback-only boundary verified` trace.
+
 When running with a VGA display, the console accepts keyboard input after the
 `Fadal console ready` prompt. Keyboard input is delivered through the kernel's
 own IRQ1 handler; no Linux, Ubuntu, or external userspace is involved in the

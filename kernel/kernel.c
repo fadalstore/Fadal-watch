@@ -1,5 +1,6 @@
 #include "fat12.h"
 #include "ata.h"
+#include "fscan.h"
 #include "ramdisk.h"
 #include "ramfs.h"
 #include "slab.h"
@@ -65,6 +66,7 @@ typedef unsigned int u32;
 #define SYSCALL_GET_FS 23
 #define SYSCALL_GET_LOG 24
 #define SYSCALL_GET_RAMDISK 25
+#define SYSCALL_GET_SECURITY 26
 #define LAPIC_BASE 0xfee00000
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
@@ -118,6 +120,7 @@ static volatile u8 get_sync_reported;
 static volatile u8 get_fs_reported;
 static volatile u8 get_log_reported;
 static volatile u8 get_ramdisk_reported;
+static volatile u8 get_security_reported;
 static u8 ramdisk_self_test_passed;
 static u32 kernel_log_sequence;
 static u8 kernel_log_level;
@@ -1843,6 +1846,12 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
             get_ramdisk_reported = 1;
             serial_write("syscall: getramdisk dispatch; RAM-disk integrity returned\n");
         }
+    } else if (frame->eax == SYSCALL_GET_SECURITY) {
+        frame->eax = fscan_audit();
+        if (!get_security_reported) {
+            get_security_reported = 1;
+            serial_write("syscall: getsecurity dispatch; FScan audit returned\n");
+        }
     } else if (frame->eax == SYSCALL_SLEEP) {
         u32 slot = process_slot_for_pid(current_pid);
         if (frame->ebx == 0) {
@@ -2198,6 +2207,11 @@ void kernel_main(void) {
         kernel_write("vfs: FAT12 backend mounted; root directory recognized (");
         write_u32(vfs_root_entries());
         kernel_write(" entries)\n");
+    }
+    if (fscan_audit() == FSCAN_ALL_OK) {
+        kernel_write("security: FScan audit passed; loopback-only boundary verified\n");
+    } else {
+        kernel_write("security: FScan audit reported an integrity issue\n");
     }
     if (fsh_load_from_disk()) {
         kernel_write("userspace: FSH.BIN loaded from FAT12; ring-3 entry ready\n");

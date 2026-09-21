@@ -287,10 +287,12 @@ vfs_u8 vfs_lookup_path(const char *path, vfs_u32 *size) {
 }
 
 vfs_u32 vfs_list_root(char *output, vfs_u32 capacity) {
-    if (!vfs_is_mounted()) {
+    struct vfs_mount *root = find_mount("/");
+    if (root == (struct vfs_mount *)0 ||
+        root->ops->list_root == (void *)0) {
         return 0;
     }
-    return root_mount.ops->list_root(output, capacity);
+    return root->ops->list_root(output, capacity);
 }
 
 vfs_u32 vfs_write_file(const char *name, const vfs_u8 *data, vfs_u32 size) {

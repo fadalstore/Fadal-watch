@@ -21,6 +21,7 @@
 #define INTRMASK 0x3c
 #define INTRSTATUS 0x3e
 #define TXSTATUS0 0x10
+#define TXADDR0 0x20
 #define RXBUF 0x30
 #define RXBUFPTR 0x38
 #define RXBUFADDR 0x44
@@ -115,6 +116,7 @@ rtl_u32 rtl8139_tx(const rtl_u8 *packet, rtl_u32 length) {
     if (!present || packet == (const u8 *)0 || length == 0 || length > TX_BUFFER_SIZE) return 0;
     u32 index = tx_index++ & 3;
     copy_bytes(tx_buffers[index], packet, length);
+    outl(io_base + TXADDR0 + index * 4, (u32)tx_buffers[index]);
     outl(io_base + TXSTATUS0 + index * 4, ((u32)length & 0x1fff) | TX_DMA | TX_RETRY);
     tx_count++;
     return length;

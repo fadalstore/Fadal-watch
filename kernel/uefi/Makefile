@@ -14,6 +14,13 @@ BOOT_C ?= boot.c
 BOOT_SO := $(OUT)/boot.so
 BOOT_OBJ := $(OUT)/boot.o
 BOOT_EFI ?= $(OUT)/BOOTX64.EFI
+PAYLOAD_C ?= payload.c
+PAYLOAD_LD ?= payload.ld
+PAYLOAD_OBJ := $(OUT)/payload.o
+PAYLOAD_ELF := $(OUT)/fadal64.elf
+PAYLOAD_BIN ?= $(OUT)/fadal-uefi.krn
+PATCH_HEADER ?= ../../tools/patch-fadal64-header.py
+PAYLOAD_MAX_BYTES ?= 67108864
 
 # Override these when the distribution installs GNU-EFI elsewhere.
 EFI_INC ?= /usr/include/efi
@@ -32,7 +39,7 @@ BOOT_LD ?= $(EFI_LDSCRIPT)
 # GNU-EFI requires the Microsoft x64 ABI for UEFI callbacks, a short wchar_t,
 # no red zone, and accumulated outgoing arguments.
 CFLAGS ?= -O2
-CFLAGS += -ffreestanding -fno-stack-protector -fno-pie \
+CFLAGS += -ffreestanding -fPIC -fno-stack-protector \
 	-fno-asynchronous-unwind-tables -fno-unwind-tables \
 	-fshort-wchar -mno-red-zone -maccumulate-outgoing-args -m64 \
 	-Wall -Wextra -Werror \
@@ -48,9 +55,11 @@ OBJCOPY_FLAGS := \
 	-j .eh_frame -j .bss --subsystem=10 \
 	--target=efi-app-x86_64
 
-.PHONY: all check check-toolchain image clean help
+.PHONY: all check check-toolchain payload image clean help
 
 all: $(BOOT_EFI)
+
+payload: $(PAYLOAD_BIN)
 
 $(OUT):
 	mkdir -p $@
@@ -88,12 +97,24 @@ $(BOOT_EFI): $(BOOT_SO) | $(OUT)
 	@test "$$($(FILE) -b $@ | grep -E -i 'PE32\\+.*x86-64|EFI application')" != "" || \
 		(echo "error: $@ is not a PE32+ x86_64 EFI application" >&2; exit 1)
 
+$(PAYLOAD_OBJ): $(PAYLOAD_C) | $(OUT)
+	$(CC) -O2 -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables \
+		-fno-unwind-tables -mno-red-zone -m64 -Wall -Wextra -Werror -c -o $@ $<
+
+$(PAYLOAD_ELF): $(PAYLOAD_OBJ) $(PAYLOAD_LD) | $(OUT)
+	$(LD) -nostdlib -T $(PAYLOAD_LD) -o $@ $(PAYLOAD_OBJ)
+
+$(PAYLOAD_BIN): $(PAYLOAD_ELF) $(PATCH_HEADER)
+	$(OBJCOPY) -O binary $< $@
+	python3 $(PATCH_HEADER) $@
+	@test "$$(stat -c '%s' $@)" -le "$(PAYLOAD_MAX_BYTES)"
+
 check: $(BOOT_EFI)
 	@$(OBJDUMP) -f $(BOOT_EFI) | grep -E -q 'pei-x86-64|pe-x86-64' || \
 		(echo "error: $(BOOT_EFI) has the wrong object format" >&2; exit 1)
 	@echo "Fadal UEFI loader build passed: $(BOOT_EFI)"
 
-image: $(BOOT_EFI)
+image: $(BOOT_EFI) $(PAYLOAD_BIN)
 	@test -n "$(UEFI_KERNEL)" || \
 		(echo "usage: make image UEFI_KERNEL=path/to/fadal-uefi.krn" >&2; exit 1)
 	UEFI_BOOTLOADER="$(BOOT_EFI)" \

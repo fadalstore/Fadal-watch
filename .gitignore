@@ -5,6 +5,7 @@ dist
 tmp
 out-tsc
 kernel/out
+kernel/uefi/out
 *.tsbuildinfo
 .expo
 .expo-shared

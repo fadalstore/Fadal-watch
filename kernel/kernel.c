@@ -8,6 +8,7 @@
 #include "rtl8139.h"
 #include "fnet.h"
 #include "gitpack.h"
+#include "identity.h"
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -71,6 +72,9 @@ typedef unsigned int u32;
 #define SYSCALL_GET_RAMDISK 25
 #define SYSCALL_GET_SECURITY 26
 #define SYSCALL_LISTDIR 27
+#define SYSCALL_GETUID 28
+#define SYSCALL_GETGID 29
+#define SYSCALL_GETCAPS 30
 #define LAPIC_BASE 0xfee00000
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
@@ -126,6 +130,9 @@ static volatile u8 get_fs_reported;
 static volatile u8 get_log_reported;
 static volatile u8 get_ramdisk_reported;
 static volatile u8 get_security_reported;
+static volatile u8 getuid_reported;
+static volatile u8 getgid_reported;
+static volatile u8 getcaps_reported;
 static u8 ramdisk_self_test_passed;
 static u32 kernel_log_sequence;
 static u8 kernel_log_level;
@@ -283,6 +290,7 @@ struct process {
     u32 wake_tick;
     u32 exit_code;
     u32 priority;
+    struct fadal_identity identity;
     u32 heap_pages;
     u32 heap_physical[MAX_HEAP_PAGES];
     interrupt_frame context;
@@ -589,6 +597,7 @@ static void process_manager_init(void) {
             process_table[index]->wake_tick = 0;
             process_table[index]->exit_code = 0;
             process_table[index]->priority = 1;
+            fadal_identity_user(&process_table[index]->identity);
             process_table[index]->heap_pages = 0;
             for (u32 page = 0; page < MAX_HEAP_PAGES; page++) {
                 process_table[index]->heap_physical[page] = 0;
@@ -644,6 +653,7 @@ static u32 process_create(u32 entry, u32 user_stack_top) {
         process->wake_tick = 0;
         process->exit_code = 0;
         process->priority = 1;
+        fadal_identity_user(&process->identity);
         process->heap_pages = 0;
         for (u32 page = 0; page < MAX_HEAP_PAGES; page++) {
             process->heap_physical[page] = 0;
@@ -1831,6 +1841,27 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
         if (!get_pid_reported) {
             get_pid_reported = 1;
             serial_write("syscall: get_pid dispatch\n");
+        }
+    } else if (frame->eax == SYSCALL_GETUID) {
+        struct process *process = current_process();
+        frame->eax = process != (struct process *)0 ? process->identity.uid : 0xffffffff;
+        if (!getuid_reported) {
+            getuid_reported = 1;
+            serial_write("syscall: getuid dispatch; FSH identity returned\n");
+        }
+    } else if (frame->eax == SYSCALL_GETGID) {
+        struct process *process = current_process();
+        frame->eax = process != (struct process *)0 ? process->identity.gid : 0xffffffff;
+        if (!getgid_reported) {
+            getgid_reported = 1;
+            serial_write("syscall: getgid dispatch; FSH group returned\n");
+        }
+    } else if (frame->eax == SYSCALL_GETCAPS) {
+        struct process *process = current_process();
+        frame->eax = process != (struct process *)0 ? process->identity.effective : 0;
+        if (!getcaps_reported) {
+            getcaps_reported = 1;
+            serial_write("syscall: getcaps dispatch; capability set returned\n");
         }
     } else if (frame->eax == SYSCALL_GET_PPID) {
         frame->eax = process_parent_pid(current_pid);

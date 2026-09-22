@@ -14,13 +14,14 @@ KERNEL_BYTES := $(shell expr $(BOOT_SECTORS) \* 512)
 UEFI_IMAGE ?= $(OUT)/fadal-uefi.img
 UEFI_BOOTLOADER ?= $(OUT)/BOOTX64.EFI
 UEFI_KERNEL ?= $(OUT)/fadal-uefi.krn
+INSTALL_DIR ?= ../install
 
 CFLAGS := -m32 -ffreestanding -fno-pie -fno-stack-protector -fno-builtin \
 	-mno-sse -mno-sse2 -mno-mmx -msoft-float -fno-tree-vectorize \
 	-Wall -Wextra -Werror -O2 -nostdinc
 LDFLAGS := -m elf_i386 -T linker.ld -nostdlib
 
-.PHONY: all clean check independence run run-vga uefi-image
+.PHONY: all clean check independence run run-vga install uefi-image
 
 all: $(OUT)/fadal-kernel.img
 
@@ -30,7 +31,7 @@ $(OUT):
 $(OUT)/boot.o: boot.S | $(OUT)
 	$(AS) --32 -o $@ $<
 
-$(OUT)/kernel.o: kernel.c fat12.h ata.h ramdisk.h slab.h vfs.h rtl8139.h fnet.h gitpack.h | $(OUT)
+$(OUT)/kernel.o: kernel.c fat12.h ata.h ramdisk.h slab.h vfs.h rtl8139.h fnet.h gitpack.h identity.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(OUT)/fat12.o: fat12.c fat12.h | $(OUT)
@@ -104,7 +105,7 @@ independence: $(OUT)/kernel.elf
 	@! rg -n '#include[[:space:]]*<' . --glob '*.c' --glob '*.h' --glob '!out/**'
 	@echo "Fadal independence guard passed: freestanding, no host headers, no unresolved symbols"
 
-check: independence $(OUT)/fadal-kernel.img
+check: clean independence $(OUT)/fadal-kernel.img
 	@command -v $(QEMU) >/dev/null || \
 		(echo "$(QEMU) is required for the boot smoke test" >&2; exit 1)
 		@timeout 5s $(QEMU) -accel tcg -boot c -drive format=raw,file=$(OUT)/fadal-kernel.img \
@@ -173,6 +174,9 @@ check: independence $(OUT)/fadal-kernel.img
 	@grep -q "storage: RAM-disk sector read/write and checksum passed" $(OUT)/smoke.log
 		@grep -q "syscall: getramdisk dispatch; RAM-disk integrity returned" $(OUT)/smoke.log
 		@grep -q "syscall: getsecurity dispatch; FScan audit returned" $(OUT)/smoke.log
+		@grep -q "syscall: getuid dispatch; FSH identity returned" $(OUT)/smoke.log
+		@grep -q "syscall: getgid dispatch; FSH group returned" $(OUT)/smoke.log
+		@grep -q "syscall: getcaps dispatch; capability set returned" $(OUT)/smoke.log
 		@grep -q "syscall: get_pid dispatch" $(OUT)/smoke.log
 			@grep -q "syscall: read dispatch; nonblocking TTY queue read" $(OUT)/smoke.log
 			@grep -q "syscall: yield dispatch; cooperative scheduler point" $(OUT)/smoke.log
@@ -183,6 +187,11 @@ check: independence $(OUT)/fadal-kernel.img
 		@grep -q "syscall: exec dispatch; process created" $(OUT)/smoke.log
 	@dd if=$(OUT)/fadal-kernel.img bs=512 skip=$(FAT12_DATA_LBA) count=1 status=none | grep -a -q "FADAL FAT12 write"
 	@echo "Fadal Kernel boot smoke test passed"
+
+install: check
+	mkdir -p "$(INSTALL_DIR)"
+	install -m 0644 $(OUT)/fadal-kernel.img "$(INSTALL_DIR)/fadal-kernel.img"
+	@echo "Fadal BIOS install image: $(INSTALL_DIR)/fadal-kernel.img"
 
 run: $(OUT)/fadal-kernel.img
 		$(QEMU) -accel tcg -boot c -drive format=raw,file=$(OUT)/fadal-kernel.img \

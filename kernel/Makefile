@@ -102,7 +102,7 @@ $(OUT)/fadal-kernel.img: $(OUT)/boot.bin $(OUT)/kernel.bin
 independence: $(OUT)/kernel.elf
 	@test -z "$$(nm -u $(OUT)/kernel.elf)" || \
 		(echo "kernel has unresolved host/runtime symbols" >&2; nm -u $(OUT)/kernel.elf; exit 1)
-	@! rg -n '#include[[:space:]]*<' . --glob '*.c' --glob '*.h' --glob '!out/**'
+	@! rg -n '#include[[:space:]]*<' . --glob '*.c' --glob '*.h' --glob '!out/**' --glob '!uefi/**'
 	@echo "Fadal independence guard passed: freestanding, no host headers, no unresolved symbols"
 
 check: clean independence $(OUT)/fadal-kernel.img

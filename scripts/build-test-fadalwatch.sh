@@ -124,7 +124,7 @@ BACKUP=""
 
 mkdir -p "$ROOT/artifacts"
 cp "$ROOT/kernel/out/fadal-kernel.img" "$ROOT/artifacts/fadal-kernel.img"
-if [[ -n "$UEFI_IMAGE" && -s "$UEFI_IMAGE" ]]; then
+if [[ -s "$ROOT/kernel/uefi/out/fadal-uefi.img" ]]; then
     cp "$ROOT/kernel/uefi/out/fadal-uefi.img" "$ROOT/artifacts/fadal-uefi.img"
 fi
 
@@ -135,4 +135,4 @@ if [[ -s "$ROOT/artifacts/fadal-uefi.img" ]]; then
     log "UEFI image: $ROOT/artifacts/fadal-uefi.img"
 fi
 log "checksums:"
-sha256sum "$ROOT/artifacts"/*
+find "$ROOT/artifacts" -maxdepth 1 -type f -print0 | sort -z | xargs -0 sha256sum

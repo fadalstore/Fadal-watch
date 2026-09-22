@@ -10,7 +10,20 @@ mkdir -p "$DEST"
 
 fetch() {
     local path="$1" output="$2"
-    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    local token="${FADALWATCH_TOKEN:-${GH_TOKEN:-}}"
+    if [ -n "$token" ] && command -v curl >/dev/null 2>&1; then
+        curl --fail --location --silent --show-error --retry 3 \
+            -H "Authorization: Bearer ${token}" \
+            -H 'Accept: application/vnd.github.raw' \
+            "https://api.github.com/repos/${REPO}/contents/${path}?ref=${REF}" \
+            --output "$output"
+    elif [ -n "$token" ] && command -v wget >/dev/null 2>&1; then
+        wget --quiet --tries=3 \
+            --header="Authorization: Bearer ${token}" \
+            --header='Accept: application/vnd.github.raw' \
+            "https://api.github.com/repos/${REPO}/contents/${path}?ref=${REF}" \
+            --output-document="$output"
+    elif command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
         gh api -H 'Accept: application/vnd.github.raw' \
             "repos/${REPO}/contents/${path}?ref=${REF}" > "$output"
     elif command -v curl >/dev/null 2>&1; then

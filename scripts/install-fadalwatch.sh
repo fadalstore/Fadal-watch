@@ -23,15 +23,15 @@ fetch() {
             --header='Accept: application/vnd.github.raw' \
             "https://api.github.com/repos/${REPO}/contents/${path}?ref=${REF}" \
             --output-document="$output"
-    elif command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-        gh api -H 'Accept: application/vnd.github.raw' \
-            "repos/${REPO}/contents/${path}?ref=${REF}" > "$output"
     elif command -v curl >/dev/null 2>&1; then
         local url="${BASE_URL}/${path}"
         curl --fail --location --silent --show-error --retry 3 "$url" --output "$output"
     elif command -v wget >/dev/null 2>&1; then
         local url="${BASE_URL}/${path}"
         wget --quiet --tries=3 "$url" --output-document="$output"
+    elif command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+        gh api -H 'Accept: application/vnd.github.raw' \
+            "repos/${REPO}/contents/${path}?ref=${REF}" > "$output"
     else
         echo "error: curl or wget is required" >&2
         exit 1

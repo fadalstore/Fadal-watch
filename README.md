@@ -4,7 +4,13 @@ FadalWatch contains the Fadal Kernel BIOS image, Fadal64 UEFI loader/payload, UT
 
 ## Download from any terminal
 
-The repository is private, so the recommended terminal workflow uses the GitHub CLI. Install `gh`, run `gh auth login` once, and then run:
+The repository is public, so the simplest terminal workflow requires only `curl` and `bash`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/fadalstore/Fadal-watch/main/scripts/install-fadalwatch.sh | bash
+```
+
+The installer also works through the GitHub CLI if you prefer a cloned checkout:
 
 ```sh
 gh repo clone fadalstore/Fadal-watch "$HOME/FadalWatch-repo" -- --depth 1
@@ -19,7 +25,7 @@ bash "$HOME/FadalWatch-repo/scripts/install-fadalwatch.sh" "$HOME/Downloads/Fada
 
 ### curl or wget without the GitHub CLI
 
-For a private repository, provide a GitHub fine-grained token with read-only **Contents** permission. Keep the token in an environment variable rather than placing it in shell history:
+If an administrator later makes the repository private again, provide a GitHub fine-grained token with read-only **Contents** permission. Keep the token in an environment variable rather than placing it in shell history:
 
 ```sh
 export FADALWATCH_TOKEN='github_pat_...'

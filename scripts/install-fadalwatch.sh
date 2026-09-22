@@ -9,10 +9,15 @@ BASE_URL="https://raw.githubusercontent.com/${REPO}/${REF}"
 mkdir -p "$DEST"
 
 fetch() {
-    local url="$1" output="$2"
-    if command -v curl >/dev/null 2>&1; then
+    local path="$1" output="$2"
+    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+        gh api -H 'Accept: application/vnd.github.raw' \
+            "repos/${REPO}/contents/${path}?ref=${REF}" > "$output"
+    elif command -v curl >/dev/null 2>&1; then
+        local url="${BASE_URL}/${path}"
         curl --fail --location --silent --show-error --retry 3 "$url" --output "$output"
     elif command -v wget >/dev/null 2>&1; then
+        local url="${BASE_URL}/${path}"
         wget --quiet --tries=3 "$url" --output-document="$output"
     else
         echo "error: curl or wget is required" >&2
@@ -21,9 +26,9 @@ fetch() {
 }
 
 printf 'Downloading FadalWatch into %s\n' "$DEST"
-fetch "$BASE_URL/FadalWatch-UTM-iOS.zip" "$DEST/FadalWatch-UTM-iOS.zip"
-fetch "$BASE_URL/FadalWatch-iOS-source.zip" "$DEST/FadalWatch-iOS-source.zip"
-fetch "$BASE_URL/install/fadal-kernel.img" "$DEST/fadal-kernel.img"
+fetch "FadalWatch-UTM-iOS.zip" "$DEST/FadalWatch-UTM-iOS.zip"
+fetch "FadalWatch-iOS-source.zip" "$DEST/FadalWatch-iOS-source.zip"
+fetch "install/fadal-kernel.img" "$DEST/fadal-kernel.img"
 
 expected_utm="7916ebe68b19325f1d47eb8e925cb85e94e20860a68d2d73d711c95e4bf67158"
 expected_source="ed59a510bb3119b15e981b24a65034fceea3bb41387cc11262276d15ece773ff"

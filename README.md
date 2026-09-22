@@ -4,22 +4,23 @@ FadalWatch contains the Fadal Kernel BIOS image, Fadal64 UEFI loader/payload, UT
 
 ## Download from any terminal
 
-On macOS, Linux, or a compatible Unix terminal, run:
+The repository is private, so the recommended terminal workflow uses the GitHub CLI. Install `gh`, run `gh auth login` once, and then run:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/fadalstore/Fadal-watch/main/scripts/install-fadalwatch.sh | bash
+gh repo clone fadalstore/Fadal-watch "$HOME/FadalWatch-repo" -- --depth 1
+bash "$HOME/FadalWatch-repo/scripts/install-fadalwatch.sh" "$HOME/FadalWatch"
 ```
 
-The installer downloads the UTM package, native iOS source archive, and BIOS image into `~/FadalWatch`, then verifies SHA-256 checksums. To choose another directory:
+The installer downloads the UTM package, native iOS source archive, and BIOS image into `~/FadalWatch`, then verifies SHA-256 checksums. When `gh` is authenticated, downloads use the GitHub Contents API so private-repository permissions are preserved. To choose another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/fadalstore/Fadal-watch/main/scripts/install-fadalwatch.sh | bash -s -- "$HOME/Downloads/FadalWatch"
+bash "$HOME/FadalWatch-repo/scripts/install-fadalwatch.sh" "$HOME/Downloads/FadalWatch"
 ```
 
-The same installer supports systems that have `wget` instead of `curl`. It can also be downloaded and inspected before execution:
+If the repository is made public later, the installer can also be fetched directly:
 
 ```sh
-wget -qO- https://raw.githubusercontent.com/fadalstore/Fadal-watch/main/scripts/install-fadalwatch.sh > install-fadalwatch.sh
+curl -fsSL https://raw.githubusercontent.com/fadalstore/Fadal-watch/main/scripts/install-fadalwatch.sh > install-fadalwatch.sh
 less install-fadalwatch.sh
 bash install-fadalwatch.sh
 ```

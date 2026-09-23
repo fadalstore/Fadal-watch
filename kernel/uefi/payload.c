@@ -60,6 +60,11 @@ static u8 start_open;
 static u32 mouse_x;
 static u32 mouse_y;
 static u32 mouse_buttons;
+static u32 terminal_x = 270;
+static u32 terminal_y = 98;
+static u32 terminal_drag_offset_x;
+static u32 terminal_drag_offset_y;
+static u8 terminal_dragging;
 static fadal_event event_queue[EVENT_QUEUE_SIZE];
 static u8 event_head;
 static u8 event_tail;
@@ -148,9 +153,9 @@ static void desktop_render(void) {
     fb_fill(32, 78, width - 32, height - 92, 0x001c2f52);
     fb_fill(52, 98, 250, 230, 0x00243f6d);
     fb_fill(66, 112, 236, 220, 0x002b4d80);
-    fb_fill(270, 98, width - 52, height - 112, 0x000d1528);
-    fb_fill(270, 98, width - 52, 132, 0x001c3154);
-    fb_fill(284, 150, width - 70, height - 132, 0x000a101e);
+    fb_fill(terminal_x, terminal_y, width - 52, height - 112, 0x000d1528);
+    fb_fill(terminal_x, terminal_y, width - 52, terminal_y + 34, 0x001c3154);
+    fb_fill(terminal_x + 14, terminal_y + 52, width - 70, height - 132, 0x000a101e);
     fb_fill(26, height - 43, 126, height - 10, 0x002d5f9b);
     fb_fill(142, height - 43, 184, height - 10, 0x00243f6d);
     fb_fill(196, height - 43, 238, height - 10, 0x00243f6d);
@@ -158,9 +163,9 @@ static void desktop_render(void) {
     fb_text(52, 126, "DESKTOP", 0x00d8eaff, 2);
     fb_text(78, 146, "WELCOME", 0x00ffffff, 2);
     fb_text(78, 166, "FADAL OS", 0x008dc5ff, 2);
-    fb_text(286, 108, "TERMINAL", 0x00ffffff, 2);
-    fb_text(292, 154, desktop_status, 0x007ed6a7, 2);
-    fb_text(292, 176, "TYPE HELP FOR COMMANDS", 0x0097aac8, 1);
+    fb_text(terminal_x + 16, terminal_y + 10, "TERMINAL", 0x00ffffff, 2);
+    fb_text(terminal_x + 22, terminal_y + 56, desktop_status, 0x007ed6a7, 2);
+    fb_text(terminal_x + 22, terminal_y + 78, "TYPE HELP FOR COMMANDS", 0x0097aac8, 1);
     fb_text(38, height - 33, "START", 0x00ffffff, 2);
     fb_text(width - 155, height - 31, "FADAL64", 0x0097aac8, 1);
 }
@@ -237,7 +242,36 @@ static int event_pop(fadal_event *event) {
 }
 
 static void desktop_handle_mouse(const fadal_event *event) {
-    if (event->type != 2 || (event->buttons & 1U) == 0) return;
+    if (event->type != 2) return;
+    if (terminal_dragging != 0) {
+        if ((event->buttons & 1U) != 0) {
+            if (mouse_x > terminal_drag_offset_x) terminal_x = mouse_x - terminal_drag_offset_x;
+            else terminal_x = 20;
+            if (mouse_y > terminal_drag_offset_y) terminal_y = mouse_y - terminal_drag_offset_y;
+            else terminal_y = 40;
+            if (terminal_x < 20) terminal_x = 20;
+            if (terminal_y < 40) terminal_y = 40;
+            if (terminal_x > framebuffer->width - 140) terminal_x = framebuffer->width - 140;
+            if (terminal_y > framebuffer->height - 160) terminal_y = framebuffer->height - 160;
+            desktop_status = "TERMINAL MOVING";
+            desktop_redraw();
+            return;
+        }
+        terminal_dragging = 0;
+        desktop_status = "SYSTEM READY";
+        desktop_redraw();
+        return;
+    }
+    if ((event->buttons & 1U) == 0) return;
+    if (mouse_x >= terminal_x && mouse_x < framebuffer->width - 52 &&
+        mouse_y >= terminal_y && mouse_y < terminal_y + 34) {
+        terminal_dragging = 1;
+        terminal_drag_offset_x = mouse_x - terminal_x;
+        terminal_drag_offset_y = mouse_y - terminal_y;
+        desktop_status = "TERMINAL FOCUSED";
+        desktop_redraw();
+        return;
+    }
     if (mouse_x < 150 && mouse_y > framebuffer->height - 70) {
         start_open = (u8)!start_open;
         desktop_status = start_open != 0 ? "START MENU OPEN" : "SYSTEM READY";

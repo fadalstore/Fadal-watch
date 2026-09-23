@@ -47,6 +47,6 @@ less install-fadalwatch.sh
 bash install-fadalwatch.sh
 ```
 
-After downloading, extract `FadalWatch-UTM-iOS.zip` and import the `.utm` bundle into UTM. On iOS, select **Emulate**, not **Virtualize**, because the guest is x86_64.
+After downloading, extract `FadalWatch-UTM-iOS.zip` and import the `FadalWatch-UEFI.utm` bundle into UTM or UTM SE. On iOS, select **Emulate**, not **Virtualize**, because the guest is x86_64. The current package uses UTM configuration version 4 and includes a raw UEFI disk, RTL8139 NIC, and serial Terminal configuration.
 
 A native `.ipa` still requires Apple signing and provisioning. The source archive is ready to open in Xcode on macOS.

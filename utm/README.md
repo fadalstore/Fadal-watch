@@ -1,6 +1,6 @@
 # FadalOS iOS/UTM Package
 
-This package is a UTM QEMU-emulation bundle for **FadalOS Phase 1**, the x86_64 UEFI console system built from FadalWatch. It is intended for import into UTM on iOS or macOS. On ARM iPhone/iPad hardware, choose **Emulate**, not **Virtualize**.
+This package is a UTM QEMU-emulation bundle for **FadalOS Phase 1**, the x86_64 UEFI console system built from FadalWatch. It is intended for import into UTM and **UTM SE** on iOS or macOS. On ARM iPhone/iPad hardware, choose **Emulate**, not **Virtualize**; UTM SE does not provide hardware virtualization or JIT.
 
 The 64 MiB raw image contains `EFI/BOOT/BOOTX64.EFI` and `FADAL.KRN`. After boot, the FadalOS console appears on the UTM serial terminal:
 
@@ -17,6 +17,8 @@ help clear pwd ls cd cat whoami id uname fscan user exit
 
 The current console provides a root identity (`uid=0`), a registered non-root Fadal identity (`uid=1000`), virtual `/home/root` and `/etc` views, and a loopback-only FScan security result. **Persistent disk-backed `/home`, package installation, networking, and desktop services are Phase 1B/Phase 2 work; this image is not yet a Linux replacement.**
 
-UTM can import the bundle directly or import `Data/fadal-uefi.img` as a drive. If importing the drive manually, enable UEFI and set the imported disk as the first boot device. The UTM serial mode should be **Terminal**.
+The bundle uses the current UTM configuration schema: `Backend=QEMU`, `ConfigurationVersion=4`, a `Drive` entry pointing to `Data/fadal-uefi.img`, UEFI enabled, an RTL8139 network adapter, and a built-in serial **Terminal**. This avoids the legacy `Drives`/`System` configuration format that older packages used and that UTM SE rejects as invalid.
+
+UTM can import the bundle directly. If UTM SE still does not show an import action, unzip the archive first, open the resulting `FadalWatch-UEFI.utm` bundle in the Files app, and choose **Open in UTM SE**. As a fallback, create a new **Emulate → x86_64** VM, enable UEFI, and add `Data/fadal-uefi.img` as a raw IDE disk. The UTM serial mode should be **Terminal**.
 
 A directly installable native `FadalOS.ipa` cannot be produced in the Linux sandbox because Apple requires an iOS signing certificate, provisioning profile, and device/app entitlements. The UTM bundle is the directly reusable emulator artifact.

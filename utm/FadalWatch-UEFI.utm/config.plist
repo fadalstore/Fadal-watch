@@ -6,41 +6,124 @@
     <string>QEMU</string>
     <key>ConfigurationVersion</key>
     <integer>4</integer>
-    <key>Name</key>
-    <string>FadalWatch UEFI</string>
-    <key>Notes</key>
-    <string>FadalWatch x86_64 UEFI proof-of-concept. Use QEMU emulation, not virtualization.</string>
+    <key>Information</key>
+    <dict>
+        <key>Name</key>
+        <string>FadalOS</string>
+        <key>IconCustom</key>
+        <false/>
+        <key>Notes</key>
+        <string>Independent FadalOS x86_64 UEFI system. Use Emulate on UTM SE/iOS.</string>
+        <key>UUID</key>
+        <string>6E4F6F53-2F53-4F53-9B2D-464144414C4F</string>
+    </dict>
     <key>System</key>
     <dict>
         <key>Architecture</key>
         <string>x86_64</string>
+        <key>Target</key>
+        <string>q35</string>
+        <key>CPU</key>
+        <string>default</string>
+        <key>CPUFlagsAdd</key>
+        <array/>
+        <key>CPUFlagsRemove</key>
+        <array/>
         <key>CPUCount</key>
         <integer>1</integer>
+        <key>ForceMulticore</key>
+        <false/>
         <key>MemorySize</key>
         <integer>128</integer>
+        <key>JITCacheSize</key>
+        <integer>32</integer>
+    </dict>
+    <key>QEMU</key>
+    <dict>
+        <key>DebugLog</key>
+        <false/>
         <key>UEFIBoot</key>
         <true/>
+        <key>RNGDevice</key>
+        <false/>
+        <key>BalloonDevice</key>
+        <false/>
+        <key>TPMDevice</key>
+        <false/>
+        <key>Hypervisor</key>
+        <false/>
+        <key>TSO</key>
+        <false/>
+        <key>RTCLocalTime</key>
+        <false/>
+        <key>PS2Controller</key>
+        <true/>
+        <key>AdditionalArguments</key>
+        <array/>
     </dict>
-    <key>Drives</key>
-    <array>
-        <dict>
-            <key>ImagePath</key>
-            <string>Data/fadal-uefi.img</string>
-            <key>Interface</key>
-            <string>IDE</string>
-            <key>ImageType</key>
-            <integer>0</integer>
-            <key>Removable</key>
-            <false/>
-        </dict>
-    </array>
+    <key>Input</key>
+    <dict>
+        <key>UsbBusSupport</key>
+        <string>2.0</string>
+        <key>UsbSharing</key>
+        <false/>
+        <key>MaximumUsbShare</key>
+        <integer>3</integer>
+    </dict>
+    <key>Sharing</key>
+    <dict>
+        <key>DirectoryShareMode</key>
+        <string>None</string>
+        <key>DirectoryShareReadOnly</key>
+        <false/>
+        <key>ClipboardSharing</key>
+        <false/>
+    </dict>
     <key>Display</key>
     <array>
         <dict>
-            <key>WidthPixels</key>
-            <integer>800</integer>
-            <key>HeightPixels</key>
-            <integer>600</integer>
+            <key>Hardware</key>
+            <string>virtio-vga</string>
+            <key>DynamicResolution</key>
+            <true/>
+            <key>UpscalingFilter</key>
+            <string>Linear</string>
+            <key>DownscalingFilter</key>
+            <string>Linear</string>
+            <key>NativeResolution</key>
+            <false/>
+        </dict>
+    </array>
+    <key>Drive</key>
+    <array>
+        <dict>
+            <key>ImageName</key>
+            <string>fadal-uefi.img</string>
+            <key>ReadOnly</key>
+            <false/>
+            <key>ImageType</key>
+            <string>Disk</string>
+            <key>Interface</key>
+            <string>IDE</string>
+            <key>InterfaceVersion</key>
+            <integer>1</integer>
+            <key>Identifier</key>
+            <string>0A4D4B4A-4F53-4F53-9F43-464144414C01</string>
+        </dict>
+    </array>
+    <key>Network</key>
+    <array>
+        <dict>
+            <key>Mode</key>
+            <string>Shared</string>
+            <key>Hardware</key>
+            <string>rtl8139</string>
+            <key>MacAddress</key>
+            <string>52:54:00:FA:DA:01</string>
+            <key>IsolateFromHost</key>
+            <false/>
+            <key>PortForward</key>
+            <array/>
         </dict>
     </array>
     <key>Serial</key>
@@ -48,7 +131,24 @@
         <dict>
             <key>Mode</key>
             <string>Terminal</string>
+            <key>Target</key>
+            <string>Auto</string>
+            <key>Terminal</key>
+            <dict>
+                <key>ForegroundColor</key>
+                <string>#ffffff</string>
+                <key>BackgroundColor</key>
+                <string>#000000</string>
+                <key>Font</key>
+                <string>Menlo</string>
+                <key>FontSize</key>
+                <integer>12</integer>
+                <key>CursorBlink</key>
+                <true/>
+            </dict>
         </dict>
     </array>
+    <key>Sound</key>
+    <array/>
 </dict>
 </plist>

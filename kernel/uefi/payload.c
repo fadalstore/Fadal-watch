@@ -37,8 +37,17 @@ const u8 fadal64_header[32] = {
 #define VGA_COLS 80
 #define VGA_ROWS 25
 #define LINE_MAX 96
+#define EVENT_QUEUE_SIZE 32
 #define USER_ROOT 0
 #define USER_FADAL 1000
+
+typedef struct {
+    u8 type;
+    u8 code;
+    int dx;
+    int dy;
+    u32 buttons;
+} fadal_event;
 
 static u32 vga_row;
 static u32 vga_col;
@@ -51,6 +60,10 @@ static u8 start_open;
 static u32 mouse_x;
 static u32 mouse_y;
 static u32 mouse_buttons;
+static fadal_event event_queue[EVENT_QUEUE_SIZE];
+static u8 event_head;
+static u8 event_tail;
+static const char *desktop_status = "SYSTEM READY";
 static u32 current_uid = USER_ROOT;
 static const char current_user[] = "root";
 
@@ -146,7 +159,7 @@ static void desktop_render(void) {
     fb_text(78, 146, "WELCOME", 0x00ffffff, 2);
     fb_text(78, 166, "FADAL OS", 0x008dc5ff, 2);
     fb_text(286, 108, "TERMINAL", 0x00ffffff, 2);
-    fb_text(292, 154, "SYSTEM READY", 0x007ed6a7, 2);
+    fb_text(292, 154, desktop_status, 0x007ed6a7, 2);
     fb_text(292, 176, "TYPE HELP FOR COMMANDS", 0x0097aac8, 1);
     fb_text(38, height - 33, "START", 0x00ffffff, 2);
     fb_text(width - 155, height - 31, "FADAL64", 0x0097aac8, 1);
@@ -205,11 +218,49 @@ static void desktop_redraw(void) {
     cursor_draw();
 }
 
+static void event_push(u8 type, u8 code, int dx, int dy, u32 buttons) {
+    u8 next = (u8)((event_head + 1U) % EVENT_QUEUE_SIZE);
+    if (next == event_tail) event_tail = (u8)((event_tail + 1U) % EVENT_QUEUE_SIZE);
+    event_queue[event_head].type = type;
+    event_queue[event_head].code = code;
+    event_queue[event_head].dx = dx;
+    event_queue[event_head].dy = dy;
+    event_queue[event_head].buttons = buttons;
+    event_head = next;
+}
+
+static int event_pop(fadal_event *event) {
+    if (event_head == event_tail) return 0;
+    *event = event_queue[event_tail];
+    event_tail = (u8)((event_tail + 1U) % EVENT_QUEUE_SIZE);
+    return 1;
+}
+
+static void desktop_handle_mouse(const fadal_event *event) {
+    if (event->type != 2 || (event->buttons & 1U) == 0) return;
+    if (mouse_x < 150 && mouse_y > framebuffer->height - 70) {
+        start_open = (u8)!start_open;
+        desktop_status = start_open != 0 ? "START MENU OPEN" : "SYSTEM READY";
+    } else if (start_open != 0 && mouse_x >= 38 && mouse_x < 278 &&
+               mouse_y >= framebuffer->height - 252 && mouse_y < framebuffer->height - 208) {
+        start_open = 0;
+        desktop_status = "TERMINAL SELECTED";
+    } else if (start_open != 0 && mouse_x >= 38 && mouse_x < 278 &&
+               mouse_y >= framebuffer->height - 198 && mouse_y < framebuffer->height - 154) {
+        start_open = 0;
+        desktop_status = "FILES SELECTED";
+    } else if (start_open != 0 && mouse_x >= 38 && mouse_x < 278 &&
+               mouse_y >= framebuffer->height - 144 && mouse_y < framebuffer->height - 100) {
+        start_open = 0;
+        desktop_status = "SYSTEM SELECTED";
+    }
+    desktop_redraw();
+}
+
 static void mouse_poll(void) {
     u8 value;
     int dx;
     int dy;
-    u8 changed = 0;
     if (mouse_enabled == 0 || (fadal_inb(KBD_STATUS) & 1) == 0) return;
     value = fadal_inb(KBD_DATA);
     if (mouse_packet_index == 0 && (value & 8) == 0) return;
@@ -228,15 +279,10 @@ static void mouse_poll(void) {
     else mouse_y = (u32)((int)mouse_y + dy);
     if ((mouse_packet[0] & 1) != 0 && (mouse_buttons & 1) == 0) {
         mouse_buttons |= 1;
-        if (mouse_x < 150 && mouse_y > framebuffer->height - 70) {
-            start_open = (u8)!start_open;
-            changed = 1;
-        }
     } else if ((mouse_packet[0] & 1) == 0) {
         mouse_buttons &= ~1U;
     }
-    if (dx != 0 || dy != 0) changed = 1;
-    if (changed) desktop_redraw();
+    event_push(2, 0, dx, dy, mouse_buttons);
 }
 
 static void serial_init(void) {
@@ -335,13 +381,25 @@ static char keyboard_ascii(u8 code) {
     return shift ? shifted[code] : keys[code];
 }
 
+static void event_pump(void) {
+    if (serial_ready()) event_push(1, fadal_inb(COM1), 0, 0, 0);
+    if (fadal_inb(KBD_STATUS) & 1) {
+        char value = keyboard_ascii(fadal_inb(KBD_DATA));
+        if (value != 0) event_push(1, (u8)value, 0, 0, 0);
+    }
+    mouse_poll();
+}
+
 static char serial_getc(void) {
+    fadal_event event;
     for (;;) {
-        mouse_poll();
-        if (serial_ready()) return (char)fadal_inb(COM1);
-        if (fadal_inb(KBD_STATUS) & 1) {
-            char value = keyboard_ascii(fadal_inb(KBD_DATA));
-            if (value != 0) return value;
+        event_pump();
+        while (event_pop(&event) != 0) {
+            if (event.type == 1) return (char)event.code;
+            if (event.type == 2) {
+                desktop_handle_mouse(&event);
+                if (event.dx != 0 || event.dy != 0) desktop_redraw();
+            }
         }
         __asm__ volatile ("pause");
     }

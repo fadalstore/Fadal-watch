@@ -15,6 +15,12 @@ Available Phase 1 console commands are:
 help clear pwd ls cd cat whoami id uname fscan user exit
 ```
 
+The console accepts input from both UTM's **Terminal** serial window and the
+emulated PS/2 keyboard. The payload handles Shift, Backspace, and Enter,
+waits for UART transmit readiness, filters scan-code break events, and treats
+CRLF from mobile terminals as one Enter key. This prevents repeated empty
+prompts and garbled key sequences when using UTM SE.
+
 The current console provides a root identity (`uid=0`), a registered non-root Fadal identity (`uid=1000`), virtual `/home/root` and `/etc` views, and a loopback-only FScan security result. **Persistent disk-backed `/home`, package installation, networking, and desktop services are Phase 1B/Phase 2 work; this image is not yet a Linux replacement.**
 
 The bundle uses the current UTM configuration schema: `Backend=QEMU`, `ConfigurationVersion=4`, a `Drive` entry pointing to `Data/fadal-uefi.img`, UEFI enabled, an RTL8139 network adapter, and a built-in serial **Terminal**. This avoids the legacy `Drives`/`System` configuration format that older packages used and that UTM SE rejects as invalid.

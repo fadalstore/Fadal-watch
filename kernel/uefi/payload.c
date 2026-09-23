@@ -23,6 +23,8 @@ const u8 fadal64_header[32] = {
 };
 
 #define COM1 0x3f8
+#define KBD_DATA 0x60
+#define KBD_STATUS 0x64
 #define VGA ((volatile u16 *)0xb8000)
 #define VGA_COLS 80
 #define VGA_ROWS 25
@@ -64,6 +66,7 @@ static int f_starts(const char *text, const char *prefix) {
 }
 
 static void serial_putc(char value) {
+    while ((fadal_inb(COM1 + 5) & 0x20) == 0) __asm__ volatile ("pause");
     fadal_outb(COM1, (u8)value);
 }
 
@@ -105,9 +108,39 @@ static int serial_ready(void) {
     return (fadal_inb(COM1 + 5) & 1) != 0;
 }
 
+static char keyboard_ascii(u8 code) {
+    static const char keys[128] = {
+        [0x02]='1',[0x03]='2',[0x04]='3',[0x05]='4',[0x06]='5',[0x07]='6',[0x08]='7',[0x09]='8',[0x0a]='9',[0x0b]='0',
+        [0x0c]='-',[0x0d]='=',[0x10]='q',[0x11]='w',[0x12]='e',[0x13]='r',[0x14]='t',[0x15]='y',[0x16]='u',[0x17]='i',
+        [0x18]='o',[0x19]='p',[0x1a]='[',[0x1b]=']',[0x1e]='a',[0x1f]='s',[0x20]='d',[0x21]='f',[0x22]='g',[0x23]='h',
+        [0x24]='j',[0x25]='k',[0x26]='l',[0x27]=';',[0x28]='\'', [0x29]='`',[0x2b]='\\',[0x2c]='z',[0x2d]='x',
+        [0x2e]='c',[0x2f]='v',[0x30]='b',[0x31]='n',[0x32]='m',[0x33]=',',[0x34]='.',[0x35]='/',[0x39]=' '
+    };
+    static const char shifted[128] = {
+        [0x02]='!',[0x03]='@',[0x04]='#',[0x05]='$',[0x06]='%',[0x07]='^',[0x08]='&',[0x09]='*',[0x0a]='(',[0x0b]=')',
+        [0x0c]='_',[0x0d]='+',[0x10]='Q',[0x11]='W',[0x12]='E',[0x13]='R',[0x14]='T',[0x15]='Y',[0x16]='U',[0x17]='I',
+        [0x18]='O',[0x19]='P',[0x1a]='{',[0x1b]='}',[0x1e]='A',[0x1f]='S',[0x20]='D',[0x21]='F',[0x22]='G',[0x23]='H',
+        [0x24]='J',[0x25]='K',[0x26]='L',[0x27]=':',[0x28]='"',[0x29]='~',[0x2b]='|',[0x2c]='Z',[0x2d]='X',
+        [0x2e]='C',[0x2f]='V',[0x30]='B',[0x31]='N',[0x32]='M',[0x33]='<',[0x34]='>',[0x35]='?',[0x39]=' '
+    };
+    static u8 shift;
+    if (code == 0x2a || code == 0x36) { shift = 1; return 0; }
+    if (code == 0xaa || code == 0xb6) { shift = 0; return 0; }
+    if (code == 0x1c) return '\n';
+    if (code == 0x0e) return '\b';
+    if (code >= 128) return 0;
+    return shift ? shifted[code] : keys[code];
+}
+
 static char serial_getc(void) {
-    while (!serial_ready()) __asm__ volatile ("pause");
-    return (char)fadal_inb(COM1);
+    for (;;) {
+        if (serial_ready()) return (char)fadal_inb(COM1);
+        if (fadal_inb(KBD_STATUS) & 1) {
+            char value = keyboard_ascii(fadal_inb(KBD_DATA));
+            if (value != 0) return value;
+        }
+        __asm__ volatile ("pause");
+    }
 }
 
 static void prompt(void) {
@@ -174,6 +207,7 @@ void fadal64_entry(void) {
     char line[LINE_MAX];
     u32 length;
     u32 index;
+    u8 suppress_lf = 0;
 
     serial_init();
     for (index = 0; index < sizeof(debug_banner) - 1; index++) fadal_outb(0x402, (u8)debug_banner[index]);
@@ -187,10 +221,15 @@ void fadal64_entry(void) {
         length = 0;
         for (;;) {
             char value = serial_getc();
+            if (suppress_lf != 0) {
+                suppress_lf = 0;
+                if (value == '\n') continue;
+            }
             if (value == '\r' || value == '\n') {
                 console_write("\r\n");
                 line[length] = '\0';
                 run_command(line);
+                if (value == '\r') suppress_lf = 1;
                 break;
             }
             if ((value == '\b' || value == 127) && length > 0) {

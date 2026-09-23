@@ -44,6 +44,13 @@ static u32 vga_row;
 static u32 vga_col;
 static fadal_framebuffer *framebuffer;
 static u8 desktop_mode;
+static u8 mouse_enabled;
+static u8 mouse_packet_index;
+static u8 mouse_packet[3];
+static u8 start_open;
+static u32 mouse_x;
+static u32 mouse_y;
+static u32 mouse_buttons;
 static u32 current_uid = USER_ROOT;
 static const char current_user[] = "root";
 
@@ -145,6 +152,93 @@ static void desktop_render(void) {
     fb_text(width - 155, height - 31, "FADAL64", 0x0097aac8, 1);
 }
 
+static void mouse_wait_input(void) {
+    u32 timeout = 100000;
+    while (timeout-- != 0 && (fadal_inb(KBD_STATUS) & 2) != 0) __asm__ volatile ("pause");
+}
+
+static void mouse_write(u8 value) {
+    mouse_wait_input();
+    fadal_outb(KBD_STATUS, 0xd4);
+    mouse_wait_input();
+    fadal_outb(KBD_DATA, value);
+}
+
+static void mouse_init(void) {
+    u32 timeout = 100000;
+    while (timeout-- != 0 && (fadal_inb(KBD_STATUS) & 1) != 0) (void)fadal_inb(KBD_DATA);
+    mouse_wait_input();
+    fadal_outb(KBD_STATUS, 0xa8);
+    mouse_write(0xf6);
+    mouse_write(0xf4);
+    mouse_enabled = 1;
+    mouse_packet_index = 0;
+    mouse_x = framebuffer->width / 2;
+    mouse_y = framebuffer->height / 2;
+    mouse_buttons = 0;
+}
+
+static void cursor_draw(void) {
+    static const u8 arrow[12] = {1, 3, 7, 15, 31, 63, 127, 255, 127, 71, 3, 1};
+    u32 row;
+    u32 column;
+    for (row = 0; row < 12; row++) {
+        for (column = 0; column < 8; column++) {
+            if ((arrow[row] & (1U << (7 - column))) != 0) {
+                fb_pixel(mouse_x + column, mouse_y + row, 0x00ffffff);
+            }
+        }
+    }
+}
+
+static void desktop_redraw(void) {
+    desktop_render();
+    if (start_open != 0) {
+        fb_fill(26, framebuffer->height - 270, 290, framebuffer->height - 54, 0x001a3155);
+        fb_fill(38, framebuffer->height - 252, 278, framebuffer->height - 208, 0x002d5f9b);
+        fb_fill(38, framebuffer->height - 198, 278, framebuffer->height - 154, 0x00243f6d);
+        fb_fill(38, framebuffer->height - 144, 278, framebuffer->height - 100, 0x00243f6d);
+        fb_text(54, framebuffer->height - 238, "TERMINAL", 0x00ffffff, 2);
+        fb_text(54, framebuffer->height - 184, "FILES", 0x00ffffff, 2);
+        fb_text(54, framebuffer->height - 130, "SYSTEM", 0x00ffffff, 2);
+    }
+    cursor_draw();
+}
+
+static void mouse_poll(void) {
+    u8 value;
+    int dx;
+    int dy;
+    u8 changed = 0;
+    if (mouse_enabled == 0 || (fadal_inb(KBD_STATUS) & 1) == 0) return;
+    value = fadal_inb(KBD_DATA);
+    if (mouse_packet_index == 0 && (value & 8) == 0) return;
+    mouse_packet[mouse_packet_index++] = value;
+    if (mouse_packet_index < 3) return;
+    mouse_packet_index = 0;
+    dx = (int)mouse_packet[1];
+    dy = -(int)mouse_packet[2];
+    if ((mouse_packet[0] & 0x10) != 0) dx -= 256;
+    if ((mouse_packet[0] & 0x20) != 0) dy += 256;
+    if (dx < 0 && mouse_x < (u32)(-dx)) mouse_x = 0;
+    else if (dx > 0 && mouse_x + (u32)dx >= framebuffer->width) mouse_x = framebuffer->width - 1;
+    else mouse_x = (u32)((int)mouse_x + dx);
+    if (dy < 0 && mouse_y < (u32)(-dy)) mouse_y = 0;
+    else if (dy > 0 && mouse_y + (u32)dy >= framebuffer->height) mouse_y = framebuffer->height - 1;
+    else mouse_y = (u32)((int)mouse_y + dy);
+    if ((mouse_packet[0] & 1) != 0 && (mouse_buttons & 1) == 0) {
+        mouse_buttons |= 1;
+        if (mouse_x < 150 && mouse_y > framebuffer->height - 70) {
+            start_open = (u8)!start_open;
+            changed = 1;
+        }
+    } else if ((mouse_packet[0] & 1) == 0) {
+        mouse_buttons &= ~1U;
+    }
+    if (dx != 0 || dy != 0) changed = 1;
+    if (changed) desktop_redraw();
+}
+
 static void serial_init(void) {
     fadal_outb(COM1 + 1, 0x00);
     fadal_outb(COM1 + 3, 0x80);
@@ -243,6 +337,7 @@ static char keyboard_ascii(u8 code) {
 
 static char serial_getc(void) {
     for (;;) {
+        mouse_poll();
         if (serial_ready()) return (char)fadal_inb(COM1);
         if (fadal_inb(KBD_STATUS) & 1) {
             char value = keyboard_ascii(fadal_inb(KBD_DATA));
@@ -321,6 +416,10 @@ void fadal64_entry(fadal_framebuffer *incoming_framebuffer) {
     framebuffer = incoming_framebuffer;
     serial_init();
     desktop_render();
+    if (desktop_mode != 0) {
+        mouse_init();
+        desktop_redraw();
+    }
     for (index = 0; index < sizeof(debug_banner) - 1; index++) fadal_outb(0x402, (u8)debug_banner[index]);
     if (desktop_mode == 0) console_clear();
     console_write("FadalOS 0.1.0 / Fadal64 UEFI\r\n");

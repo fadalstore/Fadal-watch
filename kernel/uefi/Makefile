@@ -98,7 +98,7 @@ $(BOOT_EFI): $(BOOT_SO) | $(OUT)
 		(echo "error: $@ is not a PE32+ x86_64 EFI application" >&2; exit 1)
 
 $(PAYLOAD_OBJ): $(PAYLOAD_C) | $(OUT)
-	$(CC) -O2 -ffreestanding -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables \
+	$(CC) -O2 -ffreestanding -fPIC -fno-stack-protector -fno-asynchronous-unwind-tables \
 		-fno-unwind-tables -mno-red-zone -m64 -Wall -Wextra -Werror -c -o $@ $<
 
 $(PAYLOAD_ELF): $(PAYLOAD_OBJ) $(PAYLOAD_LD) | $(OUT)

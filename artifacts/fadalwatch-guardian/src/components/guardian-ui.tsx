@@ -59,6 +59,7 @@ const navItems = [
   { href: "/alerts", label: "Alerts", icon: Bell },
   { href: "/activity", label: "Activity", icon: ActivityIcon },
   { href: "/coverage", label: "Coverage", icon: Network },
+  { href: "/build-guide", label: "Build guide", icon: FileSearch },
 ];
 
 const cx = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(" ");

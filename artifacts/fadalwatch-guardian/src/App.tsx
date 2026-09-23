@@ -4,6 +4,7 @@ import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
+import BuildGuidePage from '@/pages/build-guide';
 import {
   AppShell,
   ActivityPage,
@@ -35,6 +36,7 @@ function Router() {
           <Route path="/alerts" component={AlertsPage} />
           <Route path="/activity" component={ActivityPage} />
           <Route path="/coverage" component={CoveragePage} />
+          <Route path="/build-guide" component={BuildGuidePage} />
           <Route component={NotFound} />
         </Switch>
       </AppShell>

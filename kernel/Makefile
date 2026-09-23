@@ -21,7 +21,7 @@ CFLAGS := -m32 -ffreestanding -fno-pie -fno-stack-protector -fno-builtin \
 	-Wall -Wextra -Werror -O2 -nostdinc
 LDFLAGS := -m elf_i386 -T linker.ld -nostdlib
 
-.PHONY: all clean check independence run run-vga install uefi-image
+.PHONY: all clean check independence run run-vga install uefi-image phase1b-objects
 
 all: $(OUT)/fadal-kernel.img
 
@@ -37,7 +37,14 @@ $(OUT)/kernel.o: kernel.c fat12.h ata.h ramdisk.h slab.h vfs.h rtl8139.h fnet.h 
 $(OUT)/fat12.o: fat12.c fat12.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+
 $(OUT)/ata.o: ata.c ata.h | $(OUT)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(OUT)/blockdev.o: blockdev.c blockdev.h ata.h | $(OUT)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(OUT)/fadalfs.o: fadalfs.c fadalfs.h blockdev.h ata.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(OUT)/ramdisk.o: ramdisk.c ramdisk.h | $(OUT)
@@ -83,6 +90,9 @@ $(OUT)/interrupts.o: interrupts.S kernel.c | $(OUT)
 
 $(OUT)/kernel.elf: $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/ramfs.o $(OUT)/fscan.o $(OUT)/rtl8139.o $(OUT)/fnet.o $(OUT)/gitpack.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o linker.ld
 	$(LD) $(LDFLAGS) -o $@ $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/ramfs.o $(OUT)/fscan.o $(OUT)/rtl8139.o $(OUT)/fnet.o $(OUT)/gitpack.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o
+
+phase1b-objects: $(OUT)/blockdev.o $(OUT)/fadalfs.o
+	@echo "FadalFS Phase 1B objects compiled: $^"
 
 $(OUT)/kernel.bin: $(OUT)/kernel.elf
 	$(OBJCOPY) -O binary $< $@

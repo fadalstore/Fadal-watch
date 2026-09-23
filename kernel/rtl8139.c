@@ -25,6 +25,7 @@
 #define RXBUF 0x30
 #define RXBUFPTR 0x38
 #define RXBUFADDR 0x44
+#define MEDIASTATUS 0x58
 #define TXCONFIG 0x40
 #define RXCONFIG 0x44
 #define CONFIG9346 0x50
@@ -105,7 +106,8 @@ rtl_u8 rtl8139_probe(void) {
     outl(io_base + TXCONFIG, TX_DMA | TX_RETRY);
     outw(io_base + INTRMASK, IMR_RX_OK | IMR_TX_OK | IMR_RX_ERR | IMR_TX_ERR);
     outb(io_base + CHIPCMD, CMD_RX_ENABLE | CMD_TX_ENABLE);
-    link = (inb(io_base + CONFIG1) & 0x04) == 0 ? 1 : 1;
+    /* RTL8139 names this bit LinkB: zero means link beat is present. */
+    link = (inb(io_base + MEDIASTATUS) & 0x04) == 0;
     return 1;
 }
 rtl_u8 rtl8139_is_present(void) { return present; }
@@ -143,5 +145,4 @@ void rtl8139_interrupt(void) {
     if (status == 0) return;
     outw(io_base + INTRSTATUS, status);
     interrupt_count++;
-    if (status & (IMR_RX_OK | IMR_RX_ERR)) rx_count++;
 }

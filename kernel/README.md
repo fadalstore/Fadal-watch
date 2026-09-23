@@ -191,12 +191,6 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     buffers, acknowledges NIC interrupts, and exposes bounded packet receive
     and transmit operations. The QEMU smoke test boots with a virtual RTL8139
     and verifies discovery at IRQ 11.
-49. The first lower network layer is now present above the NIC. FNet builds
-    Ethernet-II ARP request frames, sends a gateway probe through the RTL8139,
-    and validates the IPv4 header checksum algorithm. This is deliberately a
-    pre-TCP foundation: ARP reply parsing, IPv4 routing, UDP/TCP, DHCP, and
-    TLS/HTTPS remain staged after receive-path validation.
-
 This is the kernel layer, not a complete operating system yet. Filesystem,
 process isolation, userspace, drivers, and a native Alpine-compatible
 userspace are intentionally staged after the bootable foundation. FAT12 write

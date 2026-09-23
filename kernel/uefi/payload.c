@@ -3,6 +3,14 @@ typedef unsigned short u16;
 typedef unsigned int u32;
 typedef unsigned long long u64;
 
+typedef struct {
+    u64 base;
+    u32 width;
+    u32 height;
+    u32 pixels_per_scanline;
+    u32 pixel_format;
+} fadal_framebuffer;
+
 static inline void fadal_outb(u16 port, u8 value) {
     __asm__ volatile ("outb %0, %1" : : "a"(value), "Nd"(port));
 }
@@ -34,8 +42,108 @@ const u8 fadal64_header[32] = {
 
 static u32 vga_row;
 static u32 vga_col;
+static fadal_framebuffer *framebuffer;
+static u8 desktop_mode;
 static u32 current_uid = USER_ROOT;
 static const char current_user[] = "root";
+
+static void fb_pixel(u32 x, u32 y, u32 color) {
+    volatile u32 *pixels;
+    if (desktop_mode == 0 || framebuffer == (fadal_framebuffer *)0 ||
+        x >= framebuffer->width || y >= framebuffer->height) return;
+    pixels = (volatile u32 *)(u64)framebuffer->base;
+    pixels[y * framebuffer->pixels_per_scanline + x] = color;
+}
+
+static void fb_fill(u32 left, u32 top, u32 right, u32 bottom, u32 color) {
+    u32 x;
+    u32 y;
+    if (right > framebuffer->width) right = framebuffer->width;
+    if (bottom > framebuffer->height) bottom = framebuffer->height;
+    for (y = top; y < bottom; y++) {
+        for (x = left; x < right; x++) fb_pixel(x, y, color);
+    }
+}
+
+static u8 glyph_row(char value, u32 row) {
+    static const u8 digits[10][7] = {
+        {14,17,19,21,25,17,14},{4,12,4,4,4,4,14},{14,17,1,2,4,8,31},
+        {30,1,1,14,1,1,30},{2,6,10,18,31,2,2},{31,16,16,30,1,1,30},
+        {14,16,16,30,17,17,14},{31,1,2,4,8,8,8},{14,17,17,14,17,17,14},
+        {14,17,17,15,1,1,14}
+    };
+    static const u8 letters[26][7] = {
+        {14,17,17,31,17,17,17},{30,17,17,30,17,17,30},{14,17,16,16,16,17,14},
+        {30,17,17,17,17,17,30},{31,16,16,30,16,16,31},{31,16,16,30,16,16,16},
+        {14,17,16,23,17,17,15},{17,17,17,31,17,17,17},{14,4,4,4,4,4,14},
+        {1,1,1,1,17,17,14},{17,18,20,24,20,18,17},{16,16,16,16,16,16,31},
+        {17,27,21,21,17,17,17},{17,25,21,19,17,17,17},{14,17,17,17,17,17,14},
+        {30,17,17,30,16,16,16},{14,17,17,17,21,18,13},{30,17,17,30,20,18,17},
+        {15,16,16,14,1,1,30},{31,4,4,4,4,4,4},{17,17,17,17,17,17,14},
+        {17,17,17,17,17,10,4},{17,17,17,21,21,21,10},{17,17,10,4,10,17,17},
+        {17,17,10,4,4,4,4},{31,1,2,4,8,16,31}
+    };
+    if (value >= '0' && value <= '9') return digits[(u32)(value - '0')][row];
+    if (value >= 'a' && value <= 'z') value = (char)(value - 'a' + 'A');
+    if (value >= 'A' && value <= 'Z') return letters[(u32)(value - 'A')][row];
+    if (value == '-') return row == 3 ? 31 : 0;
+    if (value == ':') return (row == 2 || row == 5) ? 4 : 0;
+    if (value == '.') return row == 6 ? 4 : 0;
+    return 0;
+}
+
+static void fb_text(u32 x, u32 y, const char *text, u32 color, u32 scale) {
+    u32 index;
+    u32 row;
+    u32 bit;
+    u32 dx;
+    u32 dy;
+    for (index = 0; text[index] != '\0'; index++) {
+        for (row = 0; row < 7; row++) {
+            for (bit = 0; bit < 5; bit++) {
+                if ((glyph_row(text[index], row) & (1U << (4 - bit))) != 0) {
+                    for (dy = 0; dy < scale; dy++) {
+                        for (dx = 0; dx < scale; dx++) fb_pixel(x + bit * scale + dx,
+                                                                  y + row * scale + dy, color);
+                    }
+                }
+            }
+        }
+        x += 6 * scale;
+    }
+}
+
+static void desktop_render(void) {
+    u32 width;
+    u32 height;
+    if (framebuffer == (fadal_framebuffer *)0 || framebuffer->base == 0 ||
+        framebuffer->width < 640 || framebuffer->height < 400) return;
+    desktop_mode = 1;
+    width = framebuffer->width;
+    height = framebuffer->height;
+    fb_fill(0, 0, width, height, 0x00111b33);
+    fb_fill(0, 0, width, 34, 0x00233b67);
+    fb_fill(0, height - 52, width, height, 0x0015223d);
+    fb_fill(18, 58, width - 18, height - 72, 0x00182745);
+    fb_fill(32, 78, width - 32, height - 92, 0x001c2f52);
+    fb_fill(52, 98, 250, 230, 0x00243f6d);
+    fb_fill(66, 112, 236, 220, 0x002b4d80);
+    fb_fill(270, 98, width - 52, height - 112, 0x000d1528);
+    fb_fill(270, 98, width - 52, 132, 0x001c3154);
+    fb_fill(284, 150, width - 70, height - 132, 0x000a101e);
+    fb_fill(26, height - 43, 126, height - 10, 0x002d5f9b);
+    fb_fill(142, height - 43, 184, height - 10, 0x00243f6d);
+    fb_fill(196, height - 43, 238, height - 10, 0x00243f6d);
+    fb_text(18, 11, "FADAL OS", 0x00ffffff, 2);
+    fb_text(52, 126, "DESKTOP", 0x00d8eaff, 2);
+    fb_text(78, 146, "WELCOME", 0x00ffffff, 2);
+    fb_text(78, 166, "FADAL OS", 0x008dc5ff, 2);
+    fb_text(286, 108, "TERMINAL", 0x00ffffff, 2);
+    fb_text(292, 154, "SYSTEM READY", 0x007ed6a7, 2);
+    fb_text(292, 176, "TYPE HELP FOR COMMANDS", 0x0097aac8, 1);
+    fb_text(38, height - 33, "START", 0x00ffffff, 2);
+    fb_text(width - 155, height - 31, "FADAL64", 0x0097aac8, 1);
+}
 
 static void serial_init(void) {
     fadal_outb(COM1 + 1, 0x00);
@@ -71,6 +179,7 @@ static void serial_putc(char value) {
 }
 
 static void vga_putc(char value) {
+    if (desktop_mode != 0) return;
     if (value == '\r') return;
     if (value == '\n') {
         vga_col = 0;
@@ -202,16 +311,18 @@ static void run_command(char *line) {
 }
 
 __attribute__((section(".text.entry"), used, noreturn))
-void fadal64_entry(void) {
+void fadal64_entry(fadal_framebuffer *incoming_framebuffer) {
     static const char debug_banner[] = "FADALOS_CONSOLE_ENTRY\n";
     char line[LINE_MAX];
     u32 length;
     u32 index;
     u8 suppress_lf = 0;
 
+    framebuffer = incoming_framebuffer;
     serial_init();
+    desktop_render();
     for (index = 0; index < sizeof(debug_banner) - 1; index++) fadal_outb(0x402, (u8)debug_banner[index]);
-    console_clear();
+    if (desktop_mode == 0) console_clear();
     console_write("FadalOS 0.1.0 / Fadal64 UEFI\r\n");
     console_write("persistent home filesystem: pending Phase 1B\r\n");
     console_write("type 'help' for commands\r\n\r\n");

@@ -9,6 +9,11 @@ FadalOS 0.1.0 / Fadal64 UEFI
 fadal:/home/root#
 ```
 
+With the UTM display enabled, the same boot now renders the first FadalOS
+desktop: a blue workspace, `FADAL OS` top bar, desktop welcome card, terminal
+panel, status indicator, and `START` taskbar. The framebuffer is supplied by
+UEFI GOP and drawn directly by the independent Fadal64 payload.
+
 Available Phase 1 console commands are:
 
 ```text

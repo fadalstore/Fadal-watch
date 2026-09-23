@@ -342,6 +342,16 @@ The initial page-fault handler is intentionally fail-closed. It is the
 extension point for demand-zero heap pages, stack growth, and process-specific
 address spaces; it does not yet allocate missing pages automatically.
 
+The UEFI Fadal64 path now discovers the active UEFI GOP mode before
+`ExitBootServices` and passes a validated framebuffer descriptor to the
+freestanding payload. The payload renders a first native graphical desktop:
+dark blue workspace, top bar, desktop card, terminal panel, status text, and a
+taskbar. It remains independent of Linux, X11, Wayland, or a userspace GUI
+library. Serial Terminal input and the emulated PS/2 keyboard remain available
+while the framebuffer is active. This is the graphical shell foundation, not
+yet a complete window manager: mouse packets, damage tracking, persistent
+desktop applications, and a compositing process are the next GUI milestones.
+
 ## Design boundary
 
 Fadal Kernel is independent from Linux and Ubuntu. Alpine Linux can later be

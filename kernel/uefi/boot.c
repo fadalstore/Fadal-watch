@@ -13,7 +13,15 @@ typedef struct {
     UINT64 entry_offset;
 } FADAL_UEFI_HEADER;
 
-typedef void (*FADAL_UEFI_ENTRY)(VOID);
+typedef struct {
+    UINT64 base;
+    UINT32 width;
+    UINT32 height;
+    UINT32 pixels_per_scanline;
+    UINT32 pixel_format;
+} FADAL_FRAMEBUFFER;
+
+typedef void (*FADAL_UEFI_ENTRY)(FADAL_FRAMEBUFFER *);
 
 static void debug_marker(const char *text) {
     while (*text != '\0') {
@@ -107,9 +115,31 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
     UINT32 descriptor_version = 0;
     EFI_MEMORY_DESCRIPTOR *memory_map = NULL;
     FADAL_UEFI_ENTRY entry;
+    EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
+    FADAL_FRAMEBUFFER framebuffer;
 
     InitializeLib(image, system_table);
     Print(L"Fadal UEFI loader\r\n");
+
+    framebuffer.base = 0;
+    framebuffer.width = 0;
+    framebuffer.height = 0;
+    framebuffer.pixels_per_scanline = 0;
+    framebuffer.pixel_format = 0xffffffffU;
+    status = uefi_call_wrapper(BS->LocateProtocol, 3,
+                               &gEfiGraphicsOutputProtocolGuid, NULL,
+                               (VOID **)&gop);
+    if (!EFI_ERROR(status) && gop != NULL && gop->Mode != NULL &&
+        gop->Mode->Info != NULL) {
+        framebuffer.base = gop->Mode->FrameBufferBase;
+        framebuffer.width = gop->Mode->Info->HorizontalResolution;
+        framebuffer.height = gop->Mode->Info->VerticalResolution;
+        framebuffer.pixels_per_scanline = gop->Mode->Info->PixelsPerScanLine;
+        framebuffer.pixel_format = gop->Mode->Info->PixelFormat;
+        Print(L"GOP framebuffer %ux%u\r\n", framebuffer.width, framebuffer.height);
+    } else {
+        Print(L"GOP framebuffer unavailable; text fallback\r\n");
+    }
 
     status = uefi_call_wrapper(BS->HandleProtocol, 3, image,
                                &gEfiLoadedImageProtocolGuid,
@@ -171,6 +201,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
 
     debug_marker("AFTER_EBS\n");
     entry = (FADAL_UEFI_ENTRY)((UINT8 *)payload + entry_offset);
-    entry();
+    entry(&framebuffer);
     return EFI_SUCCESS;
 }

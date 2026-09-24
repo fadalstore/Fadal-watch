@@ -37,7 +37,7 @@ case "${1:-info}" in
         ;;
     tools)
         command -v pkg >/dev/null 2>&1 || { say "pkg is only available inside Termux"; exit 1; }
-        exec pkg install -y curl coreutils git make clang qemu-system-x86-64
+        exec pkg install -y curl coreutils git make clang ripgrep qemu-system-x86-64
         ;;
     build)
         command -v git >/dev/null 2>&1 || { say "git is required; run: pkg install git"; exit 1; }

@@ -15,6 +15,11 @@ cd Fadal-watch
 scripts/validate-repo.sh
 ```
 
+If QEMU is not installed yet, the validator automatically performs the
+freestanding compile and independence checks and prints the exact package
+command needed for the full smoke test. Use `scripts/validate-repo.sh
+--require-qemu` when a missing emulator must be treated as an error.
+
 The canonical bootstrap command is:
 
 ```sh

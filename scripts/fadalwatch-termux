@@ -33,7 +33,15 @@ case "${1:-info}" in
             exit 1
         }
         shift
-        exec "$QEMU" -m 64 -drive format=raw,file="$IMAGE" -serial stdio -no-reboot -no-shutdown "$@"
+        NETWORK_ARGS=()
+        if [ "${FADALWATCH_NETWORK:-1}" != "0" ]; then
+            NETWORK_ARGS=(-netdev user,id=fadalnet -device rtl8139,netdev=fadalnet)
+            say "RTL8139 user-network enabled"
+        else
+            say "network disabled by FADALWATCH_NETWORK=0"
+        fi
+        exec "$QEMU" -m 64 -drive format=raw,file="$IMAGE" \
+            "${NETWORK_ARGS[@]}" -serial stdio -no-reboot -no-shutdown "$@"
         ;;
     tools)
         command -v pkg >/dev/null 2>&1 || { say "pkg is only available inside Termux"; exit 1; }

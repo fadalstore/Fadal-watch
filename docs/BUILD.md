@@ -72,6 +72,33 @@ fadalwatch run
 
 `fadalwatch build` operates on `$FADALWATCH_SOURCE` when set, or `$HOME/Fadal-watch` by default. The guest remains an x86 BIOS image and is emulated by QEMU on Android.
 
+## Network and RTL8139 testing
+
+`fadalwatch run` attaches the same virtual network used by the kernel smoke test:
+
+```sh
+-netdev user,id=fadalnet -device rtl8139,netdev=fadalnet
+```
+
+The QEMU user network performs NAT on behalf of the guest. It does not bridge
+the Android Wi-Fi adapter into FadalOS. The kernel should still detect the
+RTL8139 through PCI, initialize RX/TX DMA, and report the Ethernet-II, ARP, and
+IPv4 foundation checks. The current guest does not yet provide a complete DHCP,
+DNS, TLS, or Git smart-HTTP client, so this is a driver and protocol test rather
+than a promise of general Internet access.
+
+To disable the emulated NIC for a comparison boot:
+
+```sh
+FADALWATCH_NETWORK=0 fadalwatch run
+```
+
+For a source-tree smoke test, use the equivalent canonical command:
+
+```sh
+make -C kernel QEMU=qemu-system-i386 check
+```
+
 ## Artifacts
 
 Build output belongs in `kernel/out` and `kernel/uefi/out`. Release-like copies belong in `artifacts`. Generated output should not be hand-edited or committed unless it is an explicitly versioned distribution artifact. Use the repository scripts to regenerate images.

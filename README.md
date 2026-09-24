@@ -92,6 +92,23 @@ The BIOS image can then be started from Termux with:
 fadalwatch run
 ```
 
+The launcher attaches a QEMU `rtl8139` PCI device to QEMU user networking by
+default. During boot, FadalOS should report the RTL8139 discovery and Ethernet,
+ARP, and IPv4 foundation checks. The Termux host does not expose its physical
+Wi-Fi adapter directly to the guest; QEMU provides a user-mode NAT boundary.
+Set `FADALWATCH_NETWORK=0` to boot without the virtual NIC.
+
+```sh
+fadalwatch run
+FADALWATCH_NETWORK=0 fadalwatch run
+```
+
+The current FadalOS network layer validates NIC discovery, RX/TX DMA setup,
+Ethernet-II, ARP, IPv4 checksums, UDP/TCP prototypes, and loopback boundaries.
+It is not yet a complete HTTPS client, DHCP client, or native Git smart-HTTP
+implementation. Therefore successful RTL8139 detection does not by itself
+promise Internet access from the FadalOS shell.
+
 The launcher also provides `fadalwatch build` for cloning and building the
 kernel source, `fadalwatch update` for refreshing the installation, and
 `fadalwatch uninstall` for removing it. The Android device must have enough

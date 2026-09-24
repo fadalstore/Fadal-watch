@@ -39,6 +39,37 @@ bash /tmp/install-fadalwatch.sh "$HOME/FadalWatch"
 
 The installer uses `FADALWATCH_TOKEN` with `curl` or `wget` against the GitHub Contents API. `GH_TOKEN` is also accepted. Do not share the token or commit it to a file.
 
+## Install directly in Termux
+
+FadalWatch has a dedicated Termux installer. It stores the runtime under
+`$PREFIX/opt/fadalwatch`, installs a `fadalwatch` launcher in `$PREFIX/bin`,
+downloads the verified BIOS image, and does not require root access:
+
+```sh
+pkg update
+pkg install curl coreutils
+curl -fsSL https://raw.githubusercontent.com/fadalstore/Fadal-watch/main/scripts/install-fadalwatch-termux.sh | bash
+fadalwatch info
+```
+
+Install the optional Termux build and emulation tools with:
+
+```sh
+fadalwatch tools
+```
+
+The BIOS image can then be started from Termux with:
+
+```sh
+fadalwatch run
+```
+
+The launcher also provides `fadalwatch build` for cloning and building the
+kernel source, `fadalwatch update` for refreshing the installation, and
+`fadalwatch uninstall` for removing it. The Android device must have enough
+storage for QEMU and the source tree; FadalOS itself remains an x86 BIOS guest
+and is emulated by QEMU rather than executed as an Android kernel.
+
 If the repository is made public later, the installer can also be fetched directly:
 
 ```sh

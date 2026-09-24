@@ -1,0 +1,80 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -euo pipefail
+
+PREFIX_DIR="${PREFIX:-/data/data/com.termux/files/usr}"
+ROOT="${FADALWATCH_DIR:-${PREFIX_DIR}/opt/fadalwatch}"
+IMAGE="$ROOT/images/fadal-kernel.img"
+
+say() { printf 'fadalwatch: %s\n' "$*"; }
+need_image() { [ -s "$IMAGE" ] || { say "BIOS image is missing: $IMAGE"; exit 1; }; }
+
+case "${1:-info}" in
+    info)
+        printf 'FadalWatch Termux\n'
+        printf 'root:  %s\n' "$ROOT"
+        printf 'image: %s\n' "$IMAGE"
+        if [ -s "$IMAGE" ]; then
+            if command -v sha256sum >/dev/null 2>&1; then
+                printf 'sha256: %s\n' "$(sha256sum "$IMAGE" | awk '{print $1}')"
+            fi
+            printf 'status: installed\n'
+        else
+            printf 'status: incomplete\n'
+            exit 1
+        fi
+        ;;
+    run)
+        need_image
+        QEMU=""
+        if command -v qemu-system-i386 >/dev/null 2>&1; then QEMU="$(command -v qemu-system-i386)"; fi
+        if [ -z "$QEMU" ] && command -v qemu-system-x86_64 >/dev/null 2>&1; then QEMU="$(command -v qemu-system-x86_64)"; fi
+        [ -n "$QEMU" ] || {
+            say "QEMU is not installed; run: fadalwatch tools"
+            exit 1
+        }
+        shift
+        exec "$QEMU" -m 64 -drive format=raw,file="$IMAGE" -serial stdio -no-reboot -no-shutdown "$@"
+        ;;
+    tools)
+        command -v pkg >/dev/null 2>&1 || { say "pkg is only available inside Termux"; exit 1; }
+        exec pkg install -y curl coreutils git make clang qemu-system-x86-64
+        ;;
+    build)
+        command -v git >/dev/null 2>&1 || { say "git is required; run: pkg install git"; exit 1; }
+        command -v make >/dev/null 2>&1 || { say "make is required; run: pkg install make"; exit 1; }
+        SRC="${FADALWATCH_SOURCE:-$HOME/Fadal-watch}"
+        [ -d "$SRC/.git" ] || git clone --depth 1 "https://github.com/fadalstore/Fadal-watch.git" "$SRC"
+        exec make -C "$SRC/kernel" "$@"
+        ;;
+    update)
+        command -v curl >/dev/null 2>&1 || { say "curl is required; run: pkg install curl"; exit 1; }
+        exec bash -c 'curl -fsSL https://raw.githubusercontent.com/fadalstore/Fadal-watch/main/scripts/install-fadalwatch-termux.sh | bash'
+        ;;
+    uninstall)
+        rm -f "${PREFIX_DIR}/bin/fadalwatch"
+        rm -rf "$ROOT"
+        say "removed Termux installation"
+        ;;
+    help|-h|--help)
+        cat <<'HELP'
+Usage: fadalwatch <command>
+
+Commands:
+  info       show installation and image checksum
+  run        boot the FadalOS BIOS image in QEMU
+  tools      install Termux build/runtime dependencies
+  build      clone/build the source tree with Termux tools
+  update     refresh the installed launcher and image
+  uninstall  remove the Termux installation
+HELP
+        ;;
+    install)
+        say "re-run the installer to update:"
+        printf '  curl -fsSL https://raw.githubusercontent.com/fadalstore/Fadal-watch/main/scripts/install-fadalwatch-termux.sh | bash\n'
+        ;;
+    *)
+        say "unknown command: $1"
+        "$0" help
+        exit 2
+        ;;
+esac

@@ -99,6 +99,18 @@ For a source-tree smoke test, use the equivalent canonical command:
 make -C kernel QEMU=qemu-system-i386 check
 ```
 
+For only the network path, use the Termux launcher diagnostic:
+
+```sh
+fadalwatch netcheck
+```
+
+It boots the verified image with an RTL8139 device, records the serial output
+for eight seconds, and checks these three milestones: PCI/DMA initialization,
+the ARP parser/cache self-test, and IPv4 receive/next-hop routing. The command
+does not prove that the guest can browse the Internet; it verifies the native
+driver and protocol foundation currently implemented by FadalOS.
+
 ## Artifacts
 
 Build output belongs in `kernel/out` and `kernel/uefi/out`. Release-like copies belong in `artifacts`. Generated output should not be hand-edited or committed unless it is an explicitly versioned distribution artifact. Use the repository scripts to regenerate images.

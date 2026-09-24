@@ -43,6 +43,40 @@ case "${1:-info}" in
         exec "$QEMU" -m 64 -drive format=raw,file="$IMAGE" \
             "${NETWORK_ARGS[@]}" -serial stdio -no-reboot -no-shutdown "$@"
         ;;
+    netcheck)
+        need_image
+        command -v timeout >/dev/null 2>&1 || {
+            say "timeout is required; run: pkg install coreutils"
+            exit 1
+        }
+        QEMU=""
+        if command -v qemu-system-i386 >/dev/null 2>&1; then QEMU="$(command -v qemu-system-i386)"; fi
+        if [ -z "$QEMU" ] && command -v qemu-system-x86_64 >/dev/null 2>&1; then QEMU="$(command -v qemu-system-x86_64)"; fi
+        [ -n "$QEMU" ] || { say "QEMU is not installed; run: fadalwatch tools"; exit 1; }
+        LOG="$(mktemp "${TMPDIR:-/tmp}/fadalwatch-netcheck.XXXXXX")"
+        trap 'rm -f "$LOG"' EXIT
+        say "booting RTL8139 network diagnostic"
+        timeout 8s "$QEMU" -m 64 -drive format=raw,file="$IMAGE" \
+            -netdev user,id=fadalnet -device rtl8139,netdev=fadalnet \
+            -serial "file:$LOG" -display none -no-reboot -no-shutdown \
+            >/dev/null 2>&1 || test $? -eq 124
+        grep -q "RTL8139 PCI NIC detected; RX/TX DMA online" "$LOG" || {
+            say "FAIL: RTL8139 PCI/DMA initialization was not reported"
+            cat "$LOG"
+            exit 1
+        }
+        grep -q "ARP reply parser and cache self-test passed" "$LOG" || {
+            say "FAIL: ARP parser/cache self-test was not reported"
+            cat "$LOG"
+            exit 1
+        }
+        grep -q "IPv4 receive and next-hop routing self-test passed" "$LOG" || {
+            say "FAIL: IPv4 receive/routing self-test was not reported"
+            cat "$LOG"
+            exit 1
+        }
+        say "PASS: RTL8139, ARP, and IPv4 routing self-tests passed"
+        ;;
     tools)
         command -v pkg >/dev/null 2>&1 || { say "pkg is only available inside Termux"; exit 1; }
         exec pkg install -y curl coreutils git make clang ripgrep qemu-system-x86-64
@@ -70,6 +104,7 @@ Usage: fadalwatch <command>
 Commands:
   info       show installation and image checksum
   run        boot the FadalOS BIOS image in QEMU
+  netcheck   verify RTL8139, ARP, and IPv4 routing boot self-tests
   tools      install Termux build/runtime dependencies
   build      clone/build the source tree with Termux tools
   update     refresh the installed launcher and image

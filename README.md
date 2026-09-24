@@ -109,6 +109,16 @@ It is not yet a complete HTTPS client, DHCP client, or native Git smart-HTTP
 implementation. Therefore successful RTL8139 detection does not by itself
 promise Internet access from the FadalOS shell.
 
+Run the focused network diagnostic with:
+
+```sh
+fadalwatch netcheck
+```
+
+The command boots a short-lived QEMU instance, captures the serial trace, and
+fails unless RTL8139 initialization, the ARP parser/cache self-test, and the
+IPv4 next-hop routing self-test are all reported.
+
 The launcher also provides `fadalwatch build` for cloning and building the
 kernel source, `fadalwatch update` for refreshing the installation, and
 `fadalwatch uninstall` for removing it. The Android device must have enough

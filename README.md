@@ -2,6 +2,29 @@
 
 FadalWatch contains the Fadal Kernel BIOS image, Fadal64 UEFI loader/payload, UTM iOS package, and native iOS source.
 
+## Continue development from a clean checkout
+
+The repository is organized so that another engineer or AI agent can continue
+without reconstructing the project history. Read [AI_HANDOFF.md](AI_HANDOFF.md)
+first, then consult [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
+[docs/BUILD.md](docs/BUILD.md).
+
+```sh
+git clone https://github.com/fadalstore/Fadal-watch.git
+cd Fadal-watch
+scripts/validate-repo.sh
+```
+
+The canonical bootstrap command is:
+
+```sh
+scripts/bootstrap-fadalwatch.sh
+```
+
+Use `scripts/bootstrap-fadalwatch.sh --uefi` when GNU-EFI is installed and the
+UEFI image should also be regenerated. Use `scripts/validate-repo.sh --uefi`
+for the narrower UEFI validation path.
+
 ## Download from any terminal
 
 The repository is public, so the simplest terminal workflow requires only `curl` and `bash`:

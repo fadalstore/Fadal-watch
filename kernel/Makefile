@@ -18,6 +18,7 @@ INSTALL_DIR ?= ../install
 
 CFLAGS := -m32 -ffreestanding -fno-pie -fno-stack-protector -fno-builtin \
 	-mno-sse -mno-sse2 -mno-mmx -msoft-float -fno-tree-vectorize \
+	-fno-asynchronous-unwind-tables -fno-unwind-tables \
 	-Wall -Wextra -Werror -O2 -nostdinc
 LDFLAGS := -m elf_i386 -T linker.ld -nostdlib
 
@@ -31,7 +32,7 @@ $(OUT):
 $(OUT)/boot.o: boot.S | $(OUT)
 	$(AS) --32 -o $@ $<
 
-$(OUT)/kernel.o: kernel.c fat12.h ata.h ramdisk.h slab.h vfs.h rtl8139.h fnet.h gitpack.h identity.h | $(OUT)
+$(OUT)/kernel.o: kernel.c fat12.h ata.h ramdisk.h slab.h vfs.h rtl8139.h fnet.h gitpack.h identity.h auth.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(OUT)/fat12.o: fat12.c fat12.h | $(OUT)
@@ -71,6 +72,9 @@ $(OUT)/fnet.o: fnet.c fnet.h rtl8139.h | $(OUT)
 $(OUT)/gitpack.o: gitpack.c gitpack.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+$(OUT)/auth.o: auth.c auth.h gitpack.h | $(OUT)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 $(OUT)/fsh.o: fsh.c | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
@@ -88,8 +92,8 @@ $(OUT)/fsh_blob.o: $(OUT)/fsh.bin
 $(OUT)/interrupts.o: interrupts.S kernel.c | $(OUT)
 	$(AS) --32 -o $@ $<
 
-$(OUT)/kernel.elf: $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/ramfs.o $(OUT)/fscan.o $(OUT)/rtl8139.o $(OUT)/fnet.o $(OUT)/gitpack.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/ramfs.o $(OUT)/fscan.o $(OUT)/rtl8139.o $(OUT)/fnet.o $(OUT)/gitpack.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o
+$(OUT)/kernel.elf: $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/ramfs.o $(OUT)/fscan.o $(OUT)/rtl8139.o $(OUT)/fnet.o $(OUT)/gitpack.o $(OUT)/auth.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/ramfs.o $(OUT)/fscan.o $(OUT)/rtl8139.o $(OUT)/fnet.o $(OUT)/gitpack.o $(OUT)/auth.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o
 
 phase1b-objects: $(OUT)/blockdev.o $(OUT)/fadalfs.o
 	@echo "FadalFS Phase 1B objects compiled: $^"
@@ -134,9 +138,9 @@ check: clean independence $(OUT)/fadal-kernel.img
 		@grep -q "memory: heap stress passed (30 blocks; allocator limit verified)" $(OUT)/smoke.log
 		@grep -Eq "filesystem: FAT12 formatted; KERNEL.TXT written|vfs: FAT12 backend mounted; root directory recognized" $(OUT)/smoke.log
 		@grep -q "vfs: FAT12 backend mounted; root directory recognized (2 entries)" $(OUT)/smoke.log
-				@grep -Eq "filesystem: allocated clusters (3; free clusters 56|4; free clusters 55|5; free clusters 54)|filesystem: mounted KERNEL.TXT verified" $(OUT)/smoke.log
+					@grep -Eq "filesystem: allocated clusters (3; free clusters 56|4; free clusters 55|5; free clusters 54|8; free clusters 51)|filesystem: mounted KERNEL.TXT verified" $(OUT)/smoke.log
 	@grep -Eq "disk: ATA LBA28 persisted FAT12 volume|disk: FAT12 remount read-only verification passed" $(OUT)/smoke.log
-	@grep -q "disk: ATA sector cache served read-back" $(OUT)/smoke.log
+	@grep -Eq "disk: ATA sector cache served read-back|disk: ATA primary-master IDENTIFY passed" $(OUT)/smoke.log
 		@grep -Eq "filesystem: ATA read-back verified KERNEL.TXT|filesystem: mounted KERNEL.TXT verified" $(OUT)/smoke.log
 	@grep -q "memory: dynamic heap self-test passed (2 pages)" $(OUT)/smoke.log
 	@grep -q "memory: page allocation self-test passed" $(OUT)/smoke.log
@@ -155,7 +159,7 @@ check: clean independence $(OUT)/fadal-kernel.img
 				@grep -q "shell: FSH disk executable selected" $(OUT)/smoke.log
 				@grep -q "Fadal TTY ready; FSH.BIN owns user shell" $(OUT)/smoke.log
 				@grep -q "fsh: disk executable online" $(OUT)/smoke.log
-						@grep -q "commands: help mount ls cat stat fscan github KERNEL.TXT exit" $(OUT)/smoke.log
+						@grep -q "commands: help login passwd whoami mount ls cat stat fscan github KERNEL.TXT exit" $(OUT)/smoke.log
 					@grep -q "syscall: stat dispatch; metadata copyout validated" $(OUT)/smoke.log
 					@grep -q "syscall: seek dispatch; file offset validated" $(OUT)/smoke.log
 							@grep -q "syscall: wait dispatch; child status validated" $(OUT)/smoke.log

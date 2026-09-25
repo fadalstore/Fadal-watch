@@ -31,6 +31,10 @@ typedef unsigned int u32;
 #define SYSCALL_SEEK 11
 #define SYSCALL_WAIT 12
 #define SYSCALL_LISTDIR 27
+#define SYSCALL_LOGIN 31
+#define SYSCALL_CHANGE_PASSWORD 32
+#define SYSCALL_GET_ROLE 33
+#define SYSCALL_SET_TTY_ECHO 34
 
 static u32 fsh_syscall3(u32 number, u32 first, u32 second, u32 third) {
     u32 result;
@@ -38,6 +42,15 @@ static u32 fsh_syscall3(u32 number, u32 first, u32 second, u32 third) {
         "int $0x80"
         : "=a"(result)
         : "a"(number), "b"(first), "c"(second), "d"(third)
+        : "memory");
+    return result;
+}
+static u32 fsh_syscall4(u32 number, u32 first, u32 second, u32 third, u32 fourth) {
+    u32 result;
+    __asm__ volatile (
+        "int $0x80"
+        : "=a"(result)
+        : "a"(number), "b"(first), "c"(second), "d"(third), "S"(fourth)
         : "memory");
     return result;
 }
@@ -70,6 +83,12 @@ static void fsh_write(const char *text) {
 static void fsh_write_bytes(const char *text, u32 length) {
     fsh_syscall3(SYSCALL_WRITE, (u32)text, length, 1);
 }
+static u32 fsh_copy_line(char *destination, u32 capacity, const char *source, u32 length) {
+    if (length >= capacity) return 0;
+    for (u32 index = 0; index < length; index++) destination[index] = source[index];
+    destination[length] = '\0';
+    return length;
+}
 
 static void fsh_stat_kernel(void) {
     static const char path[] = "KERNEL.TXT";
@@ -97,12 +116,49 @@ static u32 fsh_list_root(char *output, u32 capacity) {
 }
 
 static void fsh_command(const char *line, u32 length) {
-    static const char help[] = "commands: help mount ls cat stat fscan github KERNEL.TXT exit\n";
+    static const char help[] = "commands: help login passwd whoami mount ls cat stat fscan github KERNEL.TXT exit\n";
     static const char mounted[] = "FAT12 root mounted through VFS\n";
     static const char unknown[] = "unknown command; try help\n";
     static const char github[] = "GitHub: https://github.com/fadalstore/Fadal-watch\nHost terminal: gh repo clone fadalstore/Fadal-watch\n";
     static const char fscan_passed[] = "FScan: VFS, FAT12, RAMFS, and loopback boundary passed\n";
     static const char fscan_failed[] = "FScan: security audit reported an integrity issue\n";
+    static u32 auth_stage;
+    static char login_user[8];
+    static char old_password[32];
+    if (auth_stage == 1) {
+        if (fsh_equal(line, length, "root") || fsh_equal(line, length, "user")) {
+            fsh_copy_line(login_user, sizeof(login_user), line, length);
+            auth_stage = 2;
+            fsh_syscall3(SYSCALL_SET_TTY_ECHO, 0, 0, 0);
+            fsh_write("password: ");
+        } else {
+            auth_stage = 0;
+            fsh_write("login: unknown user\n");
+        }
+        return;
+    }
+    if (auth_stage == 2) {
+        fsh_syscall3(SYSCALL_SET_TTY_ECHO, 1, 0, 0);
+        fsh_write(fsh_syscall4(SYSCALL_LOGIN, (u32)login_user, fsh_length(login_user),
+                               (u32)line, length) ? "login: authenticated\n" : "login: failed\n");
+        auth_stage = 0;
+        return;
+    }
+    if (auth_stage == 3) {
+        if (!fsh_copy_line(old_password, sizeof(old_password), line, length)) {
+            fsh_write("passwd: password too long\n"); auth_stage = 0; return;
+        }
+        auth_stage = 4;
+        fsh_write("new password: ");
+        return;
+    }
+    if (auth_stage == 4) {
+        fsh_syscall3(SYSCALL_SET_TTY_ECHO, 1, 0, 0);
+        fsh_write(fsh_syscall4(SYSCALL_CHANGE_PASSWORD, (u32)old_password, fsh_length(old_password),
+                               (u32)line, length) ? "password: changed\n" : "password: change failed\n");
+        auth_stage = 0;
+        return;
+    }
     if (fsh_equal(line, length, "help")) {
         fsh_write(help);
     } else if (fsh_equal(line, length, "mount")) {
@@ -130,6 +186,19 @@ static void fsh_command(const char *line, u32 length) {
             fscan_passed : fscan_failed);
     } else if (fsh_equal(line, length, "github")) {
         fsh_write(github);
+    } else if (fsh_equal(line, length, "login")) {
+        auth_stage = 1;
+        fsh_write("login: username: ");
+    } else if (fsh_equal(line, length, "whoami")) {
+        fsh_write(fsh_syscall3(SYSCALL_GET_ROLE, 0, 0, 0) == 2 ? "root\n" : "user\n");
+    } else if (fsh_equal(line, length, "passwd")) {
+        if (fsh_syscall3(SYSCALL_GET_ROLE, 0, 0, 0) == 0) {
+            fsh_write("passwd: login required\n");
+        } else {
+            auth_stage = 3;
+            fsh_syscall3(SYSCALL_SET_TTY_ECHO, 0, 0, 0);
+            fsh_write("old password: ");
+        }
     } else if (!fsh_equal(line, length, "exit")) {
         fsh_write(unknown);
     }
@@ -138,7 +207,8 @@ static void fsh_command(const char *line, u32 length) {
 __attribute__((section(".text.entry"), used, noreturn))
 void fsh_entry(void) {
     static const char banner[] = "fsh: disk executable online\n";
-    static const char prompt[] = "fadal> ";
+    static const char user_prompt[] = "fadal$ ";
+    static const char root_prompt[] = "fadal# ";
     static const char path[] = "KERNEL.TXT";
     static char input[64];
     u8 prompt_pending = 1;
@@ -165,7 +235,7 @@ void fsh_entry(void) {
     fsh_syscall3(SYSCALL_GET_RING, 0, 0, 0);
     fsh_syscall3(SYSCALL_GET_DEVICE, 0, 0, 0);
     fsh_syscall3(SYSCALL_SET_PRIORITY, 2, 0, 0);
-    fsh_syscall3(SYSCALL_NET_LOOPBACK, (u32)prompt, 6, 0);
+    fsh_syscall3(SYSCALL_NET_LOOPBACK, (u32)user_prompt, 7, 0);
     fsh_syscall3(SYSCALL_NET_LOOPBACK, (u32)input, sizeof(input), 1);
     fsh_syscall3(SYSCALL_GET_CPUS, 0, 0, 0);
     fsh_syscall3(SYSCALL_GET_IPI, 0, 0, 0);
@@ -178,7 +248,7 @@ void fsh_entry(void) {
     fsh_syscall3(SYSCALL_MMAP, 32, 0, 0);
     for (;;) {
         if (prompt_pending) {
-            fsh_write(prompt);
+            fsh_write(fsh_syscall3(SYSCALL_GET_ROLE, 0, 0, 0) == 2 ? root_prompt : user_prompt);
             prompt_pending = 0;
         }
         u32 count = fsh_syscall3(SYSCALL_READ, (u32)input, sizeof(input) - 1, 0);

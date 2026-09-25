@@ -9,6 +9,7 @@
 #include "fnet.h"
 #include "gitpack.h"
 #include "identity.h"
+#include "auth.h"
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -75,6 +76,10 @@ typedef unsigned int u32;
 #define SYSCALL_GETUID 28
 #define SYSCALL_GETGID 29
 #define SYSCALL_GETCAPS 30
+#define SYSCALL_LOGIN 31
+#define SYSCALL_CHANGE_PASSWORD 32
+#define SYSCALL_GET_ROLE 33
+#define SYSCALL_SET_TTY_ECHO 34
 #define LAPIC_BASE 0xfee00000
 #define MAX_PROCESSES 8
 #define PROCESS_UNUSED 0
@@ -96,6 +101,7 @@ static volatile char tty_buffer[TTY_BUFFER_SIZE];
 static volatile u32 tty_read_index;
 static volatile u32 tty_write_index;
 static volatile u32 tty_count;
+static volatile u8 tty_echo_enabled = 1;
 static volatile u32 timer_ticks;
 static volatile u32 syscall_count;
 static volatile u8 syscall_reported;
@@ -1743,8 +1749,10 @@ static void keyboard_handle(u8 scancode) {
     }
     if (scancode == 0x0e) {
         tty_enqueue('\b');
-        vga_putc('\b');
-        serial_putc('\b');
+        if (tty_echo_enabled) {
+            vga_putc('\b');
+            serial_putc('\b');
+        }
         return;
     }
 
@@ -1756,8 +1764,10 @@ static void keyboard_handle(u8 scancode) {
         value = (char)(value - 'a' + 'A');
     }
     tty_enqueue(value);
-    vga_putc(value);
-    serial_putc(value);
+    if (tty_echo_enabled) {
+        vga_putc(value);
+        serial_putc(value);
+    }
 }
 
 static void shell_init(void) {
@@ -2081,6 +2091,21 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
             listdir_reported = 1;
             serial_write("syscall: listdir dispatch; VFS root enumerated\n");
         }
+    } else if (frame->eax == SYSCALL_LOGIN) {
+        frame->eax = user_range_valid(frame->ebx, frame->ecx) &&
+            user_range_valid(frame->edx, frame->esi) ?
+            auth_login((const u8 *)frame->ebx, frame->ecx,
+                       (const u8 *)frame->edx, frame->esi) : AUTH_NONE;
+    } else if (frame->eax == SYSCALL_CHANGE_PASSWORD) {
+        frame->eax = user_range_valid(frame->ebx, frame->ecx) &&
+            user_range_valid(frame->edx, frame->esi) ?
+            auth_change_password(auth_role(), (const u8 *)frame->ebx, frame->ecx,
+                                 (const u8 *)frame->edx, frame->esi) : 0;
+    } else if (frame->eax == SYSCALL_GET_ROLE) {
+        frame->eax = auth_role();
+    } else if (frame->eax == SYSCALL_SET_TTY_ECHO) {
+        tty_echo_enabled = frame->ebx ? 1 : 0;
+        frame->eax = 0;
     } else {
         frame->eax = 0xffffffff;
     }
@@ -2090,6 +2115,7 @@ __attribute__((section(".text.entry"), used))
 void kernel_main(void) {
     serial_init();
     vga_clear();
+    auth_init();
     kernel_log(1, "structured logging online\n");
 
     kernel_write("FADAL KERNEL ONLINE\n");
@@ -2097,6 +2123,7 @@ void kernel_main(void) {
     kernel_write("mode: 32-bit protected mode\n");
     kernel_write("origin: from-scratch, no Linux dependency\n");
     kernel_write("status: boot path verified\n");
+    kernel_write("terminal: FSH login, root role, password change, and hidden echo online\n");
     memory_init();
     smp_probe();
     smp_startup_prepare();

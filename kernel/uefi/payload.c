@@ -20,6 +20,9 @@ static inline u8 fadal_inb(u16 port) {
     __asm__ volatile ("inb %1, %0" : "=a"(value) : "Nd"(port));
     return value;
 }
+static inline void fadal_outw(u16 port, u16 value) {
+    __asm__ volatile ("outw %0, %1" : : "a"(value), "Nd"(port));
+}
 
 __attribute__((section(".fadal_header"), used))
 const u8 fadal64_header[32] = {
@@ -346,6 +349,16 @@ static int f_starts(const char *text, const char *prefix) {
     }
     return 1;
 }
+static void fadal_restart(void) {
+    fadal_outb(0x64, 0xfe);
+    fadal_outb(0xcf9, 0x06);
+    for (;;) __asm__ volatile ("hlt");
+}
+static void fadal_shutdown(void) {
+    fadal_outw(0x604, 0x2000);
+    fadal_outw(0xb004, 0x2000);
+    for (;;) __asm__ volatile ("hlt");
+}
 
 static void serial_putc(char value) {
     while ((fadal_inb(COM1 + 5) & 0x20) == 0) __asm__ volatile ("pause");
@@ -451,7 +464,7 @@ static void print_uid(void) {
 static void run_command(char *line) {
     if (line[0] == '\0') return;
     if (f_streq(line, "help")) {
-        console_write("commands: help clear pwd ls cd cat whoami id uname fscan user exit\r\n");
+        console_write("commands: help clear pwd ls cd cat whoami id uname fscan user drivers net restart reboot shutdown poweroff exit\r\n");
     } else if (f_streq(line, "clear")) {
         console_clear();
     } else if (f_streq(line, "pwd")) {
@@ -460,12 +473,19 @@ static void run_command(char *line) {
         console_write("README  motd  .profile\r\n");
     } else if (f_streq(line, "ls /")) {
         console_write("bin  dev  etc  home  ram  tmp\r\n");
+    } else if (f_streq(line, "ls /etc")) {
+        console_write("fadal-release  motd  dictionary  (read-only)\r\n");
     } else if (f_streq(line, "cd /") || f_streq(line, "cd /home/root")) {
         console_write("directory changed\r\n");
     } else if (f_streq(line, "cat README") || f_streq(line, "cat /home/root/README")) {
         console_write("Welcome to FadalOS.\r\nThis is the FadalOS Phase 1 console.\r\n");
     } else if (f_streq(line, "cat motd") || f_streq(line, "cat /etc/motd")) {
         console_write("FadalOS: small, inspectable, and user-aware.\r\n");
+    } else if (f_streq(line, "cat /etc/fadal-release")) {
+        console_write("FadalOS 0.1.0 UEFI desktop / Fadal64 independent runtime\r\n");
+    } else if (f_streq(line, "cat /etc/dictionary")) {
+        console_write("system files are immutable in the Phase 1 UEFI payload\r\n");
+        console_write("use the installer and signed system image to update them\r\n");
     } else if (f_streq(line, "whoami")) {
         console_write(current_user);
         console_write("\r\n");
@@ -485,6 +505,16 @@ static void run_command(char *line) {
         console_write("security: root/user capability boundary online\r\n");
     } else if (f_streq(line, "user")) {
         console_write("root (uid 0) active; fadal (uid 1000) model registered\r\n");
+    } else if (f_streq(line, "drivers")) {
+        console_write("drivers: GOP framebuffer, PS/2 keyboard, PS/2 mouse, UART16550, RTL8139 (kernel)\r\n");
+    } else if (f_streq(line, "net")) {
+        console_write("network: UEFI desktop link is not enabled; boot the kernel image for RTL8139/DHCP\r\n");
+    } else if (f_streq(line, "restart") || f_streq(line, "reboot")) {
+        console_write("restarting FadalOS...\r\n");
+        fadal_restart();
+    } else if (f_streq(line, "shutdown") || f_streq(line, "poweroff")) {
+        console_write("powering off FadalOS...\r\n");
+        fadal_shutdown();
     } else if (f_streq(line, "exit")) {
         console_write("FadalOS halted. You may close the UTM/QEMU session.\r\n");
         for (;;) __asm__ volatile ("hlt");

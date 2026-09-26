@@ -57,6 +57,19 @@ make -C kernel/uefi image \
 
 The resulting image is `kernel/out/fadal-uefi.img`. The linker may report an RWX load-segment warning because the current payload is a small freestanding flat image. That warning is known; a future memory-layout milestone should split code and writable data after the loader contract is formalized.
 
+The UEFI desktop keeps Boot Services active so it can discover the EFI HTTP
+protocol or its HTTP Service Binding protocol. When firmware provides it, the
+terminal accepts:
+
+```text
+download http://host/path FILE
+```
+
+The response is bounded to 64 KiB and is written to the ESP. Firmware without
+an HTTP driver is detected at boot and the command reports that the service is
+unavailable. OVMF's default firmware generally lacks this protocol; this is a
+firmware capability limitation, not a host-side download fallback.
+
 ## Termux
 
 The supported Android workflow installs the verified BIOS artifact and a launcher:

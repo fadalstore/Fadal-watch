@@ -1,5 +1,6 @@
 #include <efi.h>
 #include <efilib.h>
+#include "net.h"
 
 #define FADAL_UEFI_MAGIC 0x46444c3634ULL /* "FDL64" */
 #define FADAL_UEFI_VERSION 1U
@@ -21,12 +22,152 @@ typedef struct {
     UINT32 pixel_format;
 } FADAL_FRAMEBUFFER;
 
-typedef void (*FADAL_UEFI_ENTRY)(FADAL_FRAMEBUFFER *);
+typedef struct _EFI_HTTP_PROTOCOL EFI_HTTP_PROTOCOL;
+typedef struct { UINT32 Method; CHAR16 *Url; } FADAL_HTTP_REQUEST_DATA;
+typedef struct { UINT32 StatusCode; } FADAL_HTTP_RESPONSE_DATA;
+typedef struct { CHAR8 *FieldName; CHAR8 *FieldValue; } FADAL_HTTP_HEADER;
+typedef struct {
+    union { FADAL_HTTP_REQUEST_DATA *Request; FADAL_HTTP_RESPONSE_DATA *Response; } Data;
+    UINTN HeaderCount;
+    FADAL_HTTP_HEADER *Headers;
+    UINTN BodyLength;
+    VOID *Body;
+} FADAL_HTTP_MESSAGE;
+typedef struct { EFI_EVENT Event; EFI_STATUS Status; FADAL_HTTP_MESSAGE *Message; } FADAL_HTTP_TOKEN;
+typedef struct { UINT32 HttpVersion; UINT32 TimeOutMillisec; BOOLEAN LocalAddressIsIPv6; VOID *AccessPoint; } FADAL_HTTP_CONFIG_DATA;
+typedef struct { BOOLEAN UseDefaultAddress; UINT8 LocalAddress[4]; UINT8 LocalSubnet[4]; UINT16 LocalPort; } FADAL_HTTPV4_ACCESS_POINT;
+typedef EFI_STATUS (EFIAPI *FADAL_HTTP_CONFIGURE)(EFI_HTTP_PROTOCOL *, FADAL_HTTP_CONFIG_DATA *);
+typedef EFI_STATUS (EFIAPI *FADAL_HTTP_REQUEST)(EFI_HTTP_PROTOCOL *, FADAL_HTTP_TOKEN *);
+typedef EFI_STATUS (EFIAPI *FADAL_HTTP_RESPONSE)(EFI_HTTP_PROTOCOL *, FADAL_HTTP_TOKEN *);
+typedef EFI_STATUS (EFIAPI *FADAL_HTTP_POLL)(EFI_HTTP_PROTOCOL *);
+struct _EFI_HTTP_PROTOCOL {
+    VOID *GetModeData;
+    FADAL_HTTP_CONFIGURE Configure;
+    FADAL_HTTP_REQUEST Request;
+    VOID *Cancel;
+    FADAL_HTTP_RESPONSE Response;
+    FADAL_HTTP_POLL Poll;
+};
+static EFI_GUID gFadalHttpProtocolGuid = {
+    0x7a59b29b, 0x910b, 0x4171, {0x82, 0x42, 0xa8, 0x5a, 0x0d, 0xf2, 0x5b, 0x5b}
+};
+static EFI_GUID gFadalHttpBindingGuid = {
+    0xbdc8e6af, 0xd9bc, 0x4379, {0xa7, 0x2a, 0xe0, 0xc4, 0xe7, 0x5d, 0xae, 0x1c}
+};
+typedef struct _FADAL_SERVICE_BINDING FADAL_SERVICE_BINDING;
+typedef EFI_STATUS (EFIAPI *FADAL_CREATE_CHILD)(FADAL_SERVICE_BINDING *, EFI_HANDLE *);
+typedef EFI_STATUS (EFIAPI *FADAL_DESTROY_CHILD)(FADAL_SERVICE_BINDING *, EFI_HANDLE);
+struct _FADAL_SERVICE_BINDING {
+    FADAL_CREATE_CHILD CreateChild;
+    FADAL_DESTROY_CHILD DestroyChild;
+};
+typedef void (*FADAL_UEFI_ENTRY)(FADAL_FRAMEBUFFER *, fadal_uefi_services *);
 
-static void debug_marker(const char *text) {
+static void __attribute__((unused)) debug_marker(const char *text) {
     while (*text != '\0') {
         __asm__ volatile ("outb %0, %1" : : "a"((UINT8)*text++), "Nd"((UINT16)0x402));
     }
+}
+static EFI_FILE_HANDLE g_fadal_root;
+static EFI_HTTP_PROTOCOL *g_fadal_http;
+static EFI_HANDLE g_fadal_http_child;
+static fadal_net_u32 fadal_http_download(const char *url, const char *name) {
+    CHAR16 wide_url[256];
+    CHAR16 wide_name[64];
+    UINTN url_length = 0;
+    UINTN name_length = 0;
+    UINTN index;
+    EFI_STATUS status;
+    EFI_FILE_HANDLE file = NULL;
+    VOID *buffer = NULL;
+    UINTN buffer_size = 65536;
+    UINTN write_size;
+    FADAL_HTTP_REQUEST_DATA request_data;
+    FADAL_HTTP_RESPONSE_DATA response_data;
+    FADAL_HTTP_HEADER request_header;
+    FADAL_HTTP_MESSAGE request_message;
+    FADAL_HTTP_MESSAGE response_message;
+    FADAL_HTTP_TOKEN request_token;
+    FADAL_HTTP_TOKEN response_token;
+    FADAL_HTTP_CONFIG_DATA config_data;
+    FADAL_HTTPV4_ACCESS_POINT access_point;
+    if (g_fadal_http == NULL || g_fadal_root == NULL || url == NULL || name == NULL) return 0;
+    while (url[url_length] != '\0' && url_length + 1 < sizeof(wide_url) / sizeof(wide_url[0])) url_length++;
+    while (name[name_length] != '\0' && name_length + 1 < sizeof(wide_name) / sizeof(wide_name[0])) name_length++;
+    if (url[url_length] != '\0' || name[name_length] != '\0' || url_length < 7 ||
+        url[0] != 'h' || url[1] != 't' || url[2] != 't' || url[3] != 'p' || url[4] != ':' ||
+        url[5] != '/' || url[6] != '/') return 0;
+    for (index = 0; index < url_length; index++) wide_url[index] = (CHAR16)(UINT8)url[index];
+    for (index = 0; index < name_length; index++) wide_name[index] = (CHAR16)(UINT8)name[index];
+    wide_url[url_length] = 0;
+    wide_name[name_length] = 0;
+    config_data.HttpVersion = 1;
+    config_data.TimeOutMillisec = 5000;
+    config_data.LocalAddressIsIPv6 = FALSE;
+    access_point.UseDefaultAddress = TRUE;
+    access_point.LocalPort = 0;
+    config_data.AccessPoint = &access_point;
+    request_data.Method = 0;
+    request_data.Url = wide_url;
+    request_header.FieldName = (CHAR8 *)"Accept";
+    request_header.FieldValue = (CHAR8 *)"*/*";
+    request_message.Data.Request = &request_data;
+    request_message.HeaderCount = 1;
+    request_message.Headers = &request_header;
+    request_message.BodyLength = 0;
+    request_message.Body = NULL;
+    request_token.Event = NULL;
+    status = uefi_call_wrapper(BS->CreateEvent, 6, EVT_NOTIFY_SIGNAL, TPL_CALLBACK,
+                               NULL, NULL, NULL, &request_token.Event);
+    if (EFI_ERROR(status)) goto cleanup;
+    request_token.Status = EFI_NOT_READY;
+    request_token.Message = &request_message;
+    response_data.StatusCode = 0;
+    response_message.Data.Response = &response_data;
+    response_message.HeaderCount = 0;
+    response_message.Headers = NULL;
+    response_message.BodyLength = buffer_size;
+    response_message.Body = NULL;
+    response_token.Event = NULL;
+    status = uefi_call_wrapper(BS->CreateEvent, 6, EVT_NOTIFY_SIGNAL, TPL_CALLBACK,
+                               NULL, NULL, NULL, &response_token.Event);
+    if (EFI_ERROR(status)) goto cleanup;
+    response_token.Status = EFI_NOT_READY;
+    response_token.Message = &response_message;
+    status = uefi_call_wrapper(BS->AllocatePool, 3, EfiBootServicesData, buffer_size, &buffer);
+    if (EFI_ERROR(status)) return 0;
+    response_message.Body = buffer;
+    status = g_fadal_http->Configure(g_fadal_http, &config_data);
+    if (EFI_ERROR(status)) goto cleanup;
+    status = g_fadal_http->Request(g_fadal_http, &request_token);
+    if (EFI_ERROR(status)) goto cleanup;
+    for (index = 0; index < 10000 && request_token.Status == EFI_NOT_READY; index++) {
+        g_fadal_http->Poll(g_fadal_http);
+        uefi_call_wrapper(BS->Stall, 1, 1000);
+    }
+    if (EFI_ERROR(request_token.Status)) goto cleanup;
+    status = g_fadal_http->Response(g_fadal_http, &response_token);
+    if (EFI_ERROR(status)) goto cleanup;
+    for (index = 0; index < 10000 && response_token.Status == EFI_NOT_READY; index++) {
+        g_fadal_http->Poll(g_fadal_http);
+        uefi_call_wrapper(BS->Stall, 1, 1000);
+    }
+    if (EFI_ERROR(response_token.Status) || response_data.StatusCode != 200) goto cleanup;
+    status = uefi_call_wrapper(g_fadal_root->Open, 5, g_fadal_root, &file, wide_name,
+                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0);
+    if (EFI_ERROR(status)) goto cleanup;
+    write_size = response_message.BodyLength;
+    status = uefi_call_wrapper(file->Write, 3, file, &write_size, buffer);
+    uefi_call_wrapper(file->Close, 1, file);
+    if (EFI_ERROR(status) || write_size == 0) goto cleanup;
+    uefi_call_wrapper(BS->FreePool, 1, buffer);
+    return (fadal_net_u32)write_size;
+cleanup:
+    if (request_token.Event != NULL) uefi_call_wrapper(BS->CloseEvent, 1, request_token.Event);
+    if (response_token.Event != NULL) uefi_call_wrapper(BS->CloseEvent, 1, response_token.Event);
+    if (file != NULL) uefi_call_wrapper(file->Close, 1, file);
+    if (buffer != NULL) uefi_call_wrapper(BS->FreePool, 1, buffer);
+    return 0;
 }
 
 static EFI_STATUS read_payload(EFI_FILE_HANDLE root, VOID **payload,
@@ -109,14 +250,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
     VOID *payload = NULL;
     UINTN payload_size = 0;
     UINT64 entry_offset = 0;
-    UINTN memory_map_size = 0;
-    UINTN map_key = 0;
-    UINTN descriptor_size = 0;
-    UINT32 descriptor_version = 0;
-    EFI_MEMORY_DESCRIPTOR *memory_map = NULL;
     FADAL_UEFI_ENTRY entry;
     EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
     FADAL_FRAMEBUFFER framebuffer;
+    fadal_uefi_services services;
 
     InitializeLib(image, system_table);
     Print(L"Fadal UEFI loader\r\n");
@@ -160,47 +297,39 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
         Print(L"error: open ESP: %r\r\n", status);
         return status;
     }
+    g_fadal_root = root;
+    g_fadal_http = NULL;
+    g_fadal_http_child = NULL;
+    status = uefi_call_wrapper(BS->LocateProtocol, 3, &gFadalHttpProtocolGuid, NULL,
+                               (VOID **)&g_fadal_http);
+    if (EFI_ERROR(status) || g_fadal_http == NULL) {
+        FADAL_SERVICE_BINDING *binding = NULL;
+        status = uefi_call_wrapper(BS->LocateProtocol, 3, &gFadalHttpBindingGuid, NULL,
+                                   (VOID **)&binding);
+        if (!EFI_ERROR(status) && binding != NULL &&
+            !EFI_ERROR(binding->CreateChild(binding, &g_fadal_http_child))) {
+            status = uefi_call_wrapper(BS->OpenProtocol, 6, g_fadal_http_child,
+                                       &gFadalHttpProtocolGuid, (VOID **)&g_fadal_http,
+                                       image, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL);
+        }
+    }
+    if (EFI_ERROR(status) || g_fadal_http == NULL) {
+        g_fadal_http = NULL;
+        Print(L"HTTP service unavailable; desktop downloads disabled\r\n");
+    } else {
+        Print(L"UEFI HTTP service available; desktop downloads enabled\r\n");
+    }
 
     status = read_payload(root, &payload, &payload_size, &entry_offset);
-    uefi_call_wrapper(root->Close, 1, root);
     if (EFI_ERROR(status)) {
         Print(L"error: FADAL.KRN is not a supported Fadal64 payload: %r\r\n", status);
         return status;
     }
 
     Print(L"payload loaded (%lu bytes)\r\n", payload_size);
-    status = uefi_call_wrapper(BS->GetMemoryMap, 5, &memory_map_size,
-                               memory_map, &map_key, &descriptor_size,
-                               &descriptor_version);
-    if (status != EFI_BUFFER_TOO_SMALL || descriptor_size == 0) {
-        uefi_call_wrapper(BS->FreePool, 1, payload);
-        return EFI_LOAD_ERROR;
-    }
-    memory_map_size += descriptor_size * 2;
-    status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData,
-                               memory_map_size, (VOID **)&memory_map);
-    if (EFI_ERROR(status)) {
-        uefi_call_wrapper(BS->FreePool, 1, payload);
-        return status;
-    }
-    status = uefi_call_wrapper(BS->GetMemoryMap, 5, &memory_map_size,
-                               memory_map, &map_key, &descriptor_size,
-                               &descriptor_version);
-    if (EFI_ERROR(status)) {
-        uefi_call_wrapper(BS->FreePool, 1, memory_map);
-        uefi_call_wrapper(BS->FreePool, 1, payload);
-        return status;
-    }
-    debug_marker("BEFORE_EBS\n");
-    status = uefi_call_wrapper(BS->ExitBootServices, 2, image, map_key);
-    if (EFI_ERROR(status)) {
-        uefi_call_wrapper(BS->FreePool, 1, memory_map);
-        uefi_call_wrapper(BS->FreePool, 1, payload);
-        return status;
-    }
-
-    debug_marker("AFTER_EBS\n");
+    services.http_download = fadal_http_download;
+    services.http_available = g_fadal_http != NULL;
     entry = (FADAL_UEFI_ENTRY)((UINT8 *)payload + entry_offset);
-    entry(&framebuffer);
+    entry(&framebuffer, &services);
     return EFI_SUCCESS;
 }

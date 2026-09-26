@@ -2,6 +2,8 @@ typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned int u32;
 typedef unsigned long long u64;
+#include "net.h"
+#define NULL ((void *)0)
 
 typedef struct {
     u64 base;
@@ -72,6 +74,7 @@ static fadal_event event_queue[EVENT_QUEUE_SIZE];
 static u8 event_head;
 static u8 event_tail;
 static const char *desktop_status = "SYSTEM READY";
+static fadal_uefi_services *desktop_services;
 static u32 current_uid = USER_ROOT;
 static const char current_user[] = "root";
 
@@ -464,7 +467,7 @@ static void print_uid(void) {
 static void run_command(char *line) {
     if (line[0] == '\0') return;
     if (f_streq(line, "help")) {
-        console_write("commands: help clear pwd ls cd cat whoami id uname fscan user drivers net restart reboot shutdown poweroff exit\r\n");
+        console_write("commands: help clear pwd ls cd cat whoami id uname fscan user drivers net download restart reboot shutdown poweroff exit\r\n");
     } else if (f_streq(line, "clear")) {
         console_clear();
     } else if (f_streq(line, "pwd")) {
@@ -508,7 +511,24 @@ static void run_command(char *line) {
     } else if (f_streq(line, "drivers")) {
         console_write("drivers: GOP framebuffer, PS/2 keyboard, PS/2 mouse, UART16550, RTL8139 (kernel)\r\n");
     } else if (f_streq(line, "net")) {
-        console_write("network: UEFI desktop link is not enabled; boot the kernel image for RTL8139/DHCP\r\n");
+        console_write(desktop_services != NULL && desktop_services->http_available != 0 ?
+            "network: UEFI HTTP service available\r\n" :
+            "network: UEFI HTTP service unavailable\r\n");
+    } else if (f_starts(line, "download ")) {
+        char *separator = line + 9;
+        while (*separator != '\0' && *separator != ' ') separator++;
+        if (*separator == '\0') {
+            console_write("download: usage download http://host/path FILE\r\n");
+        } else {
+            *separator++ = '\0';
+            while (*separator == ' ') separator++;
+            if (desktop_services == NULL || desktop_services->http_available == 0) {
+                console_write("download: UEFI HTTP service unavailable\r\n");
+            } else {
+                fadal_net_u32 result = desktop_services->http_download(line + 9, separator);
+                console_write(result != 0 ? "download: saved to ESP\r\n" : "download: failed\r\n");
+            }
+        }
     } else if (f_streq(line, "restart") || f_streq(line, "reboot")) {
         console_write("restarting FadalOS...\r\n");
         fadal_restart();
@@ -528,7 +548,7 @@ static void run_command(char *line) {
 }
 
 __attribute__((section(".text.entry"), used, noreturn))
-void fadal64_entry(fadal_framebuffer *incoming_framebuffer) {
+void fadal64_entry(fadal_framebuffer *incoming_framebuffer, fadal_uefi_services *services) {
     static const char debug_banner[] = "FADALOS_CONSOLE_ENTRY\n";
     char line[LINE_MAX];
     u32 length;
@@ -536,6 +556,7 @@ void fadal64_entry(fadal_framebuffer *incoming_framebuffer) {
     u8 suppress_lf = 0;
 
     framebuffer = incoming_framebuffer;
+    desktop_services = services;
     serial_init();
     desktop_render();
     if (desktop_mode != 0) {

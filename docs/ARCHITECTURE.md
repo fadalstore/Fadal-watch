@@ -30,7 +30,7 @@ The project has two boot paths that share the same design goal but are built sep
 
 `kernel/uefi/boot.c` runs as a GNU-EFI application. It locates GOP, reads `FADAL.KRN` from the EFI System Partition, and passes a framebuffer descriptor to `fadal64_entry`. `payload.c` is freestanding x86_64 code. It owns its drawing primitives, serial console, PS/2 mouse polling, bounded event queue, Start menu, and draggable terminal window.
 
-The current graphical terminal is a desktop shell surface and not yet a full text-console compositor. Do not assume that the BIOS shell and UEFI payload share memory, syscall, or filesystem code. They are separate deliverables.
+The current graphical terminal is a desktop shell surface and not yet a full text-console compositor. Do not assume that the BIOS shell and UEFI payload share memory, syscall, or filesystem code. They are separate deliverables. The loader passes a small `fadal_uefi_services` ABI from `kernel/uefi/net.h` into the payload. Its HTTP callback uses the firmware's EFI HTTP protocol or HTTP Service Binding child and writes bounded response bodies to the ESP. The BIOS RTL8139 stack is intentionally not linked into the UEFI payload; this is a firmware-native backend with explicit capability detection.
 
 ## Invariants for changes
 

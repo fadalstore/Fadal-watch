@@ -7,6 +7,7 @@ CC ?= gcc
 LD ?= ld
 OBJCOPY ?= objcopy
 OBJDUMP ?= objdump
+NM ?= nm
 FILE ?= file
 
 OUT ?= out
@@ -106,7 +107,7 @@ $(PAYLOAD_ELF): $(PAYLOAD_OBJ) $(PAYLOAD_LD) | $(OUT)
 
 $(PAYLOAD_BIN): $(PAYLOAD_ELF) $(PATCH_HEADER)
 	$(OBJCOPY) -O binary $< $@
-	python3 $(PATCH_HEADER) $@
+	NM="$(NM)" python3 $(PATCH_HEADER) $@ $(PAYLOAD_ELF)
 	@test "$$(stat -c '%s' $@)" -le "$(PAYLOAD_MAX_BYTES)"
 
 check: $(BOOT_EFI)

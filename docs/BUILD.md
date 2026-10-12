@@ -55,7 +55,17 @@ make -C kernel/uefi image \
   UEFI_KERNEL="$PWD/kernel/uefi/out/fadal-uefi.krn"
 ```
 
-The resulting image is `kernel/out/fadal-uefi.img`. The linker may report an RWX load-segment warning because the current payload is a small freestanding flat image. That warning is known; a future memory-layout milestone should split code and writable data after the loader contract is formalized.
+The resulting image is `kernel/out/fadal-uefi.img`. The linker may report an RWX load-segment warning because the payload is flat-loaded and does not use ELF page permissions. Code/rodata, initialized data, and BSS are separate linker sections, but hardware page protections are not yet enforced.
+
+The FDL64 v2 header remains exactly 32 bytes. Its existing `image_size` field
+now records the total runtime-memory extent exported by the linker, while the
+EFI file size independently records how many bytes are stored on disk. The
+loader allocates the full runtime extent, reads the file-backed image, and
+zeroes the remaining BSS tail before entering the payload. The base is aligned
+to 16 bytes for compiler-generated SIMD stores. The payload linker script keeps
+initialized data file-backed and BSS at the end of the image. The UEFI desktop
+terminal keeps a fixed 64-line by 160-character scrollback and draws console
+output and keyboard echo into the GOP framebuffer.
 
 The UEFI desktop keeps Boot Services active so it can discover the EFI HTTP
 protocol or its HTTP Service Binding protocol. When firmware provides it, the

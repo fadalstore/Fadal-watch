@@ -29,7 +29,7 @@ static inline void fadal_outw(u16 port, u16 value) {
 __attribute__((section(".fadal_header"), used))
 const u8 fadal64_header[32] = {
     0x34, 0x36, 0x4c, 0x44, 0x46, 0x00, 0x00, 0x00,
-    0x01, 0x00, 0x00, 0x00,
+    0x02, 0x00, 0x00, 0x00,
     0x20, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
@@ -43,6 +43,9 @@ const u8 fadal64_header[32] = {
 #define VGA_ROWS 25
 #define LINE_MAX 96
 #define EVENT_QUEUE_SIZE 32
+#define TERMINAL_ROWS 64
+#define TERMINAL_COLUMNS 160
+#define TERMINAL_BG 0x000a101e
 #define USER_ROOT 0
 #define USER_FADAL 1000
 
@@ -73,6 +76,10 @@ static u8 terminal_dragging;
 static fadal_event event_queue[EVENT_QUEUE_SIZE];
 static u8 event_head;
 static u8 event_tail;
+static char terminal_lines[TERMINAL_ROWS][TERMINAL_COLUMNS];
+static u32 terminal_line_head;
+static u32 terminal_lines_used;
+static u32 terminal_column;
 static const char *desktop_status = "SYSTEM READY";
 static fadal_uefi_services *desktop_services;
 static u32 current_uid = USER_ROOT;
@@ -114,12 +121,23 @@ static u8 glyph_row(char value, u32 row) {
         {17,17,17,17,17,10,4},{17,17,17,21,21,21,10},{17,17,10,4,10,17,17},
         {17,17,10,4,4,4,4},{31,1,2,4,8,16,31}
     };
+    static const u8 slash[7] = {1,2,2,4,8,8,16};
+    static const u8 hash[7] = {10,10,31,10,31,10,10};
     if (value >= '0' && value <= '9') return digits[(u32)(value - '0')][row];
     if (value >= 'a' && value <= 'z') value = (char)(value - 'a' + 'A');
     if (value >= 'A' && value <= 'Z') return letters[(u32)(value - 'A')][row];
     if (value == '-') return row == 3 ? 31 : 0;
     if (value == ':') return (row == 2 || row == 5) ? 4 : 0;
     if (value == '.') return row == 6 ? 4 : 0;
+    if (value == '/') return slash[row];
+    if (value == '#') return hash[row];
+    if (value == '_') return row == 6 ? 31 : 0;
+    if (value == '=') return (row == 2 || row == 4) ? 31 : 0;
+    if (value == '!') return row < 5 || row == 6 ? 4 : 0;
+    if (value == '?') {
+        static const u8 question[7] = {14,17,1,2,4,0,4};
+        return question[row];
+    }
     return 0;
 }
 
@@ -144,6 +162,115 @@ static void fb_text(u32 x, u32 y, const char *text, u32 color, u32 scale) {
     }
 }
 
+static u32 terminal_view_columns(void) {
+    u32 left = terminal_x + 22;
+    u32 right = framebuffer->width - 70;
+    u32 columns;
+    if (right <= left) return 0;
+    columns = (right - left) / 6;
+    if (columns >= TERMINAL_COLUMNS) columns = TERMINAL_COLUMNS - 1;
+    return columns;
+}
+
+static u32 terminal_view_rows(void) {
+    u32 top = terminal_y + 56;
+    u32 bottom = framebuffer->height - 132;
+    u32 rows;
+    if (bottom <= top) return 0;
+    rows = (bottom - top) / 9;
+    if (rows > TERMINAL_ROWS) rows = TERMINAL_ROWS;
+    return rows;
+}
+
+static void terminal_begin_line(void) {
+    u32 index;
+    terminal_line_head = (terminal_line_head + 1U) % TERMINAL_ROWS;
+    if (terminal_lines_used < TERMINAL_ROWS) terminal_lines_used++;
+    terminal_column = 0;
+    for (index = 0; index < TERMINAL_COLUMNS; index++) {
+        terminal_lines[terminal_line_head][index] = '\0';
+    }
+}
+
+static void terminal_render(void) {
+    u32 left;
+    u32 top;
+    u32 right;
+    u32 bottom;
+    u32 rows;
+    u32 visible;
+    u32 first;
+    u32 index;
+    if (desktop_mode == 0 || framebuffer == (fadal_framebuffer *)0 ||
+        framebuffer->width < 640 || framebuffer->height < 400) return;
+    left = terminal_x + 22;
+    top = terminal_y + 56;
+    right = framebuffer->width - 70;
+    bottom = framebuffer->height - 132;
+    rows = terminal_view_rows();
+    if (rows == 0 || right <= left || bottom <= top) return;
+    fb_fill(left, top, right, bottom, TERMINAL_BG);
+    visible = terminal_lines_used < rows ? terminal_lines_used : rows;
+    first = (terminal_line_head + TERMINAL_ROWS + 1U - visible) % TERMINAL_ROWS;
+    for (index = 0; index < visible; index++) {
+        u32 line = (first + index) % TERMINAL_ROWS;
+        fb_text(left, top + index * 9, terminal_lines[line], 0x00d8eaff, 1);
+    }
+}
+
+static void terminal_draw_cell(u32 column, char value) {
+    u32 rows = terminal_view_rows();
+    u32 left = terminal_x + 22;
+    u32 top = terminal_y + 56;
+    u32 row;
+    if (rows == 0 || column >= terminal_view_columns()) return;
+    row = terminal_lines_used > rows ? rows - 1 : terminal_lines_used - 1;
+    top += row * 9;
+    left += column * 6;
+    fb_fill(left, top, left + 6, top + 9, TERMINAL_BG);
+    if (value != '\0') {
+        char glyph[2];
+        glyph[0] = value;
+        glyph[1] = '\0';
+        fb_text(left, top, glyph, 0x00d8eaff, 1);
+    }
+}
+
+static void terminal_putc(char value) {
+    u32 columns;
+    u32 rows;
+    u32 index;
+    if (desktop_mode == 0) return;
+    if (value == '\r') return;
+    if (value == '\n') {
+        rows = terminal_view_rows();
+        index = rows != 0 && terminal_lines_used >= rows;
+        terminal_begin_line();
+        if (index != 0) terminal_render();
+        return;
+    }
+    if (value == '\b' || value == 127) {
+        if (terminal_column == 0) return;
+        terminal_column--;
+        terminal_lines[terminal_line_head][terminal_column] = '\0';
+        terminal_draw_cell(terminal_column, '\0');
+        return;
+    }
+    columns = terminal_view_columns();
+    if (columns == 0) return;
+    if (terminal_column >= columns || terminal_column >= TERMINAL_COLUMNS - 1) {
+        rows = terminal_view_rows();
+        index = rows != 0 && terminal_lines_used >= rows;
+        terminal_begin_line();
+        if (index != 0) terminal_render();
+    }
+    index = terminal_column;
+    terminal_lines[terminal_line_head][index] = value;
+    terminal_lines[terminal_line_head][index + 1] = '\0';
+    terminal_column++;
+    terminal_draw_cell(index, value);
+}
+
 static void desktop_render(void) {
     u32 width;
     u32 height;
@@ -161,17 +288,16 @@ static void desktop_render(void) {
     fb_fill(66, 112, 236, 220, 0x002b4d80);
     fb_fill(terminal_x, terminal_y, width - 52, height - 112, 0x000d1528);
     fb_fill(terminal_x, terminal_y, width - 52, terminal_y + 34, 0x001c3154);
-    fb_fill(terminal_x + 14, terminal_y + 52, width - 70, height - 132, 0x000a101e);
+    fb_fill(terminal_x + 14, terminal_y + 52, width - 70, height - 132, TERMINAL_BG);
     fb_fill(26, height - 43, 126, height - 10, 0x002d5f9b);
     fb_fill(142, height - 43, 184, height - 10, 0x00243f6d);
     fb_fill(196, height - 43, 238, height - 10, 0x00243f6d);
     fb_text(18, 11, "FADAL OS", 0x00ffffff, 2);
+    fb_text(width - 230, 12, desktop_status, 0x007ed6a7, 1);
     fb_text(52, 126, "DESKTOP", 0x00d8eaff, 2);
     fb_text(78, 146, "WELCOME", 0x00ffffff, 2);
     fb_text(78, 166, "FADAL OS", 0x008dc5ff, 2);
     fb_text(terminal_x + 16, terminal_y + 10, "TERMINAL", 0x00ffffff, 2);
-    fb_text(terminal_x + 22, terminal_y + 56, desktop_status, 0x007ed6a7, 2);
-    fb_text(terminal_x + 22, terminal_y + 78, "TYPE HELP FOR COMMANDS", 0x0097aac8, 1);
     fb_text(38, height - 33, "START", 0x00ffffff, 2);
     fb_text(width - 155, height - 31, "FADAL64", 0x0097aac8, 1);
 }
@@ -217,6 +343,7 @@ static void cursor_draw(void) {
 
 static void desktop_redraw(void) {
     desktop_render();
+    terminal_render();
     if (start_open != 0) {
         fb_fill(26, framebuffer->height - 270, 290, framebuffer->height - 54, 0x001a3155);
         fb_fill(38, framebuffer->height - 252, 278, framebuffer->height - 208, 0x002d5f9b);
@@ -393,14 +520,29 @@ static void console_write(const char *text) {
     for (index = 0; text[index] != '\0'; index++) {
         serial_putc(text[index]);
         vga_putc(text[index]);
+        terminal_putc(text[index]);
     }
 }
 
 static void console_clear(void) {
     u32 index;
-    for (index = 0; index < VGA_COLS * VGA_ROWS; index++) VGA[index] = (u16)(' ' | (0x1f << 8));
+    if (desktop_mode == 0) {
+        for (index = 0; index < VGA_COLS * VGA_ROWS; index++) {
+            VGA[index] = (u16)(' ' | (0x1f << 8));
+        }
+    }
+    for (index = 0; index < TERMINAL_ROWS; index++) {
+        u32 column;
+        for (column = 0; column < TERMINAL_COLUMNS; column++) {
+            terminal_lines[index][column] = '\0';
+        }
+    }
     vga_row = 0;
     vga_col = 0;
+    terminal_line_head = 0;
+    terminal_lines_used = 1;
+    terminal_column = 0;
+    terminal_render();
 }
 
 static int serial_ready(void) {
@@ -557,6 +699,9 @@ void fadal64_entry(fadal_framebuffer *incoming_framebuffer, fadal_uefi_services 
 
     framebuffer = incoming_framebuffer;
     desktop_services = services;
+    terminal_line_head = 0;
+    terminal_lines_used = 1;
+    terminal_column = 0;
     serial_init();
     desktop_render();
     if (desktop_mode != 0) {
@@ -592,6 +737,7 @@ void fadal64_entry(fadal_framebuffer *incoming_framebuffer, fadal_uefi_services 
                 line[length++] = value;
                 serial_putc((u8)value);
                 vga_putc(value);
+                terminal_putc(value);
             }
         }
     }

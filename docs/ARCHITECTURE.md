@@ -30,11 +30,13 @@ The project has two boot paths that share the same design goal but are built sep
 
 `kernel/uefi/boot.c` runs as a GNU-EFI application. It locates GOP, reads `FADAL.KRN` from the EFI System Partition, and passes a framebuffer descriptor to `fadal64_entry`. `payload.c` is freestanding x86_64 code. It owns its drawing primitives, serial console, PS/2 mouse polling, bounded event queue, Start menu, and draggable terminal window.
 
-The current graphical terminal is a desktop shell surface and not yet a full text-console compositor. Do not assume that the BIOS shell and UEFI payload share memory, syscall, or filesystem code. They are separate deliverables. The loader passes a small `fadal_uefi_services` ABI from `kernel/uefi/net.h` into the payload. Its HTTP callback uses the firmware's EFI HTTP protocol or HTTP Service Binding child and writes bounded response bodies to the ESP. The BIOS RTL8139 stack is intentionally not linked into the UEFI payload; this is a firmware-native backend with explicit capability detection.
+The FDL64 v2 payload keeps a fixed 32-byte header. Its `image_size` field records the linked runtime-memory extent, while the EFI file size records file-backed bytes. The loader allocates extra space to align the payload base to 16 bytes, copies the file, zeroes the remaining BSS tail, and only then calls the entry point. The linker places initialized data in the file and BSS at the end of the runtime image.
+
+The graphical terminal renders console output and keyboard echo into the GOP framebuffer, with a bounded 64-line by 160-character scrollback. It remains a small desktop shell surface rather than a complete userspace desktop environment. Do not assume that the BIOS shell and UEFI payload share memory, syscall, or filesystem code. They are separate deliverables. The loader passes a small `fadal_uefi_services` ABI from `kernel/uefi/net.h` into the payload. Its HTTP callback uses the firmware's EFI HTTP protocol or HTTP Service Binding child and writes bounded response bodies to the ESP. The BIOS RTL8139 stack is intentionally not linked into the UEFI payload; this is a firmware-native backend with explicit capability detection.
 
 ## Invariants for changes
 
-A kernel change must preserve freestanding compilation and the independence guard. A syscall change must preserve existing numbers and add new numbers at the end of the ABI. A filesystem change must keep FAT12 mount and read-back tests passing. A UEFI change must preserve the 32-byte FDL64 header and the GOP handoff structure. A packaging change must keep UTM configuration version 4 and the x86_64 emulation profile.
+A kernel change must preserve freestanding compilation and the independence guard. A syscall change must preserve existing numbers and add new numbers at the end of the ABI. A filesystem change must keep FAT12 mount and read-back tests passing. A UEFI change must preserve the 32-byte FDL64 v2 header, 16-byte payload-base alignment, zero-filled BSS contract, and the GOP handoff structure. A packaging change must keep UTM configuration version 4 and the x86_64 emulation profile.
 
 ## References
 

@@ -46,9 +46,18 @@ The BIOS smoke test in `kernel/Makefile` is a contract. Its required serial line
 
 ## Current next milestones
 
-The next safe graphical milestone is a framebuffer terminal text compositor. It must first formalize the UEFI payload memory contract for writable data and zero-initialized storage. The previous experimental terminal buffer work exposed a loader/runtime-memory fault and was intentionally not committed. Fix the payload linker and loader allocation contract before adding a large renderer buffer.
+The UEFI payload now has a formal FDL64 v2 memory contract: the fixed 32-byte
+header retains its layout, its `image_size` field records the linked runtime
+extent, the loader aligns the base to 16 bytes, and zeroes the file tail through
+the BSS end before entry. The framebuffer terminal compositor renders a fixed
+64-line by 160-character scrollback and keyboard echo. The next graphical
+milestones are focus-aware keyboard routing, terminal editing/scroll controls,
+and window controls; keep the BIOS shell and UEFI desktop as separate
+deliverables. Always boot-test loader or compositor changes under QEMU/UTM and
+inspect the framebuffer, since compilation alone did not catch the alignment
+fault found during this change.
 
-After that, implement keyboard focus, terminal input routing, window controls, and a real event-driven desktop shell. Separately, continue native Git smart-HTTP only after the TCP receive, HTTP parsing, TLS boundary, and certificate strategy are explicitly designed. Do not describe the current `github` shell bridge as a native clone implementation.
+Separately, continue native Git smart-HTTP only after the TCP receive, HTTP parsing, TLS boundary, and certificate strategy are explicitly designed. Do not describe the current `github` shell bridge as a native clone implementation.
 
 ## What not to assume
 

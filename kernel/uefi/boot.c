@@ -3,14 +3,14 @@
 #include "net.h"
 
 #define FADAL_UEFI_MAGIC 0x46444c3634ULL /* "FDL64" */
-#define FADAL_UEFI_VERSION 1U
+#define FADAL_UEFI_VERSION 2U
 #define FADAL_UEFI_MAX_IMAGE (64U * 1024U * 1024U)
 
 typedef struct {
     UINT64 magic;
     UINT32 version;
     UINT32 header_size;
-    UINT64 image_size;
+    UINT64 memory_size;
     UINT64 entry_offset;
 } FADAL_UEFI_HEADER;
 
@@ -171,12 +171,16 @@ cleanup:
 }
 
 static EFI_STATUS read_payload(EFI_FILE_HANDLE root, VOID **payload,
-                               UINTN *payload_size, UINT64 *entry_offset) {
+                               UINTN *file_size_out, UINTN *memory_size_out,
+                               UINT64 *entry_offset) {
     EFI_FILE_HANDLE file = NULL;
     EFI_FILE_INFO *info = NULL;
     UINTN info_size = 0;
     UINTN read_size;
-    UINTN image_size;
+    UINTN file_size;
+    UINTN memory_size;
+    UINTN allocation_size;
+    VOID *allocation = NULL;
     EFI_STATUS status;
     FADAL_UEFI_HEADER header;
 
@@ -207,37 +211,55 @@ static EFI_STATUS read_payload(EFI_FILE_HANDLE root, VOID **payload,
         return EFI_LOAD_ERROR;
     }
 
-    image_size = (UINTN)info->FileSize;
+    file_size = (UINTN)info->FileSize;
+    read_size = sizeof(header);
+    status = uefi_call_wrapper(file->Read, 3, file, &read_size, &header);
+    if (EFI_ERROR(status) || read_size != sizeof(header)) {
+        uefi_call_wrapper(BS->FreePool, 1, info);
+        uefi_call_wrapper(file->Close, 1, file);
+        return EFI_LOAD_ERROR;
+    }
+    if (header.magic != FADAL_UEFI_MAGIC ||
+        header.version != FADAL_UEFI_VERSION ||
+        header.header_size != sizeof(header) ||
+        header.memory_size < file_size ||
+        header.memory_size > FADAL_UEFI_MAX_IMAGE ||
+        header.entry_offset < header.header_size ||
+        header.entry_offset >= file_size) {
+        uefi_call_wrapper(BS->FreePool, 1, info);
+        uefi_call_wrapper(file->Close, 1, file);
+        return EFI_UNSUPPORTED;
+    }
+    memory_size = (UINTN)header.memory_size;
+    status = uefi_call_wrapper(file->SetPosition, 2, file, 0);
+    if (EFI_ERROR(status)) {
+        uefi_call_wrapper(BS->FreePool, 1, info);
+        uefi_call_wrapper(file->Close, 1, file);
+        return EFI_LOAD_ERROR;
+    }
+    /* Pool pointers are not guaranteed to satisfy the payload's 16-byte ABI. */
+    allocation_size = memory_size + 15U;
     status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData,
-                               image_size, payload);
+                               allocation_size, &allocation);
     if (EFI_ERROR(status)) {
         uefi_call_wrapper(BS->FreePool, 1, info);
         uefi_call_wrapper(file->Close, 1, file);
         return status;
     }
-    read_size = image_size;
+    *payload = (VOID *)(((UINTN)allocation + 15U) & ~((UINTN)15U));
+    SetMem(*payload, memory_size, 0);
+    read_size = file_size;
     status = uefi_call_wrapper(file->Read, 3, file, &read_size, *payload);
     uefi_call_wrapper(file->Close, 1, file);
     uefi_call_wrapper(BS->FreePool, 1, info);
-    if (EFI_ERROR(status) || read_size != image_size) {
-        uefi_call_wrapper(BS->FreePool, 1, *payload);
+    if (EFI_ERROR(status) || read_size != file_size) {
+        uefi_call_wrapper(BS->FreePool, 1, allocation);
         *payload = NULL;
         return EFI_LOAD_ERROR;
     }
 
-    CopyMem(&header, *payload, sizeof(header));
-    if (header.magic != FADAL_UEFI_MAGIC ||
-        header.version != FADAL_UEFI_VERSION ||
-        header.header_size < sizeof(header) ||
-        header.image_size != image_size ||
-        header.entry_offset < header.header_size ||
-        header.entry_offset >= header.image_size) {
-        uefi_call_wrapper(BS->FreePool, 1, *payload);
-        *payload = NULL;
-        return EFI_UNSUPPORTED;
-    }
-
-    *payload_size = image_size;
+    *file_size_out = file_size;
+    *memory_size_out = memory_size;
     *entry_offset = header.entry_offset;
     return EFI_SUCCESS;
 }
@@ -249,6 +271,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
     EFI_STATUS status;
     VOID *payload = NULL;
     UINTN payload_size = 0;
+    UINTN payload_memory_size = 0;
     UINT64 entry_offset = 0;
     FADAL_UEFI_ENTRY entry;
     EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
@@ -320,13 +343,15 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
         Print(L"UEFI HTTP service available; desktop downloads enabled\r\n");
     }
 
-    status = read_payload(root, &payload, &payload_size, &entry_offset);
+    status = read_payload(root, &payload, &payload_size, &payload_memory_size,
+                          &entry_offset);
     if (EFI_ERROR(status)) {
         Print(L"error: FADAL.KRN is not a supported Fadal64 payload: %r\r\n", status);
         return status;
     }
 
-    Print(L"payload loaded (%lu bytes)\r\n", payload_size);
+    Print(L"payload loaded (%lu file / %lu memory bytes)\r\n",
+          payload_size, payload_memory_size);
     services.http_download = fadal_http_download;
     services.http_available = g_fadal_http != NULL;
     entry = (FADAL_UEFI_ENTRY)((UINT8 *)payload + entry_offset);

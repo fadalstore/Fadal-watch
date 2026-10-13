@@ -67,6 +67,36 @@ initialized data file-backed and BSS at the end of the image. The UEFI desktop
 terminal keeps a fixed 64-line by 160-character scrollback and draws console
 output and keyboard echo into the GOP framebuffer.
 
+### Isolated page-protection test
+
+The test application is a separate EFI image; it is not part of the normal
+FadalOS boot path and does not call Linux/Ubuntu kernel APIs. It requests a
+loader-code page, walks the active four-level x86-64 page tables, and splits a
+covering 1 GiB or 2 MiB mapping when needed to obtain a 4 KiB leaf. It makes the
+leaf read-only, enables `CR0.WP`, then attempts a supervisor write. A private
+IDT #PF handler verifies `CR2` and the present/write fault bits and resumes at
+a fixed assembly recovery entry. The test also checks that the byte stayed
+unchanged and the page remains executable. Before exit it restores the
+original page-table path, any split mappings, `CR0`, and IDT, then frees its
+test pages. `CR0.WP` is cleared only while editing firmware page tables; this
+is a bounded test of hardware paging, not the production payload's W^X policy.
+
+With GNU-EFI, QEMU, OVMF, `sfdisk`, `mkfs.fat`, `mcopy`, and `timeout` installed,
+run:
+
+```sh
+make -C kernel/uefi test-page-protection
+```
+
+The host-side runner copies the OVMF variable store into a temporary file and
+maps QEMU exit status 33 to PASS (`0x10` written by the guest), 35 to FAIL
+(`0x11`), and 37 to SKIP (`0x12`). SKIP means the firmware IDT or current
+four-level identity-mapped page-table layout is unsupported; it is not a
+successful protection test. Other statuses and timeouts are harness errors.
+Override `QEMU`, `OVMF_CODE`, or `OVMF_VARS` when the tools or firmware images
+are installed elsewhere. The test does not change the production payload or
+prove W^X for its segments yet.
+
 The UEFI desktop keeps Boot Services active so it can discover the EFI HTTP
 protocol or its HTTP Service Binding protocol. When firmware provides it, the
 terminal accepts:

@@ -22,6 +22,14 @@ PAYLOAD_ELF := $(OUT)/fadal64.elf
 PAYLOAD_BIN ?= $(OUT)/fadal-uefi.krn
 PATCH_HEADER ?= ../../tools/patch-fadal64-header.py
 PAYLOAD_MAX_BYTES ?= 67108864
+PF_TEST_C ?= page_protection_test.c
+PF_TEST_OBJ := $(OUT)/page_protection_test.o
+PF_TEST_SO := $(OUT)/page_protection_test.so
+PF_TEST_EFI ?= $(OUT)/PFTESTX64.EFI
+PF_TEST_IMAGE ?= $(OUT)/page-protection.img
+QEMU ?= qemu-system-x86_64
+OVMF_CODE ?= /usr/share/OVMF/OVMF_CODE_4M.fd
+OVMF_VARS ?= /usr/share/OVMF/OVMF_VARS_4M.fd
 
 # Override these when the distribution installs GNU-EFI elsewhere.
 EFI_INC ?= /usr/include/efi
@@ -56,7 +64,8 @@ OBJCOPY_FLAGS := \
 	-j .eh_frame -j .bss --subsystem=10 \
 	--target=efi-app-x86_64
 
-.PHONY: all check check-toolchain payload image clean help
+.PHONY: all check check-toolchain payload image page-protection-efi \
+	test-page-protection clean help
 
 all: $(BOOT_EFI)
 
@@ -110,6 +119,31 @@ $(PAYLOAD_BIN): $(PAYLOAD_ELF) $(PATCH_HEADER)
 	NM="$(NM)" python3 $(PATCH_HEADER) $@ $(PAYLOAD_ELF)
 	@test "$$(stat -c '%s' $@)" -le "$(PAYLOAD_MAX_BYTES)"
 
+$(PF_TEST_OBJ): $(PF_TEST_C) | check-toolchain $(OUT)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(PF_TEST_SO): $(PF_TEST_OBJ) $(BOOT_LD) check-toolchain | $(OUT)
+	$(LD) $(LDFLAGS) -T "$(BOOT_LD)" \
+		-L"$(EFI_LIBDIR)" -o $@ "$(EFI_CRT)" $< -lefi -lgnuefi
+
+$(PF_TEST_EFI): $(PF_TEST_SO) | $(OUT)
+	$(OBJCOPY) $(OBJCOPY_FLAGS) $< $@
+	@test "$$($(FILE) -b $@ | grep -E -i 'PE32\\+.*x86-64|EFI application')" != "" || \
+		(echo "error: $@ is not a PE32+ x86_64 EFI application" >&2; exit 1)
+
+page-protection-efi: $(PF_TEST_EFI)
+
+test-page-protection: $(PF_TEST_EFI) | $(OUT)
+	@printf 'test-only payload; ignored by page-protection EFI app\n' > "$(OUT)/unused-test-payload.krn"
+	@rm -f "$(PF_TEST_IMAGE)"
+	UEFI_IMAGE="$(abspath $(PF_TEST_IMAGE))" \
+	UEFI_BOOTLOADER="$(abspath $(PF_TEST_EFI))" \
+	UEFI_KERNEL="$(abspath $(OUT)/unused-test-payload.krn)" \
+		../../tools/create-uefi-image.sh
+	../../scripts/test-uefi-page-protection.sh \
+		--image "$(abspath $(PF_TEST_IMAGE))" --qemu "$(QEMU)" \
+		--ovmf-code "$(OVMF_CODE)" --ovmf-vars "$(OVMF_VARS)"
+
 check: $(BOOT_EFI)
 	@$(OBJDUMP) -f $(BOOT_EFI) | grep -E -q 'pei-x86-64|pe-x86-64' || \
 		(echo "error: $(BOOT_EFI) has the wrong object format" >&2; exit 1)
@@ -126,6 +160,8 @@ help:
 	@echo "make                 build BOOTX64.EFI"
 	@echo "make check           build and validate PE/COFF format"
 	@echo "make image UEFI_KERNEL=...  build and package an ESP image"
+	@echo "make page-protection-efi   build isolated EFI page-protection test"
+	@echo "make test-page-protection  run test under QEMU/OVMF + isa-debug-exit"
 	@echo "EFI_INC=... EFI_CRT=... EFI_LDSCRIPT=... EFI_LIBDIR=... override GNU-EFI paths"
 
 clean:

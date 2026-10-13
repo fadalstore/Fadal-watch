@@ -49,7 +49,7 @@ else
 fi
 
 if (( UEFI )); then
-    make -C "$ROOT/kernel/uefi" clean check payload
+    make -C "$ROOT/kernel/uefi" clean check payload page-protection-efi
 fi
 
 printf 'FadalWatch repository validation passed.\n'

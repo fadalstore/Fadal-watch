@@ -46,16 +46,28 @@ The BIOS smoke test in `kernel/Makefile` is a contract. Its required serial line
 
 ## Current next milestones
 
-The UEFI payload now has a formal FDL64 v2 memory contract: the fixed 32-byte
-header retains its layout, its `image_size` field records the linked runtime
-extent, the loader aligns the base to 16 bytes, and zeroes the file tail through
-the BSS end before entry. The framebuffer terminal compositor renders a fixed
-64-line by 160-character scrollback and keyboard echo. The next graphical
-milestones are focus-aware keyboard routing, terminal editing/scroll controls,
-and window controls; keep the BIOS shell and UEFI desktop as separate
-deliverables. Always boot-test loader or compositor changes under QEMU/UTM and
-inspect the framebuffer, since compilation alone did not catch the alignment
-fault found during this change.
+The UEFI payload now has an FDL64 v3 memory contract: the fixed 32-byte base
+header is preserved, and a 40-byte `FPM1` descriptor immediately after it
+records page-aligned text, rodata, data, and BSS extents. The loader allocates
+page-aligned pages, copies the file, zeroes the BSS tail, validates the
+descriptor, enables NXE and `CR0.WP`, and installs `R/NX`, `RX`, `R/NX`, and
+`RW/NX` permissions before entering the payload. `kernel/uefi/page_tables.c`
+is shared by the production loader and the EFI self-test; it walks four-level
+identity mappings, splits 1 GiB/2 MiB entries as needed, preserves inherited
+parent restrictions, and edits only payload leaf PTEs. FDL64 v2 remains
+loadable for compatibility but runs without W^X and produces a warning.
+
+Verified commands for this milestone are `scripts/validate-repo.sh --uefi`,
+`make -C kernel/uefi test-page-protection`, and a QEMU/OVMF boot of the
+production ESP image followed by framebuffer inspection. The isolated test
+must report both the NX instruction-fetch fault (`error=0x11`) and the
+read-only write fault (`error=0x3`). The linker should show separate `R`,
+`R E`, `R`, `RW` LOAD segments with no RWX warning. The framebuffer terminal
+compositor still renders a fixed 64-line by 160-character scrollback and
+keyboard echo. Next graphical milestones are focus-aware keyboard routing,
+terminal editing/scroll controls, and window controls; keep the BIOS shell and
+UEFI desktop as separate deliverables. Always boot-test loader or compositor
+changes under QEMU/UTM and inspect the framebuffer.
 
 Separately, continue native Git smart-HTTP only after the TCP receive, HTTP parsing, TLS boundary, and certificate strategy are explicitly designed. Do not describe the current `github` shell bridge as a native clone implementation.
 

@@ -84,7 +84,7 @@ fi
 
 case "$QEMU_STATUS" in
     33)
-        echo '[pf-test] PASS: expected write-protection #PF was caught and recovered'
+        echo '[pf-test] PASS: NX and read-only #PFs were caught and recovered'
         exit 0
         ;;
     35)
@@ -92,7 +92,7 @@ case "$QEMU_STATUS" in
         exit 1
         ;;
     37)
-        echo '[pf-test] SKIP: firmware IDT or four-level identity-mapped page tables are unsupported' >&2
+        echo '[pf-test] SKIP: CPU NX, firmware IDT, or four-level identity mapping is unsupported' >&2
         exit 77
         ;;
     124)

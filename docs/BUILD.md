@@ -55,31 +55,42 @@ make -C kernel/uefi image \
   UEFI_KERNEL="$PWD/kernel/uefi/out/fadal-uefi.krn"
 ```
 
-The resulting image is `kernel/out/fadal-uefi.img`. The linker may report an RWX load-segment warning because the payload is flat-loaded and does not use ELF page permissions. Code/rodata, initialized data, and BSS are separate linker sections, but hardware page protections are not yet enforced.
+The resulting image is `kernel/out/fadal-uefi.img`. The payload ELF now has
+separate page-aligned `R`, `R-X`, `R`, and `RW` load segments for metadata,
+text, rodata, and data/BSS; the previous RWX linker warning is gone. At runtime,
+the EFI loader allocates page-aligned memory and installs `R/NX`, `RX`, `R/NX`,
+and `RW/NX` PTE permissions respectively. It enables `EFER.NXE` and `CR0.WP`,
+splitting firmware 1 GiB/2 MiB mappings into 4 KiB leaves when necessary. It
+preflights the complete payload mapping before changing permissions and refuses
+to enter a v3 payload if NX or the required page-table layout is unavailable.
 
-The FDL64 v2 header remains exactly 32 bytes. Its existing `image_size` field
-now records the total runtime-memory extent exported by the linker, while the
-EFI file size independently records how many bytes are stored on disk. The
-loader allocates the full runtime extent, reads the file-backed image, and
-zeroes the remaining BSS tail before entering the payload. The base is aligned
-to 16 bytes for compiler-generated SIMD stores. The payload linker script keeps
-initialized data file-backed and BSS at the end of the image. The UEFI desktop
-terminal keeps a fixed 64-line by 160-character scrollback and draws console
-output and keyboard echo into the GOP framebuffer.
+FDL64 v3 preserves the fixed 32-byte base header and its existing fields. A
+40-byte `FPM1` segment-layout descriptor follows that header and gives the
+page-aligned text, rodata, data, and BSS boundaries; `memory_size` records the
+complete runtime extent while the EFI file size records bytes on disk. The
+loader reads the file into the full page-aligned allocation, zeroes the rest of
+the runtime pages (including BSS), validates the descriptor, and only then
+applies permissions and transfers control. The walker preserves inherited
+parent permissions and changes only the target 4 KiB leaf, so neighboring
+firmware mappings are not made more permissive. Legacy v2 images remain loadable
+for compatibility, but are explicitly warned and do not receive W^X protection.
+The UEFI desktop terminal keeps a fixed 64-line by 160-character scrollback and
+draws console output and keyboard echo into the GOP framebuffer.
 
 ### Isolated page-protection test
 
-The test application is a separate EFI image; it is not part of the normal
-FadalOS boot path and does not call Linux/Ubuntu kernel APIs. It requests a
-loader-code page, walks the active four-level x86-64 page tables, and splits a
-covering 1 GiB or 2 MiB mapping when needed to obtain a 4 KiB leaf. It makes the
-leaf read-only, enables `CR0.WP`, then attempts a supervisor write. A private
-IDT #PF handler verifies `CR2` and the present/write fault bits and resumes at
-a fixed assembly recovery entry. The test also checks that the byte stayed
-unchanged and the page remains executable. Before exit it restores the
-original page-table path, any split mappings, `CR0`, and IDT, then frees its
-test pages. `CR0.WP` is cleared only while editing firmware page tables; this
-is a bounded test of hardware paging, not the production payload's W^X policy.
+The test application is a separate EFI image and uses the same
+`page_tables.c` walker as the production loader; it does not call Linux/Ubuntu
+kernel APIs. Under a private #PF IDT it first sets NX and verifies an
+instruction-fetch fault (`CR2` points at the test page; error bits `P=1,
+W=0, U=0, I/D=1`), then clears NX and confirms execution works. It next makes
+the code page read-only, enables `CR0.WP`, attempts a supervisor write, and
+verifies the expected present/write fault (`P=1, W=1, U=0`), unchanged byte,
+and continued execution. Fixed assembly recovery entries resume after each
+expected fault. The test restores the original PTE path, any split mappings,
+`CR0`, and IDT, then frees its test page. The shared helper clears `CR0.WP`
+only briefly while editing page tables and restores it afterward. The test also
+asserts that changing the leaf never alters inherited parent RW/NX permissions.
 
 With GNU-EFI, QEMU, OVMF, `sfdisk`, `mkfs.fat`, `mcopy`, and `timeout` installed,
 run:
@@ -90,12 +101,13 @@ make -C kernel/uefi test-page-protection
 
 The host-side runner copies the OVMF variable store into a temporary file and
 maps QEMU exit status 33 to PASS (`0x10` written by the guest), 35 to FAIL
-(`0x11`), and 37 to SKIP (`0x12`). SKIP means the firmware IDT or current
+(`0x11`), and 37 to SKIP (`0x12`). SKIP means CPU NX, the firmware IDT, or the
 four-level identity-mapped page-table layout is unsupported; it is not a
 successful protection test. Other statuses and timeouts are harness errors.
 Override `QEMU`, `OVMF_CODE`, or `OVMF_VARS` when the tools or firmware images
-are installed elsewhere. The test does not change the production payload or
-prove W^X for its segments yet.
+are installed elsewhere. A separate production image boot should also be
+checked after loader or page-table changes; compilation and the isolated test
+alone do not prove that the desktop survives the production handoff.
 
 The UEFI desktop keeps Boot Services active so it can discover the EFI HTTP
 protocol or its HTTP Service Binding protocol. When firmware provides it, the

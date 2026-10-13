@@ -14,6 +14,7 @@ OUT ?= out
 BOOT_C ?= boot.c
 BOOT_SO := $(OUT)/boot.so
 BOOT_OBJ := $(OUT)/boot.o
+PAGE_TABLES_OBJ := $(OUT)/page_tables.o
 BOOT_EFI ?= $(OUT)/BOOTX64.EFI
 PAYLOAD_C ?= payload.c
 PAYLOAD_LD ?= payload.ld
@@ -95,12 +96,15 @@ check-toolchain:
 	@command -v $(OBJCOPY) >/dev/null || \
 		(echo "error: objcopy not found: $(OBJCOPY)" >&2; exit 1)
 
-$(BOOT_OBJ): $(BOOT_C) | check-toolchain $(OUT)
+$(BOOT_OBJ): $(BOOT_C) page_tables.h | check-toolchain $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(BOOT_SO): $(BOOT_OBJ) $(BOOT_LD) check-toolchain | $(OUT)
+$(PAGE_TABLES_OBJ): page_tables.c page_tables.h | check-toolchain $(OUT)
+	$(CC) $(CFLAGS) -c -o $@ page_tables.c
+
+$(BOOT_SO): $(BOOT_OBJ) $(PAGE_TABLES_OBJ) $(BOOT_LD) check-toolchain | $(OUT)
 	$(LD) $(LDFLAGS) -T "$(BOOT_LD)" \
-		-L"$(EFI_LIBDIR)" -o $@ "$(EFI_CRT)" $< -lefi -lgnuefi
+		-L"$(EFI_LIBDIR)" -o $@ "$(EFI_CRT)" $(BOOT_OBJ) $(PAGE_TABLES_OBJ) -lefi -lgnuefi
 
 $(BOOT_EFI): $(BOOT_SO) | $(OUT)
 	$(OBJCOPY) $(OBJCOPY_FLAGS) $< $@
@@ -112,19 +116,20 @@ $(PAYLOAD_OBJ): $(PAYLOAD_C) | $(OUT)
 		-fno-unwind-tables -mno-red-zone -m64 -Wall -Wextra -Werror -c -o $@ $<
 
 $(PAYLOAD_ELF): $(PAYLOAD_OBJ) $(PAYLOAD_LD) | $(OUT)
-	$(LD) -nostdlib -T $(PAYLOAD_LD) -o $@ $(PAYLOAD_OBJ)
+	$(LD) -nostdlib -z max-page-size=0x1000 -z common-page-size=0x1000 \
+		-T $(PAYLOAD_LD) -o $@ $(PAYLOAD_OBJ)
 
 $(PAYLOAD_BIN): $(PAYLOAD_ELF) $(PATCH_HEADER)
 	$(OBJCOPY) -O binary $< $@
 	NM="$(NM)" python3 $(PATCH_HEADER) $@ $(PAYLOAD_ELF)
 	@test "$$(stat -c '%s' $@)" -le "$(PAYLOAD_MAX_BYTES)"
 
-$(PF_TEST_OBJ): $(PF_TEST_C) | check-toolchain $(OUT)
+$(PF_TEST_OBJ): $(PF_TEST_C) page_tables.h | check-toolchain $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(PF_TEST_SO): $(PF_TEST_OBJ) $(BOOT_LD) check-toolchain | $(OUT)
+$(PF_TEST_SO): $(PF_TEST_OBJ) $(PAGE_TABLES_OBJ) $(BOOT_LD) check-toolchain | $(OUT)
 	$(LD) $(LDFLAGS) -T "$(BOOT_LD)" \
-		-L"$(EFI_LIBDIR)" -o $@ "$(EFI_CRT)" $< -lefi -lgnuefi
+		-L"$(EFI_LIBDIR)" -o $@ "$(EFI_CRT)" $(PF_TEST_OBJ) $(PAGE_TABLES_OBJ) -lefi -lgnuefi
 
 $(PF_TEST_EFI): $(PF_TEST_SO) | $(OUT)
 	$(OBJCOPY) $(OBJCOPY_FLAGS) $< $@

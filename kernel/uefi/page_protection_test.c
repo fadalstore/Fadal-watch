@@ -1,44 +1,22 @@
 #include <efi.h>
 #include <efilib.h>
 #include <efidebug.h>
+#include "page_tables.h"
 
 #define QEMU_DEBUG_EXIT_PORT 0x00f4
 #define QEMU_TEST_PASS 0x10U
 #define QEMU_TEST_FAIL 0x11U
 #define QEMU_TEST_SKIP 0x12U
-#define PF_TEST_PAGE_SIZE 4096U
 #define X86_PAGE_FAULT_VECTOR 14U
 #define X86_IDT_PRESENT 0x80U
 #define X86_IDT_GATE_TYPE_MASK 0x0fU
 #define X86_IDT_INTERRUPT_GATE 0x0eU
 #define X86_CR0_WP (1ULL << 16)
-#define X86_CR4_LA57 (1ULL << 12)
-#define X86_PTE_PRESENT (1ULL << 0)
-#define X86_PTE_WRITE (1ULL << 1)
-#define X86_PTE_USER (1ULL << 2)
-#define X86_PTE_PWT (1ULL << 3)
-#define X86_PTE_PCD (1ULL << 4)
-#define X86_PTE_ACCESSED (1ULL << 5)
-#define X86_PTE_DIRTY (1ULL << 6)
-#define X86_PTE_LARGE_PAT (1ULL << 12)
-#define X86_PTE_PS_OR_4K_PAT (1ULL << 7)
-#define X86_PTE_GLOBAL (1ULL << 8)
-#define X86_PTE_SOFTWARE (0x7ULL << 9)
-#define X86_PTE_PKEY (0xfULL << 59)
-#define X86_PTE_NX (1ULL << 63)
-#define X86_PTE_ADDRESS_MASK 0x000ffffffffff000ULL
-#define X86_PDE_2M_ADDRESS_MASK 0x000fffffffe00000ULL
-#define X86_PDPE_1G_ADDRESS_MASK 0x000fffffc0000000ULL
-#define X86_PTE_LEAF_FLAGS (X86_PTE_PRESENT | X86_PTE_WRITE | X86_PTE_USER | \
-    X86_PTE_PWT | X86_PTE_PCD | X86_PTE_ACCESSED | X86_PTE_DIRTY | \
-    X86_PTE_GLOBAL | X86_PTE_SOFTWARE | X86_PTE_PKEY | X86_PTE_NX)
-#define X86_PARENT_FLAGS (X86_PTE_USER | X86_PTE_NX | X86_PTE_SOFTWARE)
 #define PF_TEST_PHASE_NONE 0U
 #define PF_TEST_PHASE_EXECUTE 1U
 #define PF_TEST_PHASE_WRITE 2U
-#define X86_IDT_BYTES 4096U
+#define PF_TEST_PHASE_NX 3U
 #define X86_IDT_ENTRY_COUNT 256U
-#define X86_TABLE_SPLIT_MAX 2U
 
 extern UINT32 EFIAPI fadal_test_execute(VOID *entry);
 extern VOID EFIAPI fadal_test_execute_recovered(VOID);
@@ -57,6 +35,7 @@ __asm__(
     ".globl fadal_test_execute_recovered\n"
     ".type fadal_test_execute_recovered,@function\n"
     "fadal_test_execute_recovered:\n\t"
+    "addq $8, %rsp\n\t"
     "xorl %eax, %eax\n\t"
     "ret\n"
     ".p2align 4\n"
@@ -88,25 +67,16 @@ typedef struct __attribute__((packed)) {
     UINT32 Reserved;
 } X86_IDT_GATE;
 
-typedef struct {
-    volatile UINT64 *ParentEntry;
-    UINT64 OriginalEntry;
-    EFI_PHYSICAL_ADDRESS TablePage;
-} X86_TABLE_SPLIT;
-
 static EFI_PHYSICAL_ADDRESS gTestPage;
 static BOOLEAN gPageAllocated;
 static BOOLEAN gIdtInstalled;
 static BOOLEAN gMappingPrepared;
 static UINT64 gOriginalCr0;
-static volatile UINT64 *gLeafPte;
-static UINT64 gOriginalLeafPte;
-static volatile UINT64 *gPathEntries[4];
-static UINT64 gOriginalPathEntries[4];
-static X86_TABLE_SPLIT gTableSplits[X86_TABLE_SPLIT_MAX];
-static UINTN gTableSplitCount;
+static FADAL_X86_PAGE_TABLE_CONTEXT gPageTables;
+static FADAL_X86_PAGE_MAPPING gTestMapping;
 static volatile UINT32 gPhase;
 static volatile UINT32 gExpectedFaults;
+static volatile UINT32 gExpectedNxFaults;
 static volatile UINT32 gUnexpectedFaults;
 static volatile UINT32 gStoreReturned;
 static volatile UINT32 gCodeReturned;
@@ -138,21 +108,6 @@ static UINT64 read_cr3(void) {
     UINT64 value;
     __asm__ volatile ("mov %%cr3, %0" : "=r"(value));
     return value;
-}
-
-static UINT64 read_cr4(void) {
-    UINT64 value;
-    __asm__ volatile ("mov %%cr4, %0" : "=r"(value));
-    return value;
-}
-
-static void flush_translation(UINT64 virtual_address) {
-    __asm__ volatile ("invlpg (%0)" : : "r"((VOID *)(UINTN)virtual_address) : "memory");
-}
-
-static void flush_page_tables(void) {
-    UINT64 current_cr3 = read_cr3();
-    __asm__ volatile ("mov %0, %%cr3" : : "r"(current_cr3) : "memory");
 }
 
 static __attribute__((noreturn)) void qemu_test_exit(UINT32 code) {
@@ -276,6 +231,9 @@ void EFIAPI fadal_page_fault_dispatch(UINT64 *exception_frame) {
     if (gPhase == PF_TEST_PHASE_WRITE && fault_address == gExpectedCr2 &&
         (error_code & 0x17U) == 0x03U) {
         gExpectedFaults++;
+    } else if (gPhase == PF_TEST_PHASE_NX && fault_address == gExpectedCr2 &&
+               (error_code & 0x17U) == 0x11U) {
+        gExpectedNxFaults++;
     } else {
         gUnexpectedFaults++;
     }
@@ -286,148 +244,43 @@ void EFIAPI fadal_page_fault_dispatch(UINT64 *exception_frame) {
     }
 }
 
-static EFI_STATUS allocate_table_page(EFI_PHYSICAL_ADDRESS *page) {
-    EFI_STATUS status = uefi_call_wrapper(BS->AllocatePages, 4,
-                                           AllocateAnyPages, EfiLoaderData,
-                                           1, page);
-    if (EFI_ERROR(status)) return status;
-    if (gTableSplitCount >= X86_TABLE_SPLIT_MAX) {
-        uefi_call_wrapper(BS->FreePages, 2, *page, 1);
-        return EFI_OUT_OF_RESOURCES;
-    }
-    return EFI_SUCCESS;
-}
-
-static EFI_STATUS split_large_mapping(volatile UINT64 *entry, UINTN shift) {
-    EFI_STATUS status;
-    UINT64 old_entry = *entry;
-    EFI_PHYSICAL_ADDRESS table_page = 0;
-    volatile UINT64 *table;
-    UINT64 common_flags = old_entry & X86_PTE_LEAF_FLAGS;
-    UINTN index;
-
-    if ((old_entry & X86_PTE_PKEY) != 0) return EFI_UNSUPPORTED;
-    status = allocate_table_page(&table_page);
-    if (EFI_ERROR(status)) return status;
-    table = (volatile UINT64 *)(UINTN)table_page;
-
-    if (shift == 30U) {
-        UINT64 base = old_entry & X86_PDPE_1G_ADDRESS_MASK;
-        UINT64 large_pat = old_entry & X86_PTE_LARGE_PAT;
-        for (index = 0; index < 512; index++) {
-            table[index] = (base + ((UINT64)index << 21)) |
-                           common_flags | (1ULL << 7) | large_pat;
-        }
-    } else if (shift == 21U) {
-        UINT64 base = old_entry & X86_PDE_2M_ADDRESS_MASK;
-        UINT64 pat = (old_entry & X86_PTE_LARGE_PAT) != 0 ?
-                     X86_PTE_PS_OR_4K_PAT : 0;
-        for (index = 0; index < 512; index++) {
-            table[index] = (base + ((UINT64)index << 12)) |
-                           common_flags | pat;
-        }
-    } else {
-        uefi_call_wrapper(BS->FreePages, 2, table_page, 1);
-        return EFI_INVALID_PARAMETER;
-    }
-
-    gTableSplits[gTableSplitCount].ParentEntry = entry;
-    gTableSplits[gTableSplitCount].OriginalEntry = old_entry;
-    gTableSplits[gTableSplitCount].TablePage = table_page;
-    gTableSplitCount++;
-    *entry = table_page | X86_PTE_PRESENT | X86_PTE_WRITE |
-             (old_entry & X86_PARENT_FLAGS);
-    flush_page_tables();
-    flush_translation(gTestPage);
-    return EFI_SUCCESS;
-}
-
 static EFI_STATUS prepare_test_mapping(void) {
-    UINT64 cr4 = read_cr4();
-    UINT64 cr3 = read_cr3();
-    UINT64 virtual_address = gTestPage;
-    volatile UINT64 *pml4;
-    volatile UINT64 *pdpt;
-    volatile UINT64 *pd;
-    volatile UINT64 *pt;
-    volatile UINT64 *entry;
-    EFI_STATUS status;
-
-    if ((cr4 & X86_CR4_LA57) != 0) return EFI_UNSUPPORTED;
-    pml4 = (volatile UINT64 *)(UINTN)(cr3 & X86_PTE_ADDRESS_MASK);
-    entry = &pml4[(virtual_address >> 39) & 0x1ffU];
-    if ((*entry & X86_PTE_PRESENT) == 0) return EFI_NOT_FOUND;
-
-    pdpt = (volatile UINT64 *)(UINTN)(*entry & X86_PTE_ADDRESS_MASK);
-    entry = &pdpt[(virtual_address >> 30) & 0x1ffU];
-    if ((*entry & X86_PTE_PRESENT) == 0) return EFI_NOT_FOUND;
-    if ((*entry & X86_PTE_PS_OR_4K_PAT) != 0) {
-        status = split_large_mapping(entry, 30U);
-        if (EFI_ERROR(status)) return status;
-    }
-
-    pd = (volatile UINT64 *)(UINTN)(*entry & X86_PTE_ADDRESS_MASK);
-    entry = &pd[(virtual_address >> 21) & 0x1ffU];
-    if ((*entry & X86_PTE_PRESENT) == 0) return EFI_NOT_FOUND;
-    if ((*entry & X86_PTE_PS_OR_4K_PAT) != 0) {
-        status = split_large_mapping(entry, 21U);
-        if (EFI_ERROR(status)) return status;
-    }
-
-    pt = (volatile UINT64 *)(UINTN)(*entry & X86_PTE_ADDRESS_MASK);
-    entry = &pt[(virtual_address >> 12) & 0x1ffU];
-    if ((*entry & X86_PTE_PRESENT) == 0 ||
-        (*entry & X86_PTE_ADDRESS_MASK) != (gTestPage & X86_PTE_ADDRESS_MASK)) {
-        return EFI_UNSUPPORTED;
-    }
-
-    gPathEntries[0] = &pml4[(virtual_address >> 39) & 0x1ffU];
-    gPathEntries[1] = &pdpt[(virtual_address >> 30) & 0x1ffU];
-    gPathEntries[2] = &pd[(virtual_address >> 21) & 0x1ffU];
-    gPathEntries[3] = entry;
-    for (UINTN level = 0; level < 4; level++) {
-        gOriginalPathEntries[level] = *gPathEntries[level];
-        *gPathEntries[level] = (*gPathEntries[level] | X86_PTE_WRITE) & ~X86_PTE_NX;
-    }
-    gLeafPte = entry;
-    gOriginalLeafPte = *entry;
+    EFI_STATUS status = fadal_x86_walk_page(BS, &gPageTables,
+                                             (UINT64)gTestPage, &gTestMapping);
+    if (EFI_ERROR(status)) return status;
+    status = fadal_x86_set_page_permissions(&gTestMapping,
+                                            FADAL_X86_PTE_WRITE,
+                                            FADAL_X86_PTE_NX);
+    if (EFI_ERROR(status)) return status;
     gMappingPrepared = TRUE;
-    flush_page_tables();
-    flush_translation(gTestPage);
     return EFI_SUCCESS;
 }
 
-static void make_test_page_read_only(void) {
-    UINT64 current_cr0 = read_cr0();
-    write_cr0(current_cr0 & ~X86_CR0_WP);
-    *gLeafPte &= ~X86_PTE_WRITE;
-    flush_page_tables();
-    flush_translation(gTestPage);
-    write_cr0(current_cr0);
+static EFI_STATUS make_test_page_read_only(void) {
+    return fadal_x86_set_page_permissions(&gTestMapping, 0,
+                                          FADAL_X86_PTE_WRITE);
+}
+
+static BOOLEAN parent_permissions_unchanged(void) {
+    const UINT64 permission_mask = FADAL_X86_PTE_WRITE | FADAL_X86_PTE_NX;
+    UINTN level;
+    for (level = 0; level < 3; level++) {
+        if (((*gTestMapping.Entries[level] ^
+              gTestMapping.OriginalEntries[level]) & permission_mask) != 0) {
+            return FALSE;
+        }
+    }
+    return TRUE;
 }
 
 static void cleanup_test_resources(void) {
-    UINT64 current_cr0 = read_cr0();
-    BOOLEAN changed_tables = gMappingPrepared || gTableSplitCount != 0;
-    if (changed_tables) write_cr0(current_cr0 & ~X86_CR0_WP);
     if (gMappingPrepared) {
-        *gLeafPte = gOriginalLeafPte;
-        for (UINTN level = 0; level < 4; level++) {
-            *gPathEntries[level] = gOriginalPathEntries[level];
-        }
-        flush_page_tables();
-        flush_translation(gTestPage);
+        fadal_x86_restore_page(BS, &gPageTables, &gTestMapping);
         gMappingPrepared = FALSE;
+    } else if (gPageTables.SplitCount != 0) {
+        fadal_x86_restore_splits(BS, &gPageTables);
     }
-    while (gTableSplitCount > 0) {
-        X86_TABLE_SPLIT *split = &gTableSplits[gTableSplitCount - 1];
-        *split->ParentEntry = split->OriginalEntry;
-        flush_page_tables();
-        flush_translation(gTestPage);
-        uefi_call_wrapper(BS->FreePages, 2, split->TablePage, 1);
-        gTableSplitCount--;
-    }
-    if (changed_tables) write_cr0(current_cr0);
+    write_cr0(gOriginalCr0);
     if (gIdtInstalled) {
         load_idtr(&gOriginalIdtr);
         gIdtInstalled = FALSE;
@@ -466,6 +319,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
     UINT64 current_cr0;
 
     InitializeLib(image, system_table);
+    gOriginalCr0 = read_cr0();
+    status = fadal_x86_enable_nx();
+    if (EFI_ERROR(status)) {
+        finish_test(QEMU_TEST_SKIP, L"SKIP - CPU does not support NX page protection");
+    }
     Print(L"FadalOS page-protection self-test\r\n");
     status = install_test_idt();
     if (EFI_ERROR(status)) {
@@ -480,17 +338,15 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
         finish_test(QEMU_TEST_FAIL, L"FAIL - unable to allocate test code page");
     }
     gPageAllocated = TRUE;
-    gOriginalCr0 = read_cr0();
     Print(L"PFTEST: stage=code-page-allocated\r\n");
 
-    /* Firmware may protect its page-table pages; temporarily clear CR0.WP
-       only while editing the map, then restore the original control state. */
-    write_cr0(gOriginalCr0 & ~X86_CR0_WP);
     status = prepare_test_mapping();
-    write_cr0(gOriginalCr0);
     if (EFI_ERROR(status)) {
         Print(L"PFTEST: page-table walk status=%r\r\n", status);
         finish_test(QEMU_TEST_SKIP, L"SKIP - unsupported or non-identity x86 page-table map");
+    }
+    if (!parent_permissions_unchanged()) {
+        finish_test(QEMU_TEST_FAIL, L"FAIL - leaf setup changed parent RW/NX permissions");
     }
     Print(L"PFTEST: stage=pte-ready address=%lx cr3=%lx\r\n",
           (UINT64)gTestPage, read_cr3());
@@ -506,9 +362,46 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
         finish_test(QEMU_TEST_FAIL, L"FAIL - writable loader-code page did not execute");
     }
 
+    gExpectedCr2 = (UINT64)gTestPage;
+    status = fadal_x86_set_page_permissions(&gTestMapping,
+                                            FADAL_X86_PTE_NX, 0);
+    if (EFI_ERROR(status)) {
+        finish_test(QEMU_TEST_SKIP, L"SKIP - parent mapping blocks NX test setup");
+    }
+    if (!parent_permissions_unchanged()) {
+        finish_test(QEMU_TEST_FAIL, L"FAIL - NX update changed parent RW/NX permissions");
+    }
+    gPhase = PF_TEST_PHASE_NX;
+    execute_test_page();
+    gPhase = PF_TEST_PHASE_NONE;
+    Print(L"PFTEST: NX-test-returned faults=%u unexpected=%u returned=%u CR2=%lx error=%lx\r\n",
+          gExpectedNxFaults, gUnexpectedFaults, gCodeReturned,
+          gLastCr2, gLastErrorCode);
+    if (gExpectedNxFaults != 1 || gUnexpectedFaults != 0 || gCodeReturned != 0 ||
+        gLastCr2 != gExpectedCr2 || (gLastErrorCode & 0x17U) != 0x11U) {
+        finish_test(QEMU_TEST_FAIL, L"FAIL - NX execution fault was not verified");
+    }
+    status = fadal_x86_set_page_permissions(&gTestMapping, 0,
+                                            FADAL_X86_PTE_NX);
+    if (EFI_ERROR(status)) {
+        finish_test(QEMU_TEST_FAIL, L"FAIL - unable to restore executable mapping");
+    }
+    execute_test_page();
+    if (gUnexpectedFaults != 0 || gCodeReturned == 0) {
+        finish_test(QEMU_TEST_FAIL, L"FAIL - executable mapping did not recover after NX test");
+    }
+    Print(L"PFTEST: NX error=%lx expected-execute-faults=%u\r\n",
+          gLastErrorCode, gExpectedNxFaults);
+
     current_cr0 = read_cr0();
     write_cr0(current_cr0 | X86_CR0_WP);
-    make_test_page_read_only();
+    status = make_test_page_read_only();
+    if (EFI_ERROR(status)) {
+        finish_test(QEMU_TEST_FAIL, L"FAIL - unable to make test code page read-only");
+    }
+    if (!parent_permissions_unchanged()) {
+        finish_test(QEMU_TEST_FAIL, L"FAIL - RO update changed parent RW/NX permissions");
+    }
     Print(L"PFTEST: stage=read-only-set\r\n");
     write_target = (volatile UINT8 *)(UINTN)(gTestPage + 16);
     original_value = *write_target;
@@ -533,5 +426,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
 
     Print(L"PFTEST: CR2=%lx error=%lx expected-write-faults=%u\r\n",
           gLastCr2, gLastErrorCode, gExpectedFaults);
-    finish_test(QEMU_TEST_PASS, L"PASS - code-page write raised and recovered from #PF");
+    finish_test(QEMU_TEST_PASS,
+                L"PASS - NX and read-only page faults were caught and recovered");
 }

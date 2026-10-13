@@ -1,10 +1,15 @@
 #include <efi.h>
 #include <efilib.h>
 #include "net.h"
+#include "page_tables.h"
 
 #define FADAL_UEFI_MAGIC 0x46444c3634ULL /* "FDL64" */
-#define FADAL_UEFI_VERSION 2U
+#define FADAL_UEFI_VERSION_LEGACY 2U
+#define FADAL_UEFI_VERSION_CURRENT 3U
 #define FADAL_UEFI_MAX_IMAGE (64U * 1024U * 1024U)
+#define FADAL_LAYOUT_MAGIC 0x314d5046U /* "FPM1" */
+#define FADAL_LAYOUT_VERSION 1U
+#define FADAL_PAGE_SIZE 4096U
 
 typedef struct {
     UINT64 magic;
@@ -13,6 +18,19 @@ typedef struct {
     UINT64 memory_size;
     UINT64 entry_offset;
 } FADAL_UEFI_HEADER;
+
+typedef struct {
+    UINT32 magic;
+    UINT32 version;
+    UINT32 text_start;
+    UINT32 text_end;
+    UINT32 rodata_start;
+    UINT32 rodata_end;
+    UINT32 data_start;
+    UINT32 data_end;
+    UINT32 bss_start;
+    UINT32 memory_end;
+} FADAL_MEMORY_LAYOUT;
 
 typedef struct {
     UINT64 base;
@@ -170,17 +188,65 @@ cleanup:
     return 0;
 }
 
+static BOOLEAN valid_memory_layout(const FADAL_MEMORY_LAYOUT *layout,
+                                   UINTN file_size, UINTN memory_size,
+                                   UINT64 entry_offset) {
+    const UINT32 page = FADAL_PAGE_SIZE;
+    if (layout->magic != FADAL_LAYOUT_MAGIC ||
+        layout->version != FADAL_LAYOUT_VERSION ||
+        layout->memory_end != memory_size ||
+        layout->text_start < page || layout->text_start % page != 0 ||
+        layout->text_end % page != 0 || layout->rodata_start % page != 0 ||
+        layout->rodata_end % page != 0 || layout->data_start % page != 0 ||
+        layout->data_end % page != 0 || layout->bss_start % page != 0 ||
+        layout->memory_end % page != 0 ||
+        layout->text_start >= layout->text_end ||
+        layout->text_end != layout->rodata_start ||
+        layout->rodata_start >= layout->rodata_end ||
+        layout->rodata_end != layout->data_start ||
+        layout->data_start >= layout->data_end ||
+        layout->data_end != layout->bss_start ||
+        layout->bss_start >= layout->memory_end ||
+        entry_offset < layout->text_start || entry_offset >= layout->text_end ||
+        layout->data_end != file_size) {
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static VOID payload_page_permissions(const FADAL_MEMORY_LAYOUT *layout,
+                                     UINT64 offset,
+                                     UINT64 *set_flags,
+                                     UINT64 *clear_flags) {
+    if (offset < layout->text_start) {
+        *set_flags = FADAL_X86_PTE_NX;
+        *clear_flags = FADAL_X86_PTE_WRITE;
+    } else if (offset < layout->text_end) {
+        *set_flags = 0;
+        *clear_flags = FADAL_X86_PTE_WRITE | FADAL_X86_PTE_NX;
+    } else if (offset < layout->data_start) {
+        *set_flags = FADAL_X86_PTE_NX;
+        *clear_flags = FADAL_X86_PTE_WRITE;
+    } else {
+        *set_flags = FADAL_X86_PTE_WRITE | FADAL_X86_PTE_NX;
+        *clear_flags = 0;
+    }
+}
+
 static EFI_STATUS read_payload(EFI_FILE_HANDLE root, VOID **payload,
                                UINTN *file_size_out, UINTN *memory_size_out,
-                               UINT64 *entry_offset) {
+                               UINT64 *entry_offset,
+                               FADAL_MEMORY_LAYOUT *layout_out,
+                               BOOLEAN *has_layout_out) {
     EFI_FILE_HANDLE file = NULL;
     EFI_FILE_INFO *info = NULL;
     UINTN info_size = 0;
     UINTN read_size;
     UINTN file_size;
     UINTN memory_size;
-    UINTN allocation_size;
-    VOID *allocation = NULL;
+    UINTN allocation_pages;
+    UINTN allocation_bytes;
+    EFI_PHYSICAL_ADDRESS allocation_base = 0;
     EFI_STATUS status;
     FADAL_UEFI_HEADER header;
 
@@ -220,7 +286,8 @@ static EFI_STATUS read_payload(EFI_FILE_HANDLE root, VOID **payload,
         return EFI_LOAD_ERROR;
     }
     if (header.magic != FADAL_UEFI_MAGIC ||
-        header.version != FADAL_UEFI_VERSION ||
+        (header.version != FADAL_UEFI_VERSION_LEGACY &&
+         header.version != FADAL_UEFI_VERSION_CURRENT) ||
         header.header_size != sizeof(header) ||
         header.memory_size < file_size ||
         header.memory_size > FADAL_UEFI_MAX_IMAGE ||
@@ -237,30 +304,118 @@ static EFI_STATUS read_payload(EFI_FILE_HANDLE root, VOID **payload,
         uefi_call_wrapper(file->Close, 1, file);
         return EFI_LOAD_ERROR;
     }
-    /* Pool pointers are not guaranteed to satisfy the payload's 16-byte ABI. */
-    allocation_size = memory_size + 15U;
-    status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData,
-                               allocation_size, &allocation);
+    allocation_pages = (memory_size + FADAL_PAGE_SIZE - 1U) / FADAL_PAGE_SIZE;
+    allocation_bytes = allocation_pages * FADAL_PAGE_SIZE;
+    status = uefi_call_wrapper(BS->AllocatePages, 4, AllocateAnyPages,
+                               EfiLoaderData, allocation_pages, &allocation_base);
     if (EFI_ERROR(status)) {
         uefi_call_wrapper(BS->FreePool, 1, info);
         uefi_call_wrapper(file->Close, 1, file);
         return status;
     }
-    *payload = (VOID *)(((UINTN)allocation + 15U) & ~((UINTN)15U));
-    SetMem(*payload, memory_size, 0);
+    *payload = (VOID *)(UINTN)allocation_base;
+    SetMem(*payload, allocation_bytes, 0);
     read_size = file_size;
     status = uefi_call_wrapper(file->Read, 3, file, &read_size, *payload);
     uefi_call_wrapper(file->Close, 1, file);
     uefi_call_wrapper(BS->FreePool, 1, info);
     if (EFI_ERROR(status) || read_size != file_size) {
-        uefi_call_wrapper(BS->FreePool, 1, allocation);
+        uefi_call_wrapper(BS->FreePages, 2, allocation_base, allocation_pages);
         *payload = NULL;
         return EFI_LOAD_ERROR;
+    }
+
+    *has_layout_out = FALSE;
+    SetMem(layout_out, sizeof(*layout_out), 0);
+    if (header.version == FADAL_UEFI_VERSION_CURRENT) {
+        if (file_size < sizeof(header) + sizeof(*layout_out)) {
+            uefi_call_wrapper(BS->FreePages, 2, allocation_base, allocation_pages);
+            *payload = NULL;
+            return EFI_UNSUPPORTED;
+        }
+        CopyMem(layout_out, (UINT8 *)*payload + sizeof(header), sizeof(*layout_out));
+        if (!valid_memory_layout(layout_out, file_size, memory_size, header.entry_offset)) {
+            uefi_call_wrapper(BS->FreePages, 2, allocation_base, allocation_pages);
+            *payload = NULL;
+            return EFI_UNSUPPORTED;
+        }
+        *has_layout_out = TRUE;
     }
 
     *file_size_out = file_size;
     *memory_size_out = memory_size;
     *entry_offset = header.entry_offset;
+    return EFI_SUCCESS;
+}
+
+static EFI_STATUS protect_payload_pages(VOID *payload, UINTN memory_size,
+                                        const FADAL_MEMORY_LAYOUT *layout) {
+    UINTN page_count;
+    UINTN page_index;
+    UINTN changed_pages = 0;
+    UINTN map_bytes;
+    UINT64 base = (UINT64)(UINTN)payload;
+    FADAL_X86_PAGE_MAPPING *mappings = NULL;
+    FADAL_X86_PAGE_TABLE_CONTEXT context;
+    EFI_STATUS status;
+
+    if ((memory_size % FADAL_PAGE_SIZE) != 0 ||
+        layout->memory_end != memory_size) {
+        return EFI_UNSUPPORTED;
+    }
+    status = fadal_x86_enable_nx();
+    if (EFI_ERROR(status)) return status;
+
+    page_count = memory_size / FADAL_PAGE_SIZE;
+    map_bytes = page_count * sizeof(*mappings);
+    status = uefi_call_wrapper(BS->AllocatePool, 3, EfiLoaderData,
+                               map_bytes, (VOID **)&mappings);
+    if (EFI_ERROR(status)) return status;
+    SetMem(mappings, map_bytes, 0);
+    SetMem(&context, sizeof(context), 0);
+
+    /* Resolve every leaf first. If a mapping is unsupported, restore any
+       large-page splits before changing a single payload permission. */
+    for (page_index = 0; page_index < page_count; page_index++) {
+        UINT64 page_address = base + (UINT64)page_index * FADAL_PAGE_SIZE;
+        UINT64 set_flags;
+        UINT64 clear_flags;
+        status = fadal_x86_walk_page(BS, &context, page_address,
+                                     &mappings[page_index]);
+        if (!EFI_ERROR(status)) {
+            payload_page_permissions(layout,
+                                     (UINT64)page_index * FADAL_PAGE_SIZE,
+                                     &set_flags, &clear_flags);
+            status = fadal_x86_check_page_permissions(&mappings[page_index],
+                                                     set_flags, clear_flags);
+        }
+        if (EFI_ERROR(status)) {
+            fadal_x86_restore_splits(BS, &context);
+            uefi_call_wrapper(BS->FreePool, 1, mappings);
+            return status;
+        }
+    }
+
+    fadal_x86_enable_write_protect();
+    for (page_index = 0; page_index < page_count; page_index++) {
+        UINT64 offset = (UINT64)page_index * FADAL_PAGE_SIZE;
+        UINT64 set_flags;
+        UINT64 clear_flags;
+        payload_page_permissions(layout, offset, &set_flags, &clear_flags);
+        status = fadal_x86_set_page_permissions(&mappings[page_index],
+                                                set_flags, clear_flags);
+        if (EFI_ERROR(status)) {
+            fadal_x86_restore_leaf_permissions(mappings, changed_pages);
+            fadal_x86_restore_splits(BS, &context);
+            uefi_call_wrapper(BS->FreePool, 1, mappings);
+            return status;
+        }
+        changed_pages++;
+    }
+
+    Print(L"W^X page policy installed: %lu pages, %lu table splits\r\n",
+          page_count, context.SplitCount);
+    uefi_call_wrapper(BS->FreePool, 1, mappings);
     return EFI_SUCCESS;
 }
 
@@ -273,6 +428,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
     UINTN payload_size = 0;
     UINTN payload_memory_size = 0;
     UINT64 entry_offset = 0;
+    FADAL_MEMORY_LAYOUT memory_layout;
+    BOOLEAN has_memory_layout = FALSE;
     FADAL_UEFI_ENTRY entry;
     EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
     FADAL_FRAMEBUFFER framebuffer;
@@ -344,7 +501,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
     }
 
     status = read_payload(root, &payload, &payload_size, &payload_memory_size,
-                          &entry_offset);
+                          &entry_offset, &memory_layout, &has_memory_layout);
     if (EFI_ERROR(status)) {
         Print(L"error: FADAL.KRN is not a supported Fadal64 payload: %r\r\n", status);
         return status;
@@ -352,6 +509,20 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
 
     Print(L"payload loaded (%lu file / %lu memory bytes)\r\n",
           payload_size, payload_memory_size);
+    if (has_memory_layout) {
+        status = protect_payload_pages(payload, payload_memory_size,
+                                       &memory_layout);
+        if (EFI_ERROR(status)) {
+            UINTN pages = (payload_memory_size + FADAL_PAGE_SIZE - 1U) /
+                          FADAL_PAGE_SIZE;
+            Print(L"error: refusing unprotected FDL64 v3 payload: %r\r\n", status);
+            uefi_call_wrapper(BS->FreePages, 2,
+                              (EFI_PHYSICAL_ADDRESS)(UINTN)payload, pages);
+            return status;
+        }
+    } else {
+        Print(L"warning: legacy FDL64 v2 has no W^X segment manifest\r\n");
+    }
     services.http_download = fadal_http_download;
     services.http_available = g_fadal_http != NULL;
     entry = (FADAL_UEFI_ENTRY)((UINT8 *)payload + entry_offset);

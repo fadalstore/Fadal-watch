@@ -65,6 +65,13 @@ const u8 fadal64_layout[40] = {
 #define EVENT_KEYBOARD 1
 #define EVENT_MOUSE 2
 #define EVENT_SERIAL 3
+#define KEY_LEFT 0x80
+#define KEY_RIGHT 0x81
+#define KEY_HOME 0x82
+#define KEY_END 0x83
+#define KEY_DELETE 0x84
+#define KEY_PAGE_UP 0x85
+#define KEY_PAGE_DOWN 0x86
 
 typedef struct {
     u8 type;
@@ -97,6 +104,12 @@ static char terminal_lines[TERMINAL_ROWS][TERMINAL_COLUMNS];
 static u32 terminal_line_head;
 static u32 terminal_lines_used;
 static u32 terminal_column;
+static u32 terminal_view_offset;
+static u32 terminal_input_start;
+static u32 terminal_input_limit;
+static u32 terminal_input_length;
+static u32 terminal_input_cursor;
+static u8 terminal_input_active;
 static const char *desktop_status = "SYSTEM READY";
 static fadal_uefi_services *desktop_services;
 static u32 current_uid = USER_ROOT;
@@ -203,7 +216,10 @@ static u32 terminal_view_rows(void) {
 static void terminal_begin_line(void) {
     u32 index;
     terminal_line_head = (terminal_line_head + 1U) % TERMINAL_ROWS;
-    if (terminal_lines_used < TERMINAL_ROWS) terminal_lines_used++;
+    if (terminal_lines_used < TERMINAL_ROWS) {
+        terminal_lines_used++;
+        if (terminal_view_offset != 0) terminal_view_offset++;
+    }
     terminal_column = 0;
     for (index = 0; index < TERMINAL_COLUMNS; index++) {
         terminal_lines[terminal_line_head][index] = '\0';
@@ -218,6 +234,7 @@ static void terminal_render(void) {
     u32 rows;
     u32 visible;
     u32 first;
+    u32 max_offset;
     u32 index;
     if (desktop_mode == 0 || framebuffer == (fadal_framebuffer *)0 ||
         framebuffer->width < 640 || framebuffer->height < 400) return;
@@ -229,10 +246,23 @@ static void terminal_render(void) {
     if (rows == 0 || right <= left || bottom <= top) return;
     fb_fill(left, top, right, bottom, TERMINAL_BG);
     visible = terminal_lines_used < rows ? terminal_lines_used : rows;
-    first = (terminal_line_head + TERMINAL_ROWS + 1U - visible) % TERMINAL_ROWS;
+    max_offset = terminal_lines_used - visible;
+    if (terminal_view_offset > max_offset) terminal_view_offset = max_offset;
+    visible = terminal_lines_used - terminal_view_offset;
+    if (visible > rows) visible = rows;
+    first = (terminal_line_head + TERMINAL_ROWS + 1U - visible - terminal_view_offset) % TERMINAL_ROWS;
     for (index = 0; index < visible; index++) {
         u32 line = (first + index) % TERMINAL_ROWS;
         fb_text(left, top + index * 9, terminal_lines[line], 0x00d8eaff, 1);
+    }
+    if (terminal_input_active != 0 && terminal_view_offset == 0 && visible != 0 &&
+        input_focus == FOCUS_TERMINAL && start_open == 0) {
+        u32 cursor_column = terminal_input_start + terminal_input_cursor;
+        if (cursor_column < terminal_view_columns()) {
+            u32 cursor_x = left + cursor_column * 6;
+            u32 cursor_y = top + (visible - 1U) * 9;
+            fb_fill(cursor_x, cursor_y, cursor_x + 2, cursor_y + 8, 0x00ffffff);
+        }
     }
 }
 
@@ -241,7 +271,7 @@ static void terminal_draw_cell(u32 column, char value) {
     u32 left = terminal_x + 22;
     u32 top = terminal_y + 56;
     u32 row;
-    if (rows == 0 || column >= terminal_view_columns()) return;
+    if (terminal_view_offset != 0 || rows == 0 || column >= terminal_view_columns()) return;
     row = terminal_lines_used > rows ? rows - 1 : terminal_lines_used - 1;
     top += row * 9;
     left += column * 6;
@@ -264,7 +294,7 @@ static void terminal_putc(char value) {
         rows = terminal_view_rows();
         index = rows != 0 && terminal_lines_used >= rows;
         terminal_begin_line();
-        if (index != 0) terminal_render();
+        if (index != 0 || terminal_view_offset != 0) terminal_render();
         return;
     }
     if (value == '\b' || value == 127) {
@@ -280,7 +310,7 @@ static void terminal_putc(char value) {
         rows = terminal_view_rows();
         index = rows != 0 && terminal_lines_used >= rows;
         terminal_begin_line();
-        if (index != 0) terminal_render();
+        if (index != 0 || terminal_view_offset != 0) terminal_render();
     }
     index = terminal_column;
     terminal_lines[terminal_line_head][index] = value;
@@ -373,6 +403,44 @@ static void desktop_redraw(void) {
         fb_text(54, framebuffer->height - 130, "SYSTEM", 0x00ffffff, 2);
     }
     cursor_draw();
+}
+
+static void terminal_scroll(int direction) {
+    u32 rows;
+    u32 visible;
+    u32 max_offset;
+    u32 step;
+    if (desktop_mode == 0) return;
+    rows = terminal_view_rows();
+    if (rows == 0) return;
+    visible = terminal_lines_used < rows ? terminal_lines_used : rows;
+    max_offset = terminal_lines_used - visible;
+    step = rows > 1 ? rows - 1 : 1;
+    if (direction > 0) {
+        if (terminal_view_offset + step > max_offset) terminal_view_offset = max_offset;
+        else terminal_view_offset += step;
+    } else if (terminal_view_offset > step) {
+        terminal_view_offset -= step;
+    } else {
+        terminal_view_offset = 0;
+    }
+    desktop_redraw();
+}
+
+static void terminal_edit_redraw(const char *line, u32 length, u32 cursor) {
+    u32 index;
+    if (desktop_mode == 0) return;
+    for (index = 0; index < terminal_input_length; index++) {
+        terminal_lines[terminal_line_head][terminal_input_start + index] = '\0';
+    }
+    for (index = 0; index < length; index++) {
+        terminal_lines[terminal_line_head][terminal_input_start + index] = line[index];
+    }
+    terminal_lines[terminal_line_head][terminal_input_start + length] = '\0';
+    terminal_input_length = length;
+    terminal_input_cursor = cursor;
+    terminal_column = terminal_input_start + cursor;
+    desktop_redraw();
 }
 
 static void event_push(u8 type, u8 code, int dx, int dy, u32 buttons) {
@@ -582,6 +650,8 @@ static void console_clear(void) {
     terminal_line_head = 0;
     terminal_lines_used = 1;
     terminal_column = 0;
+    terminal_view_offset = 0;
+    terminal_input_active = 0;
     terminal_render();
 }
 
@@ -589,7 +659,7 @@ static int serial_ready(void) {
     return (fadal_inb(COM1 + 5) & 1) != 0;
 }
 
-static char keyboard_ascii(u8 code) {
+static u8 keyboard_ascii(u8 code) {
     static const char keys[128] = {
         [0x02]='1',[0x03]='2',[0x04]='3',[0x05]='4',[0x06]='5',[0x07]='6',[0x08]='7',[0x09]='8',[0x0a]='9',[0x0b]='0',
         [0x0c]='-',[0x0d]='=',[0x10]='q',[0x11]='w',[0x12]='e',[0x13]='r',[0x14]='t',[0x15]='y',[0x16]='u',[0x17]='i',
@@ -605,6 +675,25 @@ static char keyboard_ascii(u8 code) {
         [0x2e]='C',[0x2f]='V',[0x30]='B',[0x31]='N',[0x32]='M',[0x33]='<',[0x34]='>',[0x35]='?',[0x39]=' '
     };
     static u8 shift;
+    static u8 extended;
+    if (code == 0xe0) {
+        extended = 1;
+        return 0;
+    }
+    if (extended != 0) {
+        extended = 0;
+        if (code >= 128) return 0;
+        switch (code) {
+            case 0x4b: return KEY_LEFT;
+            case 0x4d: return KEY_RIGHT;
+            case 0x47: return KEY_HOME;
+            case 0x4f: return KEY_END;
+            case 0x53: return KEY_DELETE;
+            case 0x49: return KEY_PAGE_UP;
+            case 0x51: return KEY_PAGE_DOWN;
+            default: return 0;
+        }
+    }
     if (code == 0x2a || code == 0x36) { shift = 1; return 0; }
     if (code == 0xaa || code == 0xb6) { shift = 0; return 0; }
     if (code == 0x01) return 27;
@@ -612,7 +701,7 @@ static char keyboard_ascii(u8 code) {
     if (code == 0x1c) return '\n';
     if (code == 0x0e) return '\b';
     if (code >= 128) return 0;
-    return shift ? shifted[code] : keys[code];
+    return (u8)(shift ? shifted[code] : keys[code]);
 }
 
 static void event_pump(void) {
@@ -621,14 +710,14 @@ static void event_pump(void) {
     status = fadal_inb(KBD_STATUS);
     if ((status & KBD_STATUS_OUTPUT_FULL) != 0 &&
         (status & KBD_STATUS_AUX_DATA) == 0) {
-        char value = keyboard_ascii(fadal_inb(KBD_DATA));
-        if (value != 0) event_push(EVENT_KEYBOARD, (u8)value, 0, 0, 0);
+        u8 value = keyboard_ascii(fadal_inb(KBD_DATA));
+        if (value != 0) event_push(EVENT_KEYBOARD, value, 0, 0, 0);
     }
     mouse_poll();
 }
 
 static int desktop_handle_keyboard(const fadal_event *event) {
-    char value = (char)event->code;
+    u8 value = event->code;
     if (value == '\t') {
         start_open = 0;
         if (input_focus == FOCUS_TERMINAL) {
@@ -666,7 +755,7 @@ static int desktop_handle_keyboard(const fadal_event *event) {
     return 1;
 }
 
-static char serial_getc(void) {
+static u8 serial_getc(void) {
     fadal_event event;
     for (;;) {
         event_pump();
@@ -678,10 +767,10 @@ static char serial_getc(void) {
                     desktop_status = "TERMINAL FOCUSED";
                     desktop_redraw();
                 }
-                return (char)event.code;
+                return event.code;
             }
             if (event.type == EVENT_KEYBOARD) {
-                if (desktop_handle_keyboard(&event) != 0) return (char)event.code;
+                if (desktop_handle_keyboard(&event) != 0) return event.code;
             }
             if (event.type == EVENT_MOUSE) {
                 desktop_handle_mouse(&event);
@@ -693,6 +782,7 @@ static char serial_getc(void) {
 }
 
 static void prompt(void) {
+    terminal_view_offset = 0;
     console_write("fadal:/home/root# ");
 }
 
@@ -789,6 +879,7 @@ void fadal64_entry(fadal_framebuffer *incoming_framebuffer, fadal_uefi_services 
     static const char debug_banner[] = "FADALOS_CONSOLE_ENTRY\n";
     char line[LINE_MAX];
     u32 length;
+    u32 cursor;
     u32 index;
     u8 suppress_lf = 0;
 
@@ -812,27 +903,104 @@ void fadal64_entry(fadal_framebuffer *incoming_framebuffer, fadal_uefi_services 
     for (;;) {
         prompt();
         length = 0;
+        cursor = 0;
+        line[0] = '\0';
+        terminal_input_start = terminal_column;
+        terminal_input_limit = LINE_MAX - 1;
+        terminal_input_length = 0;
+        terminal_input_cursor = 0;
+        terminal_input_active = desktop_mode;
+        if (desktop_mode != 0) {
+            u32 columns = terminal_view_columns();
+            if (columns <= terminal_input_start + 1U) terminal_input_limit = 0;
+            else terminal_input_limit = columns - terminal_input_start - 1U;
+            if (terminal_input_limit >= LINE_MAX) terminal_input_limit = LINE_MAX - 1U;
+            terminal_column = terminal_input_start;
+            desktop_redraw();
+        }
         for (;;) {
-            char value = serial_getc();
+            u8 value = serial_getc();
             if (suppress_lf != 0) {
                 suppress_lf = 0;
                 if (value == '\n') continue;
             }
             if (value == '\r' || value == '\n') {
-                console_write("\r\n");
                 line[length] = '\0';
+                if (desktop_mode != 0) {
+                    terminal_input_active = 0;
+                    terminal_view_offset = 0;
+                    terminal_column = terminal_input_start + length;
+                    desktop_redraw();
+                }
+                console_write("\r\n");
                 run_command(line);
                 if (value == '\r') suppress_lf = 1;
                 break;
             }
-            if ((value == '\b' || value == 127) && length > 0) {
+            if (desktop_mode == 0) {
+                if ((value == '\b' || value == 127) && length > 0) {
+                    length--;
+                    cursor = length;
+                    console_write("\b \b");
+                } else if (value >= 32 && value <= 126 && length + 1U < LINE_MAX) {
+                    line[length++] = (char)value;
+                    cursor = length;
+                    serial_putc(value);
+                    vga_putc((char)value);
+                    terminal_putc((char)value);
+                }
+                line[length] = '\0';
+                continue;
+            }
+            if (value == KEY_PAGE_UP) {
+                terminal_scroll(1);
+                continue;
+            }
+            if (value == KEY_PAGE_DOWN) {
+                terminal_scroll(-1);
+                continue;
+            }
+            if (value == KEY_LEFT) {
+                if (cursor > 0) terminal_edit_redraw(line, length, --cursor);
+                continue;
+            }
+            if (value == KEY_RIGHT) {
+                if (cursor < length) terminal_edit_redraw(line, length, ++cursor);
+                continue;
+            }
+            if (value == KEY_HOME) {
+                if (cursor != 0) {
+                    cursor = 0;
+                    terminal_edit_redraw(line, length, cursor);
+                }
+                continue;
+            }
+            if (value == KEY_END) {
+                if (cursor != length) {
+                    cursor = length;
+                    terminal_edit_redraw(line, length, cursor);
+                }
+                continue;
+            }
+            if ((value == '\b' || value == 127) && cursor > 0) {
+                for (index = cursor - 1U; index < length; index++) line[index] = line[index + 1U];
+                cursor--;
                 length--;
-                console_write("\b \b");
-            } else if (value >= 32 && value <= 126 && length + 1 < LINE_MAX) {
-                line[length++] = value;
-                serial_putc((u8)value);
-                vga_putc(value);
-                terminal_putc(value);
+                serial_putc('\b');
+                serial_putc(' ');
+                serial_putc('\b');
+                terminal_edit_redraw(line, length, cursor);
+            } else if (value == KEY_DELETE && cursor < length) {
+                for (index = cursor; index < length; index++) line[index] = line[index + 1U];
+                length--;
+                terminal_edit_redraw(line, length, cursor);
+            } else if (value >= 32 && value <= 126 && length < terminal_input_limit) {
+                for (index = length; index > cursor; index--) line[index] = line[index - 1U];
+                line[cursor++] = (char)value;
+                length++;
+                line[length] = '\0';
+                serial_putc(value);
+                terminal_edit_redraw(line, length, cursor);
             }
         }
     }

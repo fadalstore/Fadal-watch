@@ -64,20 +64,28 @@ PS/2 AUX bytes are separated from keyboard bytes. Shell keystrokes are ignored
 unless the terminal owns focus; UART input remains an explicit path back to the
 terminal.
 
+The UEFI terminal interaction milestone is implemented: Left/Right, Home/End,
+insertion at the cursor, Backspace, and Delete edit the current command; PageUp
+and PageDown page through the bounded 64-line scrollback. The editor limits the
+line to the visible prompt row, and the terminal returns to the live tail when a
+new prompt begins.
+
 Verified commands are `scripts/validate-repo.sh --uefi`,
-`make -C kernel/uefi test-page-protection`, and
-`make -C kernel/uefi test-keyboard-focus`. The focus regression boots the
+`make -C kernel/uefi test-page-protection`,
+`make -C kernel/uefi test-keyboard-focus`, and
+`make -C kernel/uefi test-terminal-input`. The focus regression boots the
 production ESP under QEMU/OVMF, proves desktop-focused typing does not reach the
-shell, then returns focus and executes `help`. Inspect
-`kernel/uefi/out/keyboard-focus.ppm`. The isolated protection test must report
+shell, then returns focus and executes `help`. The terminal-input regression
+reconstructs commands through cursor editing and verifies that PageUp/PageDown
+change and restore the framebuffer view. Inspect
+`kernel/uefi/out/keyboard-focus.ppm`,
+`kernel/uefi/out/terminal-scrollback.ppm`, and
+`kernel/uefi/out/terminal-tail.ppm`. The isolated protection test must report
 both the NX instruction-fetch fault (`error=0x11`) and read-only write fault
 (`error=0x3`); the linker should show separate `R`, `R E`, `R`, `RW` LOAD
-segments with no RWX warning. The framebuffer terminal compositor still
-renders a fixed 64-line by 160-character scrollback and keyboard echo. Next
-graphical milestones are terminal editing/scroll controls, then window
-controls; keep the BIOS shell and UEFI desktop as separate deliverables. Always
-boot-test loader or compositor changes under QEMU/UTM and inspect the
-framebuffer.
+segments with no RWX warning. The next graphical milestone is window controls;
+keep the BIOS shell and UEFI desktop as separate deliverables. Always boot-test
+loader or compositor changes under QEMU/UTM and inspect the framebuffer.
 
 Separately, continue native Git smart-HTTP only after the TCP receive, HTTP parsing, TLS boundary, and certificate strategy are explicitly designed. Do not describe the current `github` shell bridge as a native clone implementation.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise UEFI desktop keyboard focus routing under QEMU/OVMF."""
+"""Exercise UEFI keyboard focus and optional terminal input under QEMU/OVMF."""
 
 import argparse
 import os
@@ -20,6 +20,32 @@ def send_monitor_command(process: subprocess.Popen[str], command: str,
     time.sleep(delay)
 
 
+def send_keys(process: subprocess.Popen[str], keys: tuple[str, ...]) -> None:
+    for key in keys:
+        send_monitor_command(process, f"sendkey {key}")
+
+
+def ppm_pixels(path: Path) -> bytes:
+    image = path.read_bytes()
+    header = image.split(b"\n", 3)
+    if len(header) != 4 or header[0] != b"P6" or header[2] != b"255":
+        raise RuntimeError(f"invalid PPM framebuffer capture: {path}")
+    return header[3]
+
+
+def wait_for_titlebar_color(process: subprocess.Popen[str], screenshot: Path,
+                            expected: bytes, timeout: float = 3.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        send_monitor_command(process, f"screendump {screenshot}", delay=0.12)
+        pixels = ppm_pixels(screenshot)
+        width = int(screenshot.read_bytes().split(b"\n", 3)[1].split()[0])
+        offset = (100 * width + 500) * 3
+        if pixels[offset:offset + 3] == expected:
+            return
+    raise RuntimeError("terminal title-bar did not reach the requested focus state")
+
+
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -32,6 +58,12 @@ def main() -> int:
                         default=Path(os.environ.get("OVMF_VARS", "/usr/share/OVMF/OVMF_VARS_4M.fd")))
     parser.add_argument("--screenshot", type=Path,
                         default=root / "kernel/uefi/out/keyboard-focus.ppm")
+    parser.add_argument("--terminal-input", action="store_true",
+                        help="also test cursor editing and PageUp/PageDown scrollback")
+    parser.add_argument("--scroll-screenshot", type=Path,
+                        default=root / "kernel/uefi/out/terminal-scrollback.ppm")
+    parser.add_argument("--tail-screenshot", type=Path,
+                        default=root / "kernel/uefi/out/terminal-tail.ppm")
     parser.add_argument("--timeout", type=float, default=20.0)
     args = parser.parse_args()
 
@@ -45,6 +77,11 @@ def main() -> int:
 
     args.screenshot.parent.mkdir(parents=True, exist_ok=True)
     args.screenshot.unlink(missing_ok=True)
+    if args.terminal_input:
+        args.scroll_screenshot.parent.mkdir(parents=True, exist_ok=True)
+        args.tail_screenshot.parent.mkdir(parents=True, exist_ok=True)
+        args.scroll_screenshot.unlink(missing_ok=True)
+        args.tail_screenshot.unlink(missing_ok=True)
     with tempfile.TemporaryDirectory(prefix="fadal-focus-") as temporary:
         temp = Path(temporary)
         serial_log = temp / "serial.log"
@@ -79,7 +116,7 @@ def main() -> int:
 
             time.sleep(0.8)
             send_monitor_command(process, "sendkey tab")
-            time.sleep(0.35)
+            wait_for_titlebar_color(process, temp / "focus-state.ppm", bytes((28, 49, 84)))
             for _ in range(4):
                 send_monitor_command(process, "sendkey z")
             time.sleep(0.5)
@@ -92,8 +129,9 @@ def main() -> int:
             if not args.screenshot.is_file() or args.screenshot.stat().st_size < 1024:
                 raise RuntimeError("QEMU did not produce the requested desktop-focus screenshot")
 
-            for key in ("tab", "h", "e", "l", "p", "ret"):
-                send_monitor_command(process, f"sendkey {key}")
+            send_monitor_command(process, "sendkey tab")
+            wait_for_titlebar_color(process, temp / "focus-state.ppm", bytes((45, 95, 155)))
+            send_keys(process, ("h", "e", "l", "p", "ret"))
             time.sleep(0.6)
             serial = serial_log.read_text(errors="replace") if serial_log.exists() else ""
             if "commands: help clear pwd" not in serial:
@@ -101,6 +139,40 @@ def main() -> int:
 
             print("PASS: Tab moved focus to the desktop and terminal input was suppressed.")
             print("PASS: Tab restored terminal focus and the help command executed.")
+            if args.terminal_input:
+                send_keys(process, ("h", "e", "p", "left", "l", "ret"))
+                time.sleep(0.6)
+                serial = serial_log.read_text(errors="replace") if serial_log.exists() else ""
+                if serial.count("commands: help clear pwd") < 2:
+                    raise RuntimeError("left-arrow insertion did not execute the reconstructed help command")
+
+                send_keys(process, ("h", "e", "p", "l", "home", "right", "right",
+                                    "delete", "end", "p", "ret"))
+                time.sleep(0.6)
+                serial = serial_log.read_text(errors="replace") if serial_log.exists() else ""
+                if serial.count("commands: help clear pwd") < 3:
+                    raise RuntimeError("Home/Right/End/Delete editing did not execute the reconstructed help command")
+
+                send_keys(process, ("h", "e", "l", "p", "left", "backspace", "l", "ret"))
+                time.sleep(0.6)
+                serial = serial_log.read_text(errors="replace") if serial_log.exists() else ""
+                if serial.count("commands: help clear pwd") < 4:
+                    raise RuntimeError("mid-line Backspace editing did not execute the reconstructed help command")
+
+                for _ in range(30):
+                    send_keys(process, ("l", "s", "ret"))
+                send_monitor_command(process, "sendkey pgup", delay=0.45)
+                send_monitor_command(process, f"screendump {args.scroll_screenshot}", delay=0.35)
+                send_monitor_command(process, "sendkey pgdn", delay=0.45)
+                send_monitor_command(process, f"screendump {args.tail_screenshot}", delay=0.35)
+                if not args.scroll_screenshot.is_file() or not args.tail_screenshot.is_file():
+                    raise RuntimeError("QEMU did not produce both scrollback framebuffer captures")
+                if ppm_pixels(args.scroll_screenshot) == ppm_pixels(args.tail_screenshot):
+                    raise RuntimeError("PageUp/PageDown did not change the terminal scrollback view")
+                print("PASS: Left/Right, Home/End, Delete, and Backspace edited commands in place.")
+                print("PASS: PageUp/PageDown changed and restored the terminal scrollback view.")
+                print(f"Scrollback capture: {args.scroll_screenshot.resolve()}")
+                print(f"Tail capture: {args.tail_screenshot.resolve()}")
             print(f"Framebuffer screenshot: {args.screenshot.resolve()}")
             return 0
         finally:

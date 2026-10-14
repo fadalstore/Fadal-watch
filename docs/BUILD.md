@@ -124,6 +124,20 @@ It saves a framebuffer capture at `kernel/uefi/out/keyboard-focus.ppm` for visua
 inspection. QEMU and OVMF paths can be overridden with `QEMU`, `OVMF_CODE`, and
 `OVMF_VARS` make variables.
 
+Run the expanded terminal interaction regression with:
+
+```sh
+make -C kernel/uefi test-terminal-input
+```
+
+It additionally reconstructs commands using cursor movement, insertion,
+Home/End/Right, Delete, and mid-line Backspace, then fills the bounded scrollback
+and verifies that `PageUp`/`PageDown` change and restore the framebuffer view.
+The captures are `kernel/uefi/out/terminal-scrollback.ppm` and
+`kernel/uefi/out/terminal-tail.ppm`. The editor keeps input on the current
+visible prompt row; the terminal follows new output by default, and the paging
+keys move through the retained 64-line history.
+
 The UEFI desktop keeps Boot Services active so it can discover the EFI HTTP
 protocol or its HTTP Service Binding protocol. When firmware provides it, the
 terminal accepts:

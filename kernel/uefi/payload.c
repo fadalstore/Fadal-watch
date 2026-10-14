@@ -57,6 +57,14 @@ const u8 fadal64_layout[40] = {
 #define TERMINAL_BG 0x000a101e
 #define USER_ROOT 0
 #define USER_FADAL 1000
+#define FOCUS_TERMINAL 1
+#define FOCUS_START_MENU 2
+#define FOCUS_DESKTOP 3
+#define KBD_STATUS_OUTPUT_FULL 0x01
+#define KBD_STATUS_AUX_DATA 0x20
+#define EVENT_KEYBOARD 1
+#define EVENT_MOUSE 2
+#define EVENT_SERIAL 3
 
 typedef struct {
     u8 type;
@@ -93,6 +101,7 @@ static const char *desktop_status = "SYSTEM READY";
 static fadal_uefi_services *desktop_services;
 static u32 current_uid = USER_ROOT;
 static const char current_user[] = "root";
+static u8 input_focus = FOCUS_TERMINAL;
 
 static void fb_pixel(u32 x, u32 y, u32 color) {
     volatile u32 *pixels;
@@ -296,7 +305,8 @@ static void desktop_render(void) {
     fb_fill(52, 98, 250, 230, 0x00243f6d);
     fb_fill(66, 112, 236, 220, 0x002b4d80);
     fb_fill(terminal_x, terminal_y, width - 52, height - 112, 0x000d1528);
-    fb_fill(terminal_x, terminal_y, width - 52, terminal_y + 34, 0x001c3154);
+    fb_fill(terminal_x, terminal_y, width - 52, terminal_y + 34,
+            input_focus == FOCUS_TERMINAL ? 0x002d5f9b : 0x001c3154);
     fb_fill(terminal_x + 14, terminal_y + 52, width - 70, height - 132, TERMINAL_BG);
     fb_fill(26, height - 43, 126, height - 10, 0x002d5f9b);
     fb_fill(142, height - 43, 184, height - 10, 0x00243f6d);
@@ -384,7 +394,7 @@ static int event_pop(fadal_event *event) {
 }
 
 static void desktop_handle_mouse(const fadal_event *event) {
-    if (event->type != 2) return;
+    if (event->type != EVENT_MOUSE) return;
     if (terminal_dragging != 0) {
         if ((event->buttons & 1U) != 0) {
             if (mouse_x > terminal_drag_offset_x) terminal_x = mouse_x - terminal_drag_offset_x;
@@ -407,6 +417,7 @@ static void desktop_handle_mouse(const fadal_event *event) {
     if ((event->buttons & 1U) == 0) return;
     if (mouse_x >= terminal_x && mouse_x < framebuffer->width - 52 &&
         mouse_y >= terminal_y && mouse_y < terminal_y + 34) {
+        input_focus = FOCUS_TERMINAL;
         terminal_dragging = 1;
         terminal_drag_offset_x = mouse_x - terminal_x;
         terminal_drag_offset_y = mouse_y - terminal_y;
@@ -414,30 +425,50 @@ static void desktop_handle_mouse(const fadal_event *event) {
         desktop_redraw();
         return;
     }
+    if (mouse_x >= terminal_x && mouse_x < framebuffer->width - 52 &&
+        mouse_y >= terminal_y && mouse_y < framebuffer->height - 112) {
+        input_focus = FOCUS_TERMINAL;
+        start_open = 0;
+        desktop_status = "TERMINAL FOCUSED";
+        desktop_redraw();
+        return;
+    }
     if (mouse_x < 150 && mouse_y > framebuffer->height - 70) {
         start_open = (u8)!start_open;
-        desktop_status = start_open != 0 ? "START MENU OPEN" : "SYSTEM READY";
+        input_focus = start_open != 0 ? FOCUS_START_MENU : FOCUS_TERMINAL;
+        desktop_status = start_open != 0 ? "START MENU OPEN" : "TERMINAL FOCUSED";
     } else if (start_open != 0 && mouse_x >= 38 && mouse_x < 278 &&
                mouse_y >= framebuffer->height - 252 && mouse_y < framebuffer->height - 208) {
         start_open = 0;
+        input_focus = FOCUS_TERMINAL;
         desktop_status = "TERMINAL SELECTED";
     } else if (start_open != 0 && mouse_x >= 38 && mouse_x < 278 &&
                mouse_y >= framebuffer->height - 198 && mouse_y < framebuffer->height - 154) {
         start_open = 0;
+        input_focus = FOCUS_DESKTOP;
         desktop_status = "FILES SELECTED";
     } else if (start_open != 0 && mouse_x >= 38 && mouse_x < 278 &&
                mouse_y >= framebuffer->height - 144 && mouse_y < framebuffer->height - 100) {
         start_open = 0;
+        input_focus = FOCUS_DESKTOP;
         desktop_status = "SYSTEM SELECTED";
+    } else if (start_open != 0) {
+        input_focus = FOCUS_START_MENU;
+    } else {
+        input_focus = FOCUS_DESKTOP;
+        desktop_status = "DESKTOP FOCUSED";
     }
     desktop_redraw();
 }
 
 static void mouse_poll(void) {
     u8 value;
+    u8 status;
     int dx;
     int dy;
-    if (mouse_enabled == 0 || (fadal_inb(KBD_STATUS) & 1) == 0) return;
+    status = fadal_inb(KBD_STATUS);
+    if (mouse_enabled == 0 || (status & (KBD_STATUS_OUTPUT_FULL | KBD_STATUS_AUX_DATA)) !=
+        (KBD_STATUS_OUTPUT_FULL | KBD_STATUS_AUX_DATA)) return;
     value = fadal_inb(KBD_DATA);
     if (mouse_packet_index == 0 && (value & 8) == 0) return;
     mouse_packet[mouse_packet_index++] = value;
@@ -458,7 +489,7 @@ static void mouse_poll(void) {
     } else if ((mouse_packet[0] & 1) == 0) {
         mouse_buttons &= ~1U;
     }
-    event_push(2, 0, dx, dy, mouse_buttons);
+    event_push(EVENT_MOUSE, 0, dx, dy, mouse_buttons);
 }
 
 static void serial_init(void) {
@@ -576,6 +607,8 @@ static char keyboard_ascii(u8 code) {
     static u8 shift;
     if (code == 0x2a || code == 0x36) { shift = 1; return 0; }
     if (code == 0xaa || code == 0xb6) { shift = 0; return 0; }
+    if (code == 0x01) return 27;
+    if (code == 0x0f) return '\t';
     if (code == 0x1c) return '\n';
     if (code == 0x0e) return '\b';
     if (code >= 128) return 0;
@@ -583,12 +616,54 @@ static char keyboard_ascii(u8 code) {
 }
 
 static void event_pump(void) {
-    if (serial_ready()) event_push(1, fadal_inb(COM1), 0, 0, 0);
-    if (fadal_inb(KBD_STATUS) & 1) {
+    u8 status;
+    if (serial_ready()) event_push(EVENT_SERIAL, fadal_inb(COM1), 0, 0, 0);
+    status = fadal_inb(KBD_STATUS);
+    if ((status & KBD_STATUS_OUTPUT_FULL) != 0 &&
+        (status & KBD_STATUS_AUX_DATA) == 0) {
         char value = keyboard_ascii(fadal_inb(KBD_DATA));
-        if (value != 0) event_push(1, (u8)value, 0, 0, 0);
+        if (value != 0) event_push(EVENT_KEYBOARD, (u8)value, 0, 0, 0);
     }
     mouse_poll();
+}
+
+static int desktop_handle_keyboard(const fadal_event *event) {
+    char value = (char)event->code;
+    if (value == '\t') {
+        start_open = 0;
+        if (input_focus == FOCUS_TERMINAL) {
+            input_focus = FOCUS_DESKTOP;
+            desktop_status = "DESKTOP FOCUSED";
+        } else {
+            input_focus = FOCUS_TERMINAL;
+            desktop_status = "TERMINAL FOCUSED";
+        }
+        desktop_redraw();
+        return 0;
+    }
+    if (input_focus == FOCUS_START_MENU) {
+        if (value == 27) {
+            start_open = 0;
+            input_focus = FOCUS_TERMINAL;
+            desktop_status = "TERMINAL FOCUSED";
+            desktop_redraw();
+        } else if (value == '\n') {
+            start_open = 0;
+            input_focus = FOCUS_TERMINAL;
+            desktop_status = "TERMINAL SELECTED";
+            desktop_redraw();
+        }
+        return 0;
+    }
+    if (input_focus != FOCUS_TERMINAL) {
+        if (value == 27) {
+            input_focus = FOCUS_TERMINAL;
+            desktop_status = "TERMINAL FOCUSED";
+            desktop_redraw();
+        }
+        return 0;
+    }
+    return 1;
 }
 
 static char serial_getc(void) {
@@ -596,8 +671,19 @@ static char serial_getc(void) {
     for (;;) {
         event_pump();
         while (event_pop(&event) != 0) {
-            if (event.type == 1) return (char)event.code;
-            if (event.type == 2) {
+            if (event.type == EVENT_SERIAL) {
+                if (input_focus != FOCUS_TERMINAL || start_open != 0) {
+                    input_focus = FOCUS_TERMINAL;
+                    start_open = 0;
+                    desktop_status = "TERMINAL FOCUSED";
+                    desktop_redraw();
+                }
+                return (char)event.code;
+            }
+            if (event.type == EVENT_KEYBOARD) {
+                if (desktop_handle_keyboard(&event) != 0) return (char)event.code;
+            }
+            if (event.type == EVENT_MOUSE) {
                 desktop_handle_mouse(&event);
                 if (event.dx != 0 || event.dy != 0) desktop_redraw();
             }

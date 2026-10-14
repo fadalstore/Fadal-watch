@@ -75,7 +75,10 @@ parent permissions and changes only the target 4 KiB leaf, so neighboring
 firmware mappings are not made more permissive. Legacy v2 images remain loadable
 for compatibility, but are explicitly warned and do not receive W^X protection.
 The UEFI desktop terminal keeps a fixed 64-line by 160-character scrollback and
-draws console output and keyboard echo into the GOP framebuffer.
+draws console output and keyboard echo into the GOP framebuffer. Keyboard focus
+is explicit: `Tab` toggles terminal/desktop focus, and input is suppressed while
+the desktop or Start menu owns focus. Mouse AUX bytes are routed separately from
+PS/2 keyboard bytes.
 
 ### Isolated page-protection test
 
@@ -108,6 +111,18 @@ Override `QEMU`, `OVMF_CODE`, or `OVMF_VARS` when the tools or firmware images
 are installed elsewhere. A separate production image boot should also be
 checked after loader or page-table changes; compilation and the isolated test
 alone do not prove that the desktop survives the production handoff.
+
+Run the production keyboard-focus regression under QEMU/OVMF with:
+
+```sh
+make -C kernel/uefi test-keyboard-focus
+```
+
+The test types while desktop focus is active and verifies that those characters
+do not reach the shell, then returns focus to the terminal and executes `help`.
+It saves a framebuffer capture at `kernel/uefi/out/keyboard-focus.ppm` for visual
+inspection. QEMU and OVMF paths can be overridden with `QEMU`, `OVMF_CODE`, and
+`OVMF_VARS` make variables.
 
 The UEFI desktop keeps Boot Services active so it can discover the EFI HTTP
 protocol or its HTTP Service Binding protocol. When firmware provides it, the

@@ -8,7 +8,7 @@ FadalOS is an independent freestanding operating-system project owned by `fadals
 
 ## Current verified baseline
 
-The latest verified Git commit is the repository `main` branch. The BIOS path builds and boots under QEMU. The UEFI path builds and boots through GOP at 1280x800. The graphical UEFI desktop contains a workspace, top bar, terminal panel, taskbar, PS/2 cursor, Start menu, unified keyboard/mouse event queue, and draggable terminal window.
+The latest verified Git commit is the repository `main` branch. The BIOS path builds and boots under QEMU. The UEFI path builds and boots through GOP at 1280x800. The graphical UEFI desktop contains a workspace, top bar, terminal panel, taskbar, PS/2 cursor, Start menu, unified keyboard/mouse event queue, draggable terminal window, and focus-aware keyboard routing.
 
 The BIOS kernel currently includes preemptive scheduling foundations, dynamic processes, per-process address spaces, paging flags, page-fault handling, heap and slab allocation, FAT12 write/mount support, ATA PIO persistence, VFS, RAMFS, descriptor-backed file I/O, ring-3 `FSH.BIN`, a syscall ABI, TTY input, structured logging, a RAM disk, CPUID/SMP probes, synchronization primitives, an RTL8139 driver, Ethernet/ARP/IPv4 foundations, UDP/TCP prototypes, and Git protocol groundwork.
 
@@ -57,17 +57,27 @@ identity mappings, splits 1 GiB/2 MiB entries as needed, preserves inherited
 parent restrictions, and edits only payload leaf PTEs. FDL64 v2 remains
 loadable for compatibility but runs without W^X and produces a warning.
 
-Verified commands for this milestone are `scripts/validate-repo.sh --uefi`,
-`make -C kernel/uefi test-page-protection`, and a QEMU/OVMF boot of the
-production ESP image followed by framebuffer inspection. The isolated test
-must report both the NX instruction-fetch fault (`error=0x11`) and the
-read-only write fault (`error=0x3`). The linker should show separate `R`,
-`R E`, `R`, `RW` LOAD segments with no RWX warning. The framebuffer terminal
-compositor still renders a fixed 64-line by 160-character scrollback and
-keyboard echo. Next graphical milestones are focus-aware keyboard routing,
-terminal editing/scroll controls, and window controls; keep the BIOS shell and
-UEFI desktop as separate deliverables. Always boot-test loader or compositor
-changes under QEMU/UTM and inspect the framebuffer.
+The input-routing milestone now gives the terminal, desktop, and Start menu
+explicit focus states. `Tab` toggles terminal/desktop focus, Escape returns
+from non-terminal focus, mouse clicks select the terminal or Start menu, and
+PS/2 AUX bytes are separated from keyboard bytes. Shell keystrokes are ignored
+unless the terminal owns focus; UART input remains an explicit path back to the
+terminal.
+
+Verified commands are `scripts/validate-repo.sh --uefi`,
+`make -C kernel/uefi test-page-protection`, and
+`make -C kernel/uefi test-keyboard-focus`. The focus regression boots the
+production ESP under QEMU/OVMF, proves desktop-focused typing does not reach the
+shell, then returns focus and executes `help`. Inspect
+`kernel/uefi/out/keyboard-focus.ppm`. The isolated protection test must report
+both the NX instruction-fetch fault (`error=0x11`) and read-only write fault
+(`error=0x3`); the linker should show separate `R`, `R E`, `R`, `RW` LOAD
+segments with no RWX warning. The framebuffer terminal compositor still
+renders a fixed 64-line by 160-character scrollback and keyboard echo. Next
+graphical milestones are terminal editing/scroll controls, then window
+controls; keep the BIOS shell and UEFI desktop as separate deliverables. Always
+boot-test loader or compositor changes under QEMU/UTM and inspect the
+framebuffer.
 
 Separately, continue native Git smart-HTTP only after the TCP receive, HTTP parsing, TLS boundary, and certificate strategy are explicitly designed. Do not describe the current `github` shell bridge as a native clone implementation.
 

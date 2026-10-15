@@ -138,6 +138,22 @@ The captures are `kernel/uefi/out/terminal-scrollback.ppm` and
 visible prompt row; the terminal follows new output by default, and the paging
 keys move through the retained 64-line history.
 
+Run the terminal window-controls regression with:
+
+```sh
+make -C kernel/uefi test-window-controls
+```
+
+The test drives the emulated PS/2 mouse under QEMU/OVMF and checks minimize,
+maximize, restore, taskbar restore, close, and reopening the same terminal
+session from Start > Terminal. The titlebar buttons are ordered minimize,
+maximize/restore, and close from left to right. Close hides the terminal surface
+without terminating the freestanding shell loop; the taskbar button or Start
+menu can restore that in-memory session. The PS/2 setup now waits for device
+ACK/RESEND responses so command replies cannot desynchronize subsequent mouse
+packets. The final framebuffer is saved to
+`kernel/uefi/out/window-controls.ppm`.
+
 The UEFI desktop keeps Boot Services active so it can discover the EFI HTTP
 protocol or its HTTP Service Binding protocol. When firmware provides it, the
 terminal accepts:

@@ -94,9 +94,18 @@ static u32 mouse_y;
 static u32 mouse_buttons;
 static u32 terminal_x = 270;
 static u32 terminal_y = 98;
+static u32 terminal_width = 958;
+static u32 terminal_height = 590;
+static u32 terminal_restore_x;
+static u32 terminal_restore_y;
+static u32 terminal_restore_width;
+static u32 terminal_restore_height;
 static u32 terminal_drag_offset_x;
 static u32 terminal_drag_offset_y;
 static u8 terminal_dragging;
+static u8 terminal_open = 1;
+static u8 terminal_minimized;
+static u8 terminal_maximized;
 static fadal_event event_queue[EVENT_QUEUE_SIZE];
 static u8 event_head;
 static u8 event_tail;
@@ -195,7 +204,7 @@ static void fb_text(u32 x, u32 y, const char *text, u32 color, u32 scale) {
 
 static u32 terminal_view_columns(void) {
     u32 left = terminal_x + 22;
-    u32 right = framebuffer->width - 70;
+    u32 right = terminal_x + terminal_width - 18;
     u32 columns;
     if (right <= left) return 0;
     columns = (right - left) / 6;
@@ -205,7 +214,7 @@ static u32 terminal_view_columns(void) {
 
 static u32 terminal_view_rows(void) {
     u32 top = terminal_y + 56;
-    u32 bottom = framebuffer->height - 132;
+    u32 bottom = terminal_y + terminal_height - 20;
     u32 rows;
     if (bottom <= top) return 0;
     rows = (bottom - top) / 9;
@@ -236,12 +245,13 @@ static void terminal_render(void) {
     u32 first;
     u32 max_offset;
     u32 index;
-    if (desktop_mode == 0 || framebuffer == (fadal_framebuffer *)0 ||
+    if (desktop_mode == 0 || terminal_open == 0 || terminal_minimized != 0 ||
+        framebuffer == (fadal_framebuffer *)0 ||
         framebuffer->width < 640 || framebuffer->height < 400) return;
     left = terminal_x + 22;
     top = terminal_y + 56;
-    right = framebuffer->width - 70;
-    bottom = framebuffer->height - 132;
+    right = terminal_x + terminal_width - 18;
+    bottom = terminal_y + terminal_height - 20;
     rows = terminal_view_rows();
     if (rows == 0 || right <= left || bottom <= top) return;
     fb_fill(left, top, right, bottom, TERMINAL_BG);
@@ -319,6 +329,34 @@ static void terminal_putc(char value) {
     terminal_draw_cell(index, value);
 }
 
+static void terminal_draw_window_controls(void) {
+    u32 right = terminal_x + terminal_width;
+    u32 y = terminal_y + 6;
+    u32 min_x = right - 88;
+    u32 max_x = right - 58;
+    u32 close_x = right - 28;
+    u32 index;
+    fb_fill(min_x, y, min_x + 22, y + 22, 0x00334b6a);
+    fb_fill(min_x + 6, y + 14, min_x + 16, y + 16, 0x00ffffff);
+    fb_fill(max_x, y, max_x + 22, y + 22, 0x00334b6a);
+    if (terminal_maximized != 0) {
+        fb_fill(max_x + 7, y + 5, max_x + 17, y + 7, 0x00ffffff);
+        fb_fill(max_x + 7, y + 14, max_x + 17, y + 16, 0x00ffffff);
+        fb_fill(max_x + 7, y + 5, max_x + 9, y + 16, 0x00ffffff);
+        fb_fill(max_x + 15, y + 5, max_x + 17, y + 16, 0x00ffffff);
+    } else {
+        fb_fill(max_x + 6, y + 5, max_x + 16, y + 7, 0x00ffffff);
+        fb_fill(max_x + 6, y + 14, max_x + 16, y + 16, 0x00ffffff);
+        fb_fill(max_x + 6, y + 5, max_x + 8, y + 16, 0x00ffffff);
+        fb_fill(max_x + 14, y + 5, max_x + 16, y + 16, 0x00ffffff);
+    }
+    fb_fill(close_x, y, close_x + 22, y + 22, 0x00944755);
+    for (index = 0; index < 10; index++) {
+        fb_pixel(close_x + 6 + index, y + 6 + index, 0x00ffffff);
+        fb_pixel(close_x + 15 - index, y + 6 + index, 0x00ffffff);
+    }
+}
+
 static void desktop_render(void) {
     u32 width;
     u32 height;
@@ -334,42 +372,78 @@ static void desktop_render(void) {
     fb_fill(32, 78, width - 32, height - 92, 0x001c2f52);
     fb_fill(52, 98, 250, 230, 0x00243f6d);
     fb_fill(66, 112, 236, 220, 0x002b4d80);
-    fb_fill(terminal_x, terminal_y, width - 52, height - 112, 0x000d1528);
-    fb_fill(terminal_x, terminal_y, width - 52, terminal_y + 34,
-            input_focus == FOCUS_TERMINAL ? 0x002d5f9b : 0x001c3154);
-    fb_fill(terminal_x + 14, terminal_y + 52, width - 70, height - 132, TERMINAL_BG);
+    if (terminal_open != 0 && terminal_minimized == 0) {
+        u32 right = terminal_x + terminal_width;
+        u32 bottom = terminal_y + terminal_height;
+        fb_fill(terminal_x, terminal_y, right, bottom, 0x000d1528);
+        fb_fill(terminal_x, terminal_y, right, terminal_y + 34,
+                input_focus == FOCUS_TERMINAL ? 0x002d5f9b : 0x001c3154);
+        fb_fill(terminal_x + 14, terminal_y + 52, right - 18, bottom - 20, TERMINAL_BG);
+        fb_text(terminal_x + 16, terminal_y + 10, "TERMINAL", 0x00ffffff, 2);
+        terminal_draw_window_controls();
+    }
     fb_fill(26, height - 43, 126, height - 10, 0x002d5f9b);
-    fb_fill(142, height - 43, 184, height - 10, 0x00243f6d);
-    fb_fill(196, height - 43, 238, height - 10, 0x00243f6d);
+    fb_fill(142, height - 43, 282, height - 10,
+            terminal_open != 0 && terminal_minimized == 0 ? 0x002d5f9b : 0x00243f6d);
     fb_text(18, 11, "FADAL OS", 0x00ffffff, 2);
     fb_text(width - 230, 12, desktop_status, 0x007ed6a7, 1);
     fb_text(52, 126, "DESKTOP", 0x00d8eaff, 2);
     fb_text(78, 146, "WELCOME", 0x00ffffff, 2);
     fb_text(78, 166, "FADAL OS", 0x008dc5ff, 2);
-    fb_text(terminal_x + 16, terminal_y + 10, "TERMINAL", 0x00ffffff, 2);
+    fb_text(150, height - 33, "TERMINAL", 0x00ffffff, 1);
     fb_text(38, height - 33, "START", 0x00ffffff, 2);
     fb_text(width - 155, height - 31, "FADAL64", 0x0097aac8, 1);
 }
 
-static void mouse_wait_input(void) {
+static int mouse_wait_input(void) {
     u32 timeout = 100000;
-    while (timeout-- != 0 && (fadal_inb(KBD_STATUS) & 2) != 0) __asm__ volatile ("pause");
+    while (timeout-- != 0) {
+        if ((fadal_inb(KBD_STATUS) & 2) == 0) return 1;
+        __asm__ volatile ("pause");
+    }
+    return 0;
 }
 
-static void mouse_write(u8 value) {
-    mouse_wait_input();
-    fadal_outb(KBD_STATUS, 0xd4);
-    mouse_wait_input();
-    fadal_outb(KBD_DATA, value);
+static int mouse_wait_response(u8 *response) {
+    u32 timeout = 100000;
+    while (timeout-- != 0) {
+        u8 status = fadal_inb(KBD_STATUS);
+        if ((status & KBD_STATUS_OUTPUT_FULL) != 0) {
+            u8 value = fadal_inb(KBD_DATA);
+            if ((status & KBD_STATUS_AUX_DATA) != 0) {
+                *response = value;
+                return 1;
+            }
+        }
+        __asm__ volatile ("pause");
+    }
+    return 0;
+}
+
+static int mouse_command(u8 command) {
+    u32 attempt;
+    for (attempt = 0; attempt < 3; attempt++) {
+        u8 response;
+        if (!mouse_wait_input()) return 0;
+        fadal_outb(KBD_STATUS, 0xd4);
+        if (!mouse_wait_input()) return 0;
+        fadal_outb(KBD_DATA, command);
+        if (!mouse_wait_response(&response)) return 0;
+        if (response == 0xfa) return 1;
+        if (response != 0xfe) return 0;
+    }
+    return 0;
 }
 
 static void mouse_init(void) {
     u32 timeout = 100000;
     while (timeout-- != 0 && (fadal_inb(KBD_STATUS) & 1) != 0) (void)fadal_inb(KBD_DATA);
-    mouse_wait_input();
+    if (!mouse_wait_input()) return;
     fadal_outb(KBD_STATUS, 0xa8);
-    mouse_write(0xf6);
-    mouse_write(0xf4);
+    if (!mouse_command(0xf6) || !mouse_command(0xf4)) {
+        desktop_status = "MOUSE INITIALIZATION FAILED";
+        return;
+    }
     mouse_enabled = 1;
     mouse_packet_index = 0;
     mouse_x = framebuffer->width / 2;
@@ -403,6 +477,48 @@ static void desktop_redraw(void) {
         fb_text(54, framebuffer->height - 130, "SYSTEM", 0x00ffffff, 2);
     }
     cursor_draw();
+}
+
+static void terminal_geometry_init(void) {
+    u32 width = framebuffer->width;
+    u32 height = framebuffer->height;
+    terminal_x = width >= 1100 ? 270 : 40;
+    terminal_y = height >= 700 ? 98 : 40;
+    terminal_width = width > terminal_x + 52 ? width - terminal_x - 52 : width - 36;
+    terminal_height = height > terminal_y + 112 ? height - terminal_y - 112 : height - 96;
+    if (terminal_width < 360) {
+        terminal_x = 18;
+        terminal_width = width - 36;
+    }
+    if (terminal_height < 240) {
+        terminal_y = 40;
+        terminal_height = height - 100;
+    }
+    terminal_restore_x = terminal_x;
+    terminal_restore_y = terminal_y;
+    terminal_restore_width = terminal_width;
+    terminal_restore_height = terminal_height;
+}
+
+static void terminal_toggle_maximize(void) {
+    if (terminal_maximized == 0) {
+        terminal_restore_x = terminal_x;
+        terminal_restore_y = terminal_y;
+        terminal_restore_width = terminal_width;
+        terminal_restore_height = terminal_height;
+        terminal_x = 18;
+        terminal_y = 44;
+        terminal_width = framebuffer->width - 36;
+        terminal_height = framebuffer->height - 102;
+        terminal_maximized = 1;
+    } else {
+        terminal_x = terminal_restore_x;
+        terminal_y = terminal_restore_y;
+        terminal_width = terminal_restore_width;
+        terminal_height = terminal_restore_height;
+        terminal_maximized = 0;
+    }
+    terminal_view_offset = 0;
 }
 
 static void terminal_scroll(int direction) {
@@ -462,17 +578,20 @@ static int event_pop(fadal_event *event) {
 }
 
 static void desktop_handle_mouse(const fadal_event *event) {
+    u32 right;
     if (event->type != EVENT_MOUSE) return;
     if (terminal_dragging != 0) {
         if ((event->buttons & 1U) != 0) {
-            if (mouse_x > terminal_drag_offset_x) terminal_x = mouse_x - terminal_drag_offset_x;
-            else terminal_x = 20;
-            if (mouse_y > terminal_drag_offset_y) terminal_y = mouse_y - terminal_drag_offset_y;
-            else terminal_y = 40;
-            if (terminal_x < 20) terminal_x = 20;
+            u32 max_x = framebuffer->width > terminal_width + 36 ?
+                        framebuffer->width - terminal_width - 18 : 18;
+            u32 max_y = framebuffer->height > terminal_height + 84 ?
+                        framebuffer->height - terminal_height - 58 : 40;
+            terminal_x = mouse_x > terminal_drag_offset_x ? mouse_x - terminal_drag_offset_x : 18;
+            terminal_y = mouse_y > terminal_drag_offset_y ? mouse_y - terminal_drag_offset_y : 40;
+            if (terminal_x < 18) terminal_x = 18;
             if (terminal_y < 40) terminal_y = 40;
-            if (terminal_x > framebuffer->width - 140) terminal_x = framebuffer->width - 140;
-            if (terminal_y > framebuffer->height - 160) terminal_y = framebuffer->height - 160;
+            if (terminal_x > max_x) terminal_x = max_x;
+            if (terminal_y > max_y) terminal_y = max_y;
             desktop_status = "TERMINAL MOVING";
             desktop_redraw();
             return;
@@ -483,18 +602,45 @@ static void desktop_handle_mouse(const fadal_event *event) {
         return;
     }
     if ((event->buttons & 1U) == 0) return;
-    if (mouse_x >= terminal_x && mouse_x < framebuffer->width - 52 &&
-        mouse_y >= terminal_y && mouse_y < terminal_y + 34) {
+    if (mouse_y >= framebuffer->height - 52 && mouse_x >= 142 && mouse_x < 282) {
+        terminal_open = 1;
+        terminal_minimized = 0;
         input_focus = FOCUS_TERMINAL;
-        terminal_dragging = 1;
-        terminal_drag_offset_x = mouse_x - terminal_x;
-        terminal_drag_offset_y = mouse_y - terminal_y;
-        desktop_status = "TERMINAL FOCUSED";
+        start_open = 0;
+        desktop_status = "TERMINAL RESTORED";
         desktop_redraw();
         return;
     }
-    if (mouse_x >= terminal_x && mouse_x < framebuffer->width - 52 &&
-        mouse_y >= terminal_y && mouse_y < framebuffer->height - 112) {
+    right = terminal_x + terminal_width;
+    if (terminal_open != 0 && terminal_minimized == 0 &&
+        mouse_x >= terminal_x && mouse_x < right &&
+        mouse_y >= terminal_y && mouse_y < terminal_y + 34) {
+        if (mouse_x >= right - 34 && mouse_x < right - 4) {
+            terminal_open = 0;
+            input_focus = FOCUS_DESKTOP;
+            start_open = 0;
+            desktop_status = "TERMINAL CLOSED";
+        } else if (mouse_x >= right - 64 && mouse_x < right - 34) {
+            terminal_toggle_maximize();
+            input_focus = FOCUS_TERMINAL;
+            desktop_status = terminal_maximized != 0 ? "TERMINAL MAXIMIZED" : "TERMINAL RESTORED";
+        } else if (mouse_x >= right - 94 && mouse_x < right - 64) {
+            terminal_minimized = 1;
+            input_focus = FOCUS_DESKTOP;
+            desktop_status = "TERMINAL MINIMIZED";
+        } else if (terminal_maximized == 0) {
+            input_focus = FOCUS_TERMINAL;
+            terminal_dragging = 1;
+            terminal_drag_offset_x = mouse_x - terminal_x;
+            terminal_drag_offset_y = mouse_y - terminal_y;
+            desktop_status = "TERMINAL FOCUSED";
+        }
+        desktop_redraw();
+        return;
+    }
+    if (terminal_open != 0 && terminal_minimized == 0 &&
+        mouse_x >= terminal_x && mouse_x < right &&
+        mouse_y >= terminal_y && mouse_y < terminal_y + terminal_height) {
         input_focus = FOCUS_TERMINAL;
         start_open = 0;
         desktop_status = "TERMINAL FOCUSED";
@@ -507,6 +653,8 @@ static void desktop_handle_mouse(const fadal_event *event) {
         desktop_status = start_open != 0 ? "START MENU OPEN" : "TERMINAL FOCUSED";
     } else if (start_open != 0 && mouse_x >= 38 && mouse_x < 278 &&
                mouse_y >= framebuffer->height - 252 && mouse_y < framebuffer->height - 208) {
+        terminal_open = 1;
+        terminal_minimized = 0;
         start_open = 0;
         input_focus = FOCUS_TERMINAL;
         desktop_status = "TERMINAL SELECTED";
@@ -724,6 +872,8 @@ static int desktop_handle_keyboard(const fadal_event *event) {
             input_focus = FOCUS_DESKTOP;
             desktop_status = "DESKTOP FOCUSED";
         } else {
+            terminal_open = 1;
+            terminal_minimized = 0;
             input_focus = FOCUS_TERMINAL;
             desktop_status = "TERMINAL FOCUSED";
         }
@@ -733,10 +883,13 @@ static int desktop_handle_keyboard(const fadal_event *event) {
     if (input_focus == FOCUS_START_MENU) {
         if (value == 27) {
             start_open = 0;
-            input_focus = FOCUS_TERMINAL;
-            desktop_status = "TERMINAL FOCUSED";
+            input_focus = terminal_open != 0 && terminal_minimized == 0 ?
+                          FOCUS_TERMINAL : FOCUS_DESKTOP;
+            desktop_status = input_focus == FOCUS_TERMINAL ? "TERMINAL FOCUSED" : "DESKTOP FOCUSED";
             desktop_redraw();
         } else if (value == '\n') {
+            terminal_open = 1;
+            terminal_minimized = 0;
             start_open = 0;
             input_focus = FOCUS_TERMINAL;
             desktop_status = "TERMINAL SELECTED";
@@ -746,6 +899,8 @@ static int desktop_handle_keyboard(const fadal_event *event) {
     }
     if (input_focus != FOCUS_TERMINAL) {
         if (value == 27) {
+            terminal_open = 1;
+            terminal_minimized = 0;
             input_focus = FOCUS_TERMINAL;
             desktop_status = "TERMINAL FOCUSED";
             desktop_redraw();
@@ -761,7 +916,10 @@ static u8 serial_getc(void) {
         event_pump();
         while (event_pop(&event) != 0) {
             if (event.type == EVENT_SERIAL) {
-                if (input_focus != FOCUS_TERMINAL || start_open != 0) {
+                if (input_focus != FOCUS_TERMINAL || start_open != 0 ||
+                    terminal_open == 0 || terminal_minimized != 0) {
+                    terminal_open = 1;
+                    terminal_minimized = 0;
                     input_focus = FOCUS_TERMINAL;
                     start_open = 0;
                     desktop_status = "TERMINAL FOCUSED";
@@ -885,6 +1043,8 @@ void fadal64_entry(fadal_framebuffer *incoming_framebuffer, fadal_uefi_services 
 
     framebuffer = incoming_framebuffer;
     desktop_services = services;
+    if (framebuffer != (fadal_framebuffer *)0 && framebuffer->width >= 640 &&
+        framebuffer->height >= 400) terminal_geometry_init();
     terminal_line_head = 0;
     terminal_lines_used = 1;
     terminal_column = 0;

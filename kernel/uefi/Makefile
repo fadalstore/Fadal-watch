@@ -33,6 +33,7 @@ FOCUS_TEST_IMAGE ?= ../out/fadal-uefi.img
 FOCUS_TEST_SCREEN ?= $(OUT)/keyboard-focus.ppm
 TERMINAL_SCROLL_SCREEN ?= $(OUT)/terminal-scrollback.ppm
 TERMINAL_TAIL_SCREEN ?= $(OUT)/terminal-tail.ppm
+WINDOW_CONTROLS_SCREEN ?= $(OUT)/window-controls.ppm
 QEMU ?= qemu-system-x86_64
 OVMF_CODE ?= /usr/share/OVMF/OVMF_CODE_4M.fd
 OVMF_VARS ?= /usr/share/OVMF/OVMF_VARS_4M.fd
@@ -71,7 +72,8 @@ OBJCOPY_FLAGS := \
 	--target=efi-app-x86_64
 
 .PHONY: all check check-toolchain payload image page-protection-efi \
-	test-page-protection test-keyboard-focus test-terminal-input clean help
+	test-page-protection test-keyboard-focus test-terminal-input \
+	test-window-controls clean help
 
 all: $(BOOT_EFI)
 
@@ -172,7 +174,17 @@ test-terminal-input: check payload
 		--ovmf-vars "$(OVMF_VARS)" --terminal-input \
 		--screenshot "$(abspath $(FOCUS_TEST_SCREEN))" \
 		--scroll-screenshot "$(abspath $(TERMINAL_SCROLL_SCREEN))" \
-		--tail-screenshot "$(abspath $(TERMINAL_TAIL_SCREEN))"
+			--tail-screenshot "$(abspath $(TERMINAL_TAIL_SCREEN))"
+
+test-window-controls: check payload
+	@rm -f "$(FOCUS_TEST_IMAGE)"
+	UEFI_IMAGE="$(abspath $(FOCUS_TEST_IMAGE))" \
+		$(MAKE) image UEFI_KERNEL="$(abspath $(PAYLOAD_BIN))"
+	python3 "$(FOCUS_TEST_SCRIPT)" --image "$(abspath $(FOCUS_TEST_IMAGE))" \
+		--qemu "$(QEMU)" --ovmf-code "$(OVMF_CODE)" \
+		--ovmf-vars "$(OVMF_VARS)" --window-controls \
+		--screenshot "$(abspath $(FOCUS_TEST_SCREEN))" \
+		--window-screenshot "$(abspath $(WINDOW_CONTROLS_SCREEN))"
 
 check: $(BOOT_EFI)
 	@$(OBJDUMP) -f $(BOOT_EFI) | grep -E -q 'pei-x86-64|pe-x86-64' || \
@@ -194,6 +206,7 @@ help:
 	@echo "make test-page-protection  run test under QEMU/OVMF + isa-debug-exit"
 	@echo "make test-keyboard-focus  test UEFI keyboard focus routing in QEMU/OVMF"
 	@echo "make test-terminal-input  test line editing and scrollback in QEMU/OVMF"
+	@echo "make test-window-controls test terminal window controls with QEMU/OVMF mouse"
 	@echo "EFI_INC=... EFI_CRT=... EFI_LDSCRIPT=... EFI_LIBDIR=... override GNU-EFI paths"
 
 clean:

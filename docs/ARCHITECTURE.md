@@ -29,7 +29,7 @@ The project has two boot paths that share the same design goal but are built sep
 
 ## UEFI desktop flow
 
-`kernel/uefi/boot.c` runs as a GNU-EFI application. It locates GOP, reads `FADAL.KRN` from the EFI System Partition, and passes a framebuffer descriptor to `fadal64_entry`. `payload.c` is freestanding x86_64 code. It owns its drawing primitives, serial console, PS/2 keyboard/mouse polling, bounded event queue, focus-aware terminal/desktop/Start-menu input routing, and draggable terminal window.
+`kernel/uefi/boot.c` runs as a GNU-EFI application. It locates GOP, reads `FADAL.KRN` from the EFI System Partition, and passes a framebuffer descriptor to `fadal64_entry`. `payload.c` is freestanding x86_64 code. It owns its drawing primitives, serial console, PS/2 keyboard/mouse polling, bounded event queue, focus-aware terminal/desktop/Start-menu input routing, and geometry-aware terminal window with drag, minimize, maximize/restore, and close controls. Minimized or closed windows can be restored from the taskbar; Start > Terminal reopens the retained in-memory shell session. PS/2 device commands consume their ACK/RESEND responses before mouse streaming starts, keeping the packet stream aligned.
 
 The FDL64 v3 payload preserves the fixed 32-byte base header and appends a
 40-byte `FPM1` descriptor containing page-aligned text, rodata, data, and BSS

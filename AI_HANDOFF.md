@@ -8,7 +8,7 @@ FadalOS is an independent freestanding operating-system project owned by `fadals
 
 ## Current verified baseline
 
-The latest verified Git commit is the repository `main` branch. The BIOS path builds and boots under QEMU. The UEFI path builds and boots through GOP at 1280x800. The graphical UEFI desktop contains a workspace, top bar, terminal panel, taskbar, PS/2 cursor, Start menu, unified keyboard/mouse event queue, draggable terminal window, and focus-aware keyboard routing.
+The latest verified Git commit is the repository `main` branch. The BIOS path builds and boots under QEMU. The UEFI path builds and boots through GOP at 1280x800. The graphical UEFI desktop contains a workspace, top bar, taskbar, PS/2 cursor, Start menu, unified keyboard/mouse event queue, a draggable terminal window with minimize/maximize/restore/close controls, and focus-aware keyboard routing.
 
 The BIOS kernel currently includes preemptive scheduling foundations, dynamic processes, per-process address spaces, paging flags, page-fault handling, heap and slab allocation, FAT12 write/mount support, ATA PIO persistence, VFS, RAMFS, descriptor-backed file I/O, ring-3 `FSH.BIN`, a syscall ABI, TTY input, structured logging, a RAM disk, CPUID/SMP probes, synchronization primitives, an RTL8139 driver, Ethernet/ARP/IPv4 foundations, UDP/TCP prototypes, and Git protocol groundwork.
 
@@ -72,20 +72,25 @@ new prompt begins.
 
 Verified commands are `scripts/validate-repo.sh --uefi`,
 `make -C kernel/uefi test-page-protection`,
-`make -C kernel/uefi test-keyboard-focus`, and
-`make -C kernel/uefi test-terminal-input`. The focus regression boots the
+`make -C kernel/uefi test-keyboard-focus`,
+`make -C kernel/uefi test-terminal-input`, and
+`make -C kernel/uefi test-window-controls`. The focus regression boots the
 production ESP under QEMU/OVMF, proves desktop-focused typing does not reach the
 shell, then returns focus and executes `help`. The terminal-input regression
 reconstructs commands through cursor editing and verifies that PageUp/PageDown
 change and restore the framebuffer view. Inspect
 `kernel/uefi/out/keyboard-focus.ppm`,
 `kernel/uefi/out/terminal-scrollback.ppm`, and
-`kernel/uefi/out/terminal-tail.ppm`. The isolated protection test must report
+`kernel/uefi/out/terminal-tail.ppm`, and
+`kernel/uefi/out/window-controls.ppm`. The window regression drives the PS/2
+mouse and verifies maximize/restore geometry, minimize/taskbar restore, close,
+and reopening the retained terminal session from Start. The isolated protection test must report
 both the NX instruction-fetch fault (`error=0x11`) and read-only write fault
 (`error=0x3`); the linker should show separate `R`, `R E`, `R`, `RW` LOAD
-segments with no RWX warning. The next graphical milestone is window controls;
-keep the BIOS shell and UEFI desktop as separate deliverables. Always boot-test
-loader or compositor changes under QEMU/UTM and inspect the framebuffer.
+segments with no RWX warning. A sensible next graphical milestone is edge-based
+terminal resizing with geometry-aware reflow; keep the BIOS shell and UEFI
+desktop as separate deliverables. Always boot-test loader or compositor changes
+under QEMU/UTM and inspect the framebuffer.
 
 Separately, continue native Git smart-HTTP only after the TCP receive, HTTP parsing, TLS boundary, and certificate strategy are explicitly designed. Do not describe the current `github` shell bridge as a native clone implementation.
 

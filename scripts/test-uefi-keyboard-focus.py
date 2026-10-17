@@ -62,6 +62,14 @@ def click_mouse(process: subprocess.Popen[str], current: list[int],
     send_monitor_command(process, "mouse_button 0", delay=0.22)
 
 
+def drag_mouse(process: subprocess.Popen[str], current: list[int],
+               start_x: int, start_y: int, end_x: int, end_y: int) -> None:
+    move_mouse_to(process, current, start_x, start_y)
+    send_monitor_command(process, "mouse_button 1", delay=0.2)
+    move_mouse_to(process, current, end_x, end_y)
+    send_monitor_command(process, "mouse_button 0", delay=0.3)
+
+
 def capture_frame(process: subprocess.Popen[str], path: Path) -> None:
     send_monitor_command(process, f"screendump {path}", delay=0.3)
     if not path.is_file() or path.stat().st_size < 1024:
@@ -113,6 +121,61 @@ def run_window_control_checks(process: subprocess.Popen[str], temp: Path,
     print("PASS: close hides the terminal, and Start > Terminal reopens the same session.")
 
 
+def run_window_resize_checks(process: subprocess.Popen[str], temp: Path,
+                              screenshot: Path) -> None:
+    mouse = [640, 400]
+    state = temp / "window-resize-state.ppm"
+    workspace = (28, 47, 82)
+    terminal = (10, 16, 30)
+
+    drag_mouse(process, mouse, 1226, 400, 1096, 400)
+    capture_frame(process, state)
+    assert_pixel(state, 1120, 400, workspace, "right-edge resize inward")
+    drag_mouse(process, mouse, 1096, 400, 1226, 400)
+    capture_frame(process, state)
+    assert_pixel(state, 1200, 500, terminal, "right-edge resize outward")
+    print("PASS: the right edge resizes inward and outward.")
+
+    drag_mouse(process, mouse, 800, 686, 800, 566)
+    capture_frame(process, state)
+    assert_pixel(state, 800, 580, workspace, "bottom-edge resize inward")
+    drag_mouse(process, mouse, 800, 566, 800, 686)
+    capture_frame(process, state)
+    assert_pixel(state, 800, 650, terminal, "bottom-edge resize outward")
+    print("PASS: the bottom edge resizes inward and outward.")
+
+    drag_mouse(process, mouse, 271, 400, 351, 400)
+    capture_frame(process, state)
+    assert_pixel(state, 300, 400, workspace, "left-edge resize")
+    assert_pixel(state, 400, 500, terminal, "left-edge content")
+    drag_mouse(process, mouse, 351, 400, 271, 400)
+    capture_frame(process, state)
+    assert_pixel(state, 300, 400, terminal, "left-edge restore")
+    print("PASS: the left edge resizes while keeping the opposite edge anchored.")
+
+    drag_mouse(process, mouse, 1226, 686, 1086, 586)
+    capture_frame(process, state)
+    assert_pixel(state, 1100, 500, workspace, "bottom-right corner resize")
+    assert_pixel(state, 1000, 610, workspace, "bottom-right height resize")
+    print("PASS: the bottom-right corner resizes width and height together.")
+
+    drag_mouse(process, mouse, 1086, 586, 0, 0)
+    capture_frame(process, state)
+    assert_pixel(state, 700, 200, workspace, "minimum-width clamp")
+    assert_pixel(state, 600, 200, terminal, "minimum-width interior")
+    assert_pixel(state, 600, 370, workspace, "minimum-height clamp")
+    drag_mouse(process, mouse, 688, 356, 1226, 686)
+    capture_frame(process, screenshot)
+    assert_pixel(screenshot, 1200, 500, terminal, "restore after minimum-size clamp")
+    print("PASS: minimum width/height are enforced and the original bounds can be restored.")
+
+    drag_mouse(process, mouse, 800, 99, 800, 169)
+    capture_frame(process, screenshot)
+    assert_pixel(screenshot, 800, 130, workspace, "top-edge resize")
+    assert_pixel(screenshot, 800, 650, terminal, "top-edge keeps the bottom anchored")
+    print("PASS: the top edge resizes while keeping the bottom edge anchored.")
+
+
 def wait_for_titlebar_color(process: subprocess.Popen[str], screenshot: Path,
                             expected: bytes, timeout: float = 3.0) -> None:
     deadline = time.monotonic() + timeout
@@ -142,8 +205,12 @@ def main() -> int:
                         help="also test cursor editing and PageUp/PageDown scrollback")
     parser.add_argument("--window-controls", action="store_true",
                         help="also test terminal minimize/maximize/restore/close with the PS/2 mouse")
+    parser.add_argument("--window-resize", action="store_true",
+                        help="also test terminal edge/corner resizing and minimum bounds")
     parser.add_argument("--window-screenshot", type=Path,
                         default=root / "kernel/uefi/out/window-controls.ppm")
+    parser.add_argument("--resize-screenshot", type=Path,
+                        default=root / "kernel/uefi/out/window-resize.ppm")
     parser.add_argument("--scroll-screenshot", type=Path,
                         default=root / "kernel/uefi/out/terminal-scrollback.ppm")
     parser.add_argument("--tail-screenshot", type=Path,
@@ -262,6 +329,11 @@ def main() -> int:
                 args.window_screenshot.unlink(missing_ok=True)
                 run_window_control_checks(process, temp, args.window_screenshot)
                 print(f"Window-controls capture: {args.window_screenshot.resolve()}")
+            if args.window_resize:
+                args.resize_screenshot.parent.mkdir(parents=True, exist_ok=True)
+                args.resize_screenshot.unlink(missing_ok=True)
+                run_window_resize_checks(process, temp, args.resize_screenshot)
+                print(f"Window-resize capture: {args.resize_screenshot.resolve()}")
             print(f"Framebuffer screenshot: {args.screenshot.resolve()}")
             return 0
         finally:

@@ -154,6 +154,20 @@ ACK/RESEND responses so command replies cannot desynchronize subsequent mouse
 packets. The final framebuffer is saved to
 `kernel/uefi/out/window-controls.ppm`.
 
+Run the terminal window-resize regression with:
+
+```sh
+make -C kernel/uefi test-window-resize
+```
+
+The QEMU/OVMF test checks inward/outward drags on all four edges, a bottom-right
+corner resize, minimum window dimensions, and restoration of the original
+bounds. Single-edge resizing keeps the opposite edge anchored; resizing is
+clamped to the framebuffer work area, and the viewport is redrawn using the new
+geometry. Existing scrollback lines are clipped rather than soft-wrapped or
+reflowed. The framebuffer capture is
+`kernel/uefi/out/window-resize.ppm`.
+
 The UEFI desktop keeps Boot Services active so it can discover the EFI HTTP
 protocol or its HTTP Service Binding protocol. When firmware provides it, the
 terminal accepts:

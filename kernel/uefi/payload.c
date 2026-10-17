@@ -55,6 +55,13 @@ const u8 fadal64_layout[40] = {
 #define TERMINAL_ROWS 64
 #define TERMINAL_COLUMNS 160
 #define TERMINAL_BG 0x000a101e
+#define TERMINAL_MIN_WIDTH 420
+#define TERMINAL_MIN_HEIGHT 260
+#define TERMINAL_RESIZE_GRAB 9
+#define RESIZE_LEFT 1
+#define RESIZE_RIGHT 2
+#define RESIZE_TOP 4
+#define RESIZE_BOTTOM 8
 #define USER_ROOT 0
 #define USER_FADAL 1000
 #define FOCUS_TERMINAL 1
@@ -103,6 +110,14 @@ static u32 terminal_restore_height;
 static u32 terminal_drag_offset_x;
 static u32 terminal_drag_offset_y;
 static u8 terminal_dragging;
+static u8 terminal_resizing;
+static u8 terminal_resize_edges;
+static u32 terminal_resize_start_mouse_x;
+static u32 terminal_resize_start_mouse_y;
+static u32 terminal_resize_start_x;
+static u32 terminal_resize_start_y;
+static u32 terminal_resize_start_width;
+static u32 terminal_resize_start_height;
 static u8 terminal_open = 1;
 static u8 terminal_minimized;
 static u8 terminal_maximized;
@@ -222,6 +237,18 @@ static u32 terminal_view_rows(void) {
     return rows;
 }
 
+static void terminal_render_line(u32 line, u32 x, u32 y, u32 columns) {
+    char clipped[TERMINAL_COLUMNS];
+    u32 index = 0;
+    while (index < columns && index + 1U < TERMINAL_COLUMNS &&
+           terminal_lines[line][index] != '\0') {
+        clipped[index] = terminal_lines[line][index];
+        index++;
+    }
+    clipped[index] = '\0';
+    fb_text(x, y, clipped, 0x00d8eaff, 1);
+}
+
 static void terminal_begin_line(void) {
     u32 index;
     terminal_line_head = (terminal_line_head + 1U) % TERMINAL_ROWS;
@@ -263,7 +290,7 @@ static void terminal_render(void) {
     first = (terminal_line_head + TERMINAL_ROWS + 1U - visible - terminal_view_offset) % TERMINAL_ROWS;
     for (index = 0; index < visible; index++) {
         u32 line = (first + index) % TERMINAL_ROWS;
-        fb_text(left, top + index * 9, terminal_lines[line], 0x00d8eaff, 1);
+        terminal_render_line(line, left, top + index * 9, terminal_view_columns());
     }
     if (terminal_input_active != 0 && terminal_view_offset == 0 && visible != 0 &&
         input_focus == FOCUS_TERMINAL && start_open == 0) {
@@ -354,6 +381,14 @@ static void terminal_draw_window_controls(void) {
     for (index = 0; index < 10; index++) {
         fb_pixel(close_x + 6 + index, y + 6 + index, 0x00ffffff);
         fb_pixel(close_x + 15 - index, y + 6 + index, 0x00ffffff);
+    }
+    for (index = 0; index < 3; index++) {
+        fb_fill(right - 8 - index * 5, terminal_y + terminal_height - 3 - index * 5,
+                right - 5 - index * 5, terminal_y + terminal_height - 2 - index * 5,
+                0x006b83a3);
+        fb_fill(right - 3 - index * 5, terminal_y + terminal_height - 8 - index * 5,
+                right - 2 - index * 5, terminal_y + terminal_height - 5 - index * 5,
+                0x006b83a3);
     }
 }
 
@@ -521,6 +556,68 @@ static void terminal_toggle_maximize(void) {
     terminal_view_offset = 0;
 }
 
+static u8 terminal_resize_hit_test(u32 x, u32 y) {
+    u32 right = terminal_x + terminal_width;
+    u32 bottom = terminal_y + terminal_height;
+    u8 edges = 0;
+    if (x < terminal_x || x >= right || y < terminal_y || y >= bottom) return 0;
+    if (x - terminal_x < TERMINAL_RESIZE_GRAB) edges |= RESIZE_LEFT;
+    else if (right - 1U - x < TERMINAL_RESIZE_GRAB) edges |= RESIZE_RIGHT;
+    if (y - terminal_y < TERMINAL_RESIZE_GRAB) edges |= RESIZE_TOP;
+    else if (bottom - 1U - y < TERMINAL_RESIZE_GRAB) edges |= RESIZE_BOTTOM;
+    return edges;
+}
+
+static void terminal_resize_update_input_limit(void) {
+    u32 columns;
+    if (terminal_input_active == 0) return;
+    columns = terminal_view_columns();
+    if (columns <= terminal_input_start + 1U) terminal_input_limit = 0;
+    else terminal_input_limit = columns - terminal_input_start - 1U;
+    if (terminal_input_limit >= LINE_MAX) terminal_input_limit = LINE_MAX - 1U;
+}
+
+static void terminal_resize_apply(void) {
+    int dx = (int)mouse_x - (int)terminal_resize_start_mouse_x;
+    int dy = (int)mouse_y - (int)terminal_resize_start_mouse_y;
+    int left = (int)terminal_resize_start_x;
+    int top = (int)terminal_resize_start_y;
+    int right = left + (int)terminal_resize_start_width;
+    int bottom = top + (int)terminal_resize_start_height;
+    int min_left = 18;
+    int min_top = 44;
+    int max_right = (int)framebuffer->width - 18;
+    int max_bottom = (int)framebuffer->height - 58;
+
+    if ((terminal_resize_edges & RESIZE_LEFT) != 0) {
+        int new_left = (int)terminal_resize_start_x + dx;
+        if (new_left < min_left) new_left = min_left;
+        if (new_left > right - TERMINAL_MIN_WIDTH) new_left = right - TERMINAL_MIN_WIDTH;
+        left = new_left;
+    } else if ((terminal_resize_edges & RESIZE_RIGHT) != 0) {
+        right = (int)terminal_resize_start_x + (int)terminal_resize_start_width + dx;
+        if (right < left + TERMINAL_MIN_WIDTH) right = left + TERMINAL_MIN_WIDTH;
+        if (right > max_right) right = max_right;
+    }
+    if ((terminal_resize_edges & RESIZE_TOP) != 0) {
+        int new_top = (int)terminal_resize_start_y + dy;
+        if (new_top < min_top) new_top = min_top;
+        if (new_top > bottom - TERMINAL_MIN_HEIGHT) new_top = bottom - TERMINAL_MIN_HEIGHT;
+        top = new_top;
+    } else if ((terminal_resize_edges & RESIZE_BOTTOM) != 0) {
+        bottom = (int)terminal_resize_start_y + (int)terminal_resize_start_height + dy;
+        if (bottom < top + TERMINAL_MIN_HEIGHT) bottom = top + TERMINAL_MIN_HEIGHT;
+        if (bottom > max_bottom) bottom = max_bottom;
+    }
+
+    terminal_x = (u32)left;
+    terminal_y = (u32)top;
+    terminal_width = (u32)(right - left);
+    terminal_height = (u32)(bottom - top);
+    terminal_resize_update_input_limit();
+    terminal_render();
+}
+
 static void terminal_scroll(int direction) {
     u32 rows;
     u32 visible;
@@ -580,6 +677,23 @@ static int event_pop(fadal_event *event) {
 static void desktop_handle_mouse(const fadal_event *event) {
     u32 right;
     if (event->type != EVENT_MOUSE) return;
+    if (terminal_resizing != 0) {
+        if ((event->buttons & 1U) != 0) {
+            terminal_resize_apply();
+            desktop_status = "TERMINAL RESIZING";
+            desktop_redraw();
+            return;
+        }
+        terminal_resizing = 0;
+        terminal_resize_edges = 0;
+        terminal_restore_x = terminal_x;
+        terminal_restore_y = terminal_y;
+        terminal_restore_width = terminal_width;
+        terminal_restore_height = terminal_height;
+        desktop_status = "TERMINAL RESIZED";
+        desktop_redraw();
+        return;
+    }
     if (terminal_dragging != 0) {
         if ((event->buttons & 1U) != 0) {
             u32 max_x = framebuffer->width > terminal_width + 36 ?
@@ -637,6 +751,24 @@ static void desktop_handle_mouse(const fadal_event *event) {
         }
         desktop_redraw();
         return;
+    }
+    if (terminal_open != 0 && terminal_minimized == 0 && terminal_maximized == 0) {
+        u8 edges = terminal_resize_hit_test(mouse_x, mouse_y);
+        if (edges != 0) {
+            terminal_resizing = 1;
+            terminal_resize_edges = edges;
+            terminal_resize_start_mouse_x = mouse_x;
+            terminal_resize_start_mouse_y = mouse_y;
+            terminal_resize_start_x = terminal_x;
+            terminal_resize_start_y = terminal_y;
+            terminal_resize_start_width = terminal_width;
+            terminal_resize_start_height = terminal_height;
+            input_focus = FOCUS_TERMINAL;
+            start_open = 0;
+            desktop_status = "TERMINAL RESIZING";
+            desktop_redraw();
+            return;
+        }
     }
     if (terminal_open != 0 && terminal_minimized == 0 &&
         mouse_x >= terminal_x && mouse_x < right &&
@@ -1080,6 +1212,12 @@ void fadal64_entry(fadal_framebuffer *incoming_framebuffer, fadal_uefi_services 
         }
         for (;;) {
             u8 value = serial_getc();
+            if (desktop_mode != 0 && length > terminal_input_limit) {
+                length = terminal_input_limit;
+                if (cursor > length) cursor = length;
+                line[length] = '\0';
+                terminal_edit_redraw(line, length, cursor);
+            }
             if (suppress_lf != 0) {
                 suppress_lf = 0;
                 if (value == '\n') continue;

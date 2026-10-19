@@ -118,6 +118,7 @@ static u32 terminal_resize_start_x;
 static u32 terminal_resize_start_y;
 static u32 terminal_resize_start_width;
 static u32 terminal_resize_start_height;
+static u32 terminal_resize_last_columns;
 static u8 terminal_open = 1;
 static u8 terminal_minimized;
 static u8 terminal_maximized;
@@ -125,6 +126,9 @@ static fadal_event event_queue[EVENT_QUEUE_SIZE];
 static u8 event_head;
 static u8 event_tail;
 static char terminal_lines[TERMINAL_ROWS][TERMINAL_COLUMNS];
+static u8 terminal_line_soft_break[TERMINAL_ROWS];
+static char terminal_reflow_source[TERMINAL_ROWS][TERMINAL_COLUMNS];
+static u8 terminal_reflow_source_soft_break[TERMINAL_ROWS];
 static u32 terminal_line_head;
 static u32 terminal_lines_used;
 static u32 terminal_column;
@@ -257,6 +261,7 @@ static void terminal_begin_line(void) {
         if (terminal_view_offset != 0) terminal_view_offset++;
     }
     terminal_column = 0;
+    terminal_line_soft_break[terminal_line_head] = 0;
     for (index = 0; index < TERMINAL_COLUMNS; index++) {
         terminal_lines[terminal_line_head][index] = '\0';
     }
@@ -330,6 +335,7 @@ static void terminal_putc(char value) {
     if (value == '\n') {
         rows = terminal_view_rows();
         index = rows != 0 && terminal_lines_used >= rows;
+        terminal_line_soft_break[terminal_line_head] = 0;
         terminal_begin_line();
         if (index != 0 || terminal_view_offset != 0) terminal_render();
         return;
@@ -346,6 +352,7 @@ static void terminal_putc(char value) {
     if (terminal_column >= columns || terminal_column >= TERMINAL_COLUMNS - 1) {
         rows = terminal_view_rows();
         index = rows != 0 && terminal_lines_used >= rows;
+        terminal_line_soft_break[terminal_line_head] = 1;
         terminal_begin_line();
         if (index != 0 || terminal_view_offset != 0) terminal_render();
     }
@@ -354,6 +361,86 @@ static void terminal_putc(char value) {
     terminal_lines[terminal_line_head][index + 1] = '\0';
     terminal_column++;
     terminal_draw_cell(index, value);
+}
+
+static void terminal_reflow(u32 columns, u32 old_rows, u32 old_offset, u32 old_count) {
+    u32 source_count = terminal_lines_used;
+    u32 source_first = (terminal_line_head + TERMINAL_ROWS + 1U - source_count) % TERMINAL_ROWS;
+    u32 old_visible = old_count < old_rows ? old_count : old_rows;
+    u32 source_anchor = 0;
+    u32 anchor_output = 0;
+    u32 output_lines = 1;
+    u32 index;
+    u8 preserve_scroll = old_offset != 0;
+    if (columns == 0) return;
+    if (preserve_scroll != 0) {
+        if (old_offset > old_count - old_visible) old_offset = old_count - old_visible;
+        source_anchor = old_count - old_visible - old_offset;
+    }
+    if (terminal_input_active != 0) {
+        u32 input_limit = columns > terminal_input_start + 1U ?
+                          columns - terminal_input_start - 1U : 0;
+        if (input_limit >= LINE_MAX) input_limit = LINE_MAX - 1U;
+        terminal_input_limit = input_limit;
+        if (terminal_input_length > input_limit) {
+            terminal_input_length = input_limit;
+            if (terminal_input_cursor > input_limit) terminal_input_cursor = input_limit;
+            terminal_lines[terminal_line_head][terminal_input_start + input_limit] = '\0';
+            terminal_column = terminal_input_start + input_limit;
+        }
+    }
+    for (index = 0; index < source_count; index++) {
+        u32 source_line = (source_first + index) % TERMINAL_ROWS;
+        u32 character;
+        terminal_reflow_source_soft_break[index] = terminal_line_soft_break[source_line];
+        for (character = 0; character < TERMINAL_COLUMNS; character++) {
+            terminal_reflow_source[index][character] = terminal_lines[source_line][character];
+        }
+    }
+    for (index = 0; index < TERMINAL_ROWS; index++) {
+        u32 character;
+        terminal_line_soft_break[index] = 0;
+        for (character = 0; character < TERMINAL_COLUMNS; character++) {
+            terminal_lines[index][character] = '\0';
+        }
+    }
+    terminal_line_head = 0;
+    terminal_lines_used = 1;
+    terminal_column = 0;
+    terminal_view_offset = 0;
+    for (index = 0; index < source_count; index++) {
+        u32 character;
+        if (preserve_scroll != 0 && index == source_anchor) {
+            anchor_output = output_lines - 1U;
+        }
+        for (character = 0; character < TERMINAL_COLUMNS - 1U &&
+             terminal_reflow_source[index][character] != '\0'; character++) {
+            if (terminal_column >= columns || terminal_column >= TERMINAL_COLUMNS - 1U) {
+                terminal_line_soft_break[terminal_line_head] = 1;
+                terminal_begin_line();
+                output_lines++;
+            }
+            terminal_lines[terminal_line_head][terminal_column] =
+                terminal_reflow_source[index][character];
+            terminal_lines[terminal_line_head][terminal_column + 1U] = '\0';
+            terminal_column++;
+        }
+        if (terminal_reflow_source_soft_break[index] == 0 && index + 1U < source_count) {
+            terminal_line_soft_break[terminal_line_head] = 0;
+            terminal_begin_line();
+            output_lines++;
+        }
+    }
+    if (preserve_scroll != 0) {
+        u32 retained = terminal_lines_used;
+        u32 dropped = output_lines - retained;
+        u32 mapped_anchor = anchor_output > dropped ? anchor_output - dropped : 0;
+        u32 rows = terminal_view_rows();
+        u32 visible = retained < rows ? retained : rows;
+        if (visible != 0 && mapped_anchor < retained - visible) {
+            terminal_view_offset = retained - visible - mapped_anchor;
+        }
+    }
 }
 
 static void terminal_draw_window_controls(void) {
@@ -536,6 +623,9 @@ static void terminal_geometry_init(void) {
 }
 
 static void terminal_toggle_maximize(void) {
+    u32 old_rows = terminal_view_rows();
+    u32 old_offset = terminal_view_offset;
+    u32 old_count = terminal_lines_used;
     if (terminal_maximized == 0) {
         terminal_restore_x = terminal_x;
         terminal_restore_y = terminal_y;
@@ -553,7 +643,8 @@ static void terminal_toggle_maximize(void) {
         terminal_height = terminal_restore_height;
         terminal_maximized = 0;
     }
-    terminal_view_offset = 0;
+    terminal_resize_last_columns = terminal_view_columns();
+    terminal_reflow(terminal_resize_last_columns, old_rows, old_offset, old_count);
 }
 
 static u8 terminal_resize_hit_test(u32 x, u32 y) {
@@ -578,6 +669,9 @@ static void terminal_resize_update_input_limit(void) {
 }
 
 static void terminal_resize_apply(void) {
+    u32 old_rows = terminal_view_rows();
+    u32 old_offset = terminal_view_offset;
+    u32 old_count = terminal_lines_used;
     int dx = (int)mouse_x - (int)terminal_resize_start_mouse_x;
     int dy = (int)mouse_y - (int)terminal_resize_start_mouse_y;
     int left = (int)terminal_resize_start_x;
@@ -614,7 +708,12 @@ static void terminal_resize_apply(void) {
     terminal_y = (u32)top;
     terminal_width = (u32)(right - left);
     terminal_height = (u32)(bottom - top);
-    terminal_resize_update_input_limit();
+    if (terminal_view_columns() != terminal_resize_last_columns) {
+        terminal_resize_last_columns = terminal_view_columns();
+        terminal_reflow(terminal_resize_last_columns, old_rows, old_offset, old_count);
+    } else {
+        terminal_resize_update_input_limit();
+    }
     terminal_render();
 }
 
@@ -763,6 +862,7 @@ static void desktop_handle_mouse(const fadal_event *event) {
             terminal_resize_start_y = terminal_y;
             terminal_resize_start_width = terminal_width;
             terminal_resize_start_height = terminal_height;
+            terminal_resize_last_columns = terminal_view_columns();
             input_focus = FOCUS_TERMINAL;
             start_open = 0;
             desktop_status = "TERMINAL RESIZING";
@@ -924,6 +1024,7 @@ static void console_clear(void) {
         for (column = 0; column < TERMINAL_COLUMNS; column++) {
             terminal_lines[index][column] = '\0';
         }
+        terminal_line_soft_break[index] = 0;
     }
     vga_row = 0;
     vga_col = 0;

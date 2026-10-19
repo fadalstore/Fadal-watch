@@ -33,6 +33,23 @@ def ppm_pixels(path: Path) -> bytes:
     return header[3]
 
 
+def ppm_region(path: Path, left: int, top: int, right: int, bottom: int) -> bytes:
+    image = path.read_bytes()
+    header = image.split(b"\n", 3)
+    if len(header) != 4 or header[0] != b"P6" or header[2] != b"255":
+        raise RuntimeError(f"invalid PPM framebuffer capture: {path}")
+    width, height = (int(value) for value in header[1].split())
+    if not (0 <= left < right <= width and 0 <= top < bottom <= height):
+        raise RuntimeError(f"invalid framebuffer comparison region: {(left, top, right, bottom)}")
+    pixels = header[3]
+    row_bytes = (right - left) * 3
+    rows = []
+    for y in range(top, bottom):
+        start = (y * width + left) * 3
+        rows.append(pixels[start:start + row_bytes])
+    return b"".join(rows)
+
+
 def ppm_pixel(path: Path, x: int, y: int) -> tuple[int, int, int]:
     image = path.read_bytes()
     header = image.split(b"\n", 3)
@@ -125,8 +142,62 @@ def run_window_resize_checks(process: subprocess.Popen[str], temp: Path,
                               screenshot: Path) -> None:
     mouse = [640, 400]
     state = temp / "window-resize-state.ppm"
+    wide = screenshot.with_name("window-reflow-wide.ppm")
+    narrow = screenshot.with_name("window-reflow-narrow.ppm")
     workspace = (28, 47, 82)
     terminal = (10, 16, 30)
+
+    send_keys(process, ("h", "e", "l", "p", "ret"))
+    time.sleep(0.5)
+    serial = (temp / "serial.log").read_text(errors="replace")
+    if serial.count("commands: help clear pwd") < 2:
+        raise RuntimeError("could not seed a long terminal line for the reflow regression")
+    send_keys(process, ("h", "e", "l"))
+    move_mouse_to(process, mouse, 1226, 400)
+    capture_frame(process, wide)
+    wide_region = ppm_region(wide, 292, 154, 1208, 660)
+    for narrow_right in (780, 920):
+        drag_mouse(process, mouse, 1226, 400, narrow_right, 400)
+        capture_frame(process, narrow)
+        if ppm_region(narrow, 292, 154, 1208, 660) == wide_region:
+            raise RuntimeError("narrowing the terminal did not reflow the long output line")
+        drag_mouse(process, mouse, narrow_right, 400, 1226, 400)
+        capture_frame(process, state)
+        restored_region = ppm_region(state, 292, 154, 1208, 660)
+        if restored_region != wide_region:
+            mismatch = next(index for index, (actual, expected) in
+                            enumerate(zip(restored_region, wide_region)) if actual != expected)
+            pixel = mismatch // 3
+            location = (292 + pixel % 916, 154 + pixel // 916)
+            raise RuntimeError(f"terminal text was not restored after resize at {location}; "
+                               f"captures: {wide}, {narrow}, {state}")
+    send_keys(process, ("p", "ret"))
+    time.sleep(0.5)
+    serial = (temp / "serial.log").read_text(errors="replace")
+    if serial.count("commands: help clear pwd") < 3:
+        raise RuntimeError("the active command editor did not survive repeated resize cycles")
+    print("PASS: long output reflows and the active command editor survives repeated resize cycles.")
+
+    drag_mouse(process, mouse, 800, 686, 800, 358)
+    for _ in range(5):
+        send_keys(process, ("l", "s", "ret"))
+    send_monitor_command(process, "sendkey pgup", delay=0.45)
+    scroll_wide = screenshot.with_name("window-reflow-scrollback-wide.ppm")
+    scroll_narrow = screenshot.with_name("window-reflow-scrollback-narrow.ppm")
+    capture_frame(process, scroll_wide)
+    scroll_region = ppm_region(scroll_wide, 292, 154, 1208, 340)
+    drag_mouse(process, mouse, 1226, 300, 780, 300)
+    capture_frame(process, scroll_narrow)
+    drag_mouse(process, mouse, 780, 300, 1226, 300)
+    capture_frame(process, state)
+    if ppm_region(state, 292, 154, 1208, 340) != scroll_region:
+        raise RuntimeError("the visible scrollback anchor changed across repeated resize")
+    send_monitor_command(process, "sendkey pgdn", delay=0.45)
+    capture_frame(process, state)
+    if ppm_region(state, 292, 154, 1208, 340) == scroll_region:
+        raise RuntimeError("PageDown did not return from the resized scrollback view")
+    drag_mouse(process, mouse, 800, 356, 800, 684)
+    print("PASS: PageUp history remains anchored through a width reflow and PageDown returns to live output.")
 
     drag_mouse(process, mouse, 1226, 400, 1096, 400)
     capture_frame(process, state)
@@ -179,14 +250,16 @@ def run_window_resize_checks(process: subprocess.Popen[str], temp: Path,
 def wait_for_titlebar_color(process: subprocess.Popen[str], screenshot: Path,
                             expected: bytes, timeout: float = 3.0) -> None:
     deadline = time.monotonic() + timeout
+    actual = b""
     while time.monotonic() < deadline:
         send_monitor_command(process, f"screendump {screenshot}", delay=0.12)
         pixels = ppm_pixels(screenshot)
         width = int(screenshot.read_bytes().split(b"\n", 3)[1].split()[0])
         offset = (100 * width + 500) * 3
-        if pixels[offset:offset + 3] == expected:
+        actual = pixels[offset:offset + 3]
+        if actual == expected:
             return
-    raise RuntimeError("terminal title-bar did not reach the requested focus state")
+    raise RuntimeError(f"terminal title-bar color {tuple(actual)} did not reach {tuple(expected)}")
 
 
 def main() -> int:

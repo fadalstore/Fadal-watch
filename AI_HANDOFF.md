@@ -90,15 +90,16 @@ both the NX instruction-fetch fault (`error=0x11`) and read-only write fault
 (`error=0x3`); the linker should show separate `R`, `R E`, `R`, `RW` LOAD
 segments with no RWX warning. Terminal resizing is implemented on all four
 edges and corners. Opposite edges stay anchored for single-edge drags; the
-window enforces minimum dimensions and framebuffer work-area bounds, updates
-the active editor's input limit, and redraws the viewport as geometry changes.
-Existing scrollback lines are clipped to the resized viewport rather than
-soft-wrapped/reflowed. The QEMU/OVMF regression covers inward/outward edge drags,
-the bottom-right corner, minimum dimensions, and restored original bounds; its
-capture is `kernel/uefi/out/window-resize.ppm`. Next, improve text reflow and
-verify command editing/scrollback behavior across repeated resize cycles. Keep
-the BIOS shell and UEFI desktop as separate deliverables. Always boot-test loader
-or compositor changes under QEMU/UTM and inspect the framebuffer.
+window enforces minimum dimensions and framebuffer work-area bounds. Scrollback
+records whether each boundary is an explicit newline or a soft wrap, then
+reflows retained text to the new width while preserving the user's visible
+scrollback anchor. The active command editor is clipped to the new row capacity.
+The QEMU/OVMF regression verifies repeated shrink/expand cycles, restoration of
+long output, command editing during resize, PageUp/PageDown behavior across
+reflow, edge/corner drags, minimum dimensions, and restored original bounds. Its
+final geometry capture is `kernel/uefi/out/window-resize.ppm`. Keep the BIOS
+shell and UEFI desktop as separate deliverables. Always boot-test loader or
+compositor changes under QEMU/UTM and inspect the framebuffer.
 
 Separately, continue native Git smart-HTTP only after the TCP receive, HTTP parsing, TLS boundary, and certificate strategy are explicitly designed. Do not describe the current `github` shell bridge as a native clone implementation.
 

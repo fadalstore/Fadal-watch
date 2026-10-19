@@ -25,9 +25,37 @@ def send_keys(process: subprocess.Popen[str], keys: tuple[str, ...]) -> None:
         send_monitor_command(process, f"sendkey {key}")
 
 
-def send_text(process: subprocess.Popen[str], text: str) -> None:
+def send_text(process: subprocess.Popen[str], text: str, serial_log: Path) -> None:
     key_names = {" ": "spc", ".": "dot", "/": "slash", "-": "minus"}
-    send_keys(process, tuple(key_names.get(character, character) for character in text) + ("ret",))
+    offset = serial_log.stat().st_size if serial_log.exists() else 0
+    expected = bytearray()
+    for character in text:
+        expected.extend(character.encode("ascii"))
+        for attempt in range(3):
+            send_monitor_command(process,
+                                 f"sendkey {key_names.get(character, character)}",
+                                 delay=0.25)
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline:
+                data = serial_log.read_bytes() if serial_log.exists() else b""
+                if data[offset:].endswith(expected):
+                    break
+                time.sleep(0.02)
+            else:
+                continue
+            break
+        else:
+            recent = serial_log.read_bytes()[offset:] if serial_log.exists() else b""
+            raise RuntimeError(f"QEMU did not echo command prefix {expected!r}; observed {recent[-120:]!r}")
+    for attempt in range(3):
+        send_monitor_command(process, "sendkey ret", delay=0.25)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            data = serial_log.read_bytes() if serial_log.exists() else b""
+            if b"\r\n" in data[offset + len(expected):]:
+                return
+            time.sleep(0.02)
+    raise RuntimeError(f"QEMU did not submit command {text!r}")
 
 
 def wait_for_serial_text(path: Path, text: str, count: int = 1,
@@ -43,45 +71,69 @@ def wait_for_serial_text(path: Path, text: str, count: int = 1,
 
 
 def wait_for_shell_prompt(path: Path, count: int, timeout: float = 5.0) -> str:
-    return wait_for_serial_text(path, "fadal:/home/root#", count=count, timeout=timeout)
+    serial = wait_for_serial_text(path, "fadal:/", count=count, timeout=timeout)
+    time.sleep(0.25)
+    return path.read_text(errors="replace") if path.exists() else serial
 
 
 def run_persistent_home_checks(process: subprocess.Popen[str], serial_log: Path,
                                debug_log: Path,
                                timeout: float) -> None:
     serial = serial_log.read_text(errors="replace")
-    prompt = "fadal:/home/root#"
+    prompt = "fadal:/"
     prompt_count = serial.count(prompt)
     if prompt_count == 0:
         raise RuntimeError("persistent-home test started without a shell prompt")
 
-    send_text(process, "ls")
+    send_text(process, "ls", serial_log)
     serial = wait_for_serial_text(serial_log, ".profile")
     prompt_count += 1
     serial = wait_for_shell_prompt(serial_log, prompt_count)
     if not all(name in serial for name in ("README", "motd", ".profile")):
         raise RuntimeError("persistent home did not list the first-boot default files")
-    send_text(process, "cat readme")
+    send_text(process, "cd /etc", serial_log)
+    wait_for_serial_text(serial_log, "directory changed")
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    if "fadal:/etc#" not in serial:
+        raise RuntimeError("cd did not update the shell's current directory")
+    send_text(process, "pwd", serial_log)
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    normalized_serial = serial.replace("\r\n", "\n").replace("\r", "")
+    if "/etc\nfadal:/etc#" not in normalized_serial:
+        raise RuntimeError("pwd did not report the current /etc directory")
+    send_text(process, "cat motd", serial_log)
+    wait_for_serial_text(serial_log, "FadalOS: small, inspectable, and user-aware.")
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    send_text(process, "cd ../home/root", serial_log)
+    wait_for_serial_text(serial_log, "directory changed", count=2)
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    if "fadal:/home/root#" not in serial:
+        raise RuntimeError("relative cd did not normalize back to /home/root")
+    send_text(process, "cat readme", serial_log)
     serial = wait_for_serial_text(serial_log, "This is the FadalOS Phase 1 console.")
     prompt_count += 1
     serial = wait_for_shell_prompt(serial_log, prompt_count)
     if "This is the FadalOS Phase 1 console." not in serial:
         raise RuntimeError("cat did not read the seeded persistent README; guest output: " +
                            serial[-1200:])
-    send_text(process, "write persist diskdatalong")
+    send_text(process, "write persist diskdatalong", serial_log)
     serial = wait_for_serial_text(serial_log, "write: saved in /home/root")
     prompt_count += 1
     serial = wait_for_shell_prompt(serial_log, prompt_count)
-    send_text(process, "write persist ok")
+    send_text(process, "write persist ok", serial_log)
     serial = wait_for_serial_text(serial_log, "write: saved in /home/root", count=2)
     prompt_count += 1
     serial = wait_for_shell_prompt(serial_log, prompt_count)
-    send_text(process, "write ../escape nope")
-    wait_for_serial_text(serial_log, "write: invalid filename")
+    send_text(process, "write ../escape nope", serial_log)
+    wait_for_serial_text(serial_log, "write: only /home/root is writable")
     prompt_count += 1
     serial = wait_for_shell_prompt(serial_log, prompt_count)
 
-    send_text(process, "restart")
+    send_text(process, "restart", serial_log)
     deadline = time.monotonic() + timeout
     marker = b"FADALOS_CONSOLE_ENTRY"
     while time.monotonic() < deadline:
@@ -95,11 +147,11 @@ def run_persistent_home_checks(process: subprocess.Popen[str], serial_log: Path,
 
     prompt_count += 1
     serial = wait_for_shell_prompt(serial_log, prompt_count, timeout=timeout)
-    send_text(process, "ls")
+    send_text(process, "ls", serial_log)
     wait_for_serial_text(serial_log, "persist\n")
     prompt_count += 1
     serial = wait_for_shell_prompt(serial_log, prompt_count)
-    send_text(process, "cat persist")
+    send_text(process, "cat persist", serial_log)
     serial = wait_for_serial_text(serial_log, "ok\n")
     prompt_count += 1
     serial = wait_for_shell_prompt(serial_log, prompt_count)
@@ -284,6 +336,8 @@ def run_window_resize_checks(process: subprocess.Popen[str], temp: Path,
     if ppm_region(state, 292, 154, 1208, 340) == scroll_region:
         raise RuntimeError("PageDown did not return from the resized scrollback view")
     drag_mouse(process, mouse, 800, 356, 800, 684)
+    send_keys(process, ("c", "l", "e", "a", "r", "ret"))
+    time.sleep(0.5)
     print("PASS: PageUp history remains anchored through a width reflow and PageDown returns to live output.")
 
     drag_mouse(process, mouse, 1226, 400, 1096, 400)

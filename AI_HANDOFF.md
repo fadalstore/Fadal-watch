@@ -112,6 +112,15 @@ and exact bytes extracted from the FAT image. This is not yet a general VFS:
 nested directories, deletion, per-user isolation, and power-loss journaling
 remain unimplemented.
 
+The shell path-resolution slice is implemented with a bounded current-working-
+directory resolver initialized at `/home/root`; the live path appears in the
+prompt. `pwd`, `cd [PATH]`, `ls [PATH]`, `cat PATH`, and `write PATH TEXT` accept
+normalized absolute or relative paths with `.` and `..`; `/etc` files are
+read-only, writes remain confined to the flat `/home/root` store, and nested
+home directories are rejected.
+The persistent-home regression also verifies `cd /etc`, `pwd`, a relative read of
+`motd`, relative `cd` back to `/home/root`, and reading the seeded README there.
+
 Separately, continue native Git smart-HTTP only after the TCP receive, HTTP parsing, TLS boundary, and certificate strategy are explicitly designed. Do not describe the current `github` shell bridge as a native clone implementation.
 
 ## What not to assume

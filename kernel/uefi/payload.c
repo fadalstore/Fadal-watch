@@ -51,6 +51,7 @@ const u8 fadal64_layout[40] = {
 #define VGA_COLS 80
 #define VGA_ROWS 25
 #define LINE_MAX 96
+#define SHELL_PATH_MAX 128
 #define EVENT_QUEUE_SIZE 32
 #define TERMINAL_ROWS 64
 #define TERMINAL_COLUMNS 160
@@ -142,6 +143,7 @@ static const char *desktop_status = "SYSTEM READY";
 static fadal_uefi_services *desktop_services;
 static u32 current_uid = USER_ROOT;
 static const char current_user[] = "root";
+static char shell_current_directory[SHELL_PATH_MAX] = "/home/root";
 static u8 input_focus = FOCUS_TERMINAL;
 
 static void fb_pixel(u32 x, u32 y, u32 color) {
@@ -976,6 +978,81 @@ static u32 f_length(const char *text) {
     return length;
 }
 
+static int shell_path_character(char value) {
+    return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') ||
+           (value >= '0' && value <= '9') || value == '_' || value == '-' || value == '.';
+}
+
+static int shell_normalize_path(const char *path, char *output, u32 capacity) {
+    char combined[SHELL_PATH_MAX * 2];
+    u32 component_start[64];
+    u32 combined_size = 0;
+    u32 source = 0;
+    u32 output_size = 1;
+    u32 depth = 0;
+    u32 index;
+    if (path == NULL || output == NULL || capacity < 2) return 0;
+    if (path[0] != '/') {
+        u32 cwd_size = f_length(shell_current_directory);
+        if (cwd_size + 1U >= sizeof(combined)) return 0;
+        for (index = 0; index < cwd_size; index++) combined[combined_size++] = shell_current_directory[index];
+        if (!(cwd_size == 1 && shell_current_directory[0] == '/')) combined[combined_size++] = '/';
+    }
+    while (path[source] != '\0') {
+        if (combined_size + 1U >= sizeof(combined)) return 0;
+        combined[combined_size++] = path[source++];
+    }
+    combined[combined_size] = '\0';
+    output[0] = '/';
+    output[1] = '\0';
+    source = 0;
+    while (combined[source] != '\0') {
+        u32 start;
+        u32 length;
+        while (combined[source] == '/') source++;
+        if (combined[source] == '\0') break;
+        start = source;
+        while (combined[source] != '\0' && combined[source] != '/') source++;
+        length = source - start;
+        if (length == 1 && combined[start] == '.') continue;
+        if (length == 2 && combined[start] == '.' && combined[start + 1] == '.') {
+            if (depth != 0) {
+                output_size = component_start[--depth];
+                output[output_size] = '\0';
+            }
+            continue;
+        }
+        if (length == 0 || length > 47 || depth >= sizeof(component_start) / sizeof(component_start[0])) return 0;
+        for (index = 0; index < length; index++) {
+            if (!shell_path_character(combined[start + index])) return 0;
+        }
+        component_start[depth++] = output_size;
+        if (output_size > 1) {
+            if (output_size + 1U >= capacity) return 0;
+            output[output_size++] = '/';
+        }
+        if (output_size + length >= capacity) return 0;
+        for (index = 0; index < length; index++) output[output_size++] = combined[start + index];
+        output[output_size] = '\0';
+    }
+    return 1;
+}
+
+static int shell_is_directory(const char *path) {
+    return f_streq(path, "/") || f_streq(path, "/bin") || f_streq(path, "/dev") ||
+           f_streq(path, "/etc") || f_streq(path, "/home") ||
+           f_streq(path, "/home/root") || f_streq(path, "/ram") || f_streq(path, "/tmp");
+}
+
+static void shell_set_current_directory(const char *path) {
+    u32 index = 0;
+    while (path[index] != '\0' && index + 1U < SHELL_PATH_MAX) {
+        shell_current_directory[index] = path[index];
+        index++;
+    }
+    shell_current_directory[index] = '\0';
+}
+
 static void home_seed_file(const char *name, const char *contents) {
     char probe[1];
     u32 read_size = 0;
@@ -1011,11 +1088,81 @@ static void home_list_command(void) {
     else console_write(entries);
 }
 
-static void home_cat_command(char *name) {
+static void shell_list_path(const char *argument) {
+    char path[SHELL_PATH_MAX];
+    const char *requested = argument == NULL || argument[0] == '\0' ? "." : argument;
+    if (!shell_normalize_path(requested, path, sizeof(path))) {
+        console_write("ls: invalid path\r\n");
+        return;
+    }
+    if (!shell_is_directory(path)) {
+        console_write("ls: not a directory\r\n");
+        return;
+    }
+    if (f_streq(path, "/")) console_write("bin  dev  etc  home  ram  tmp\r\n");
+    else if (f_streq(path, "/home")) console_write("root\r\n");
+    else if (f_streq(path, "/etc")) console_write("fadal-release  motd  dictionary  (read-only)\r\n");
+    else if (f_streq(path, "/home/root")) home_list_command();
+    else console_write("(empty)\r\n");
+}
+
+static void shell_change_directory(const char *argument) {
+    char path[SHELL_PATH_MAX];
+    const char *requested = argument;
+    if (requested == NULL || requested[0] == '\0') requested = "/home/root";
+    if (!shell_normalize_path(requested, path, sizeof(path))) {
+        console_write("cd: invalid path\r\n");
+        return;
+    }
+    if (!shell_is_directory(path)) {
+        console_write("cd: no such directory\r\n");
+        return;
+    }
+    shell_set_current_directory(path);
+    console_write("directory changed\r\n");
+}
+
+static void shell_cat_path(const char *argument) {
+    char path[SHELL_PATH_MAX];
     char contents[4096 + 1];
+    const char *name;
     u32 read_size = 0;
     fadal_net_u32 result;
-    if (f_starts(name, "/home/root/")) name += 11;
+    if (argument == NULL || argument[0] == '\0' ||
+        !shell_normalize_path(argument, path, sizeof(path))) {
+        console_write("cat: invalid path\r\n");
+        return;
+    }
+    if (f_streq(path, "/etc/motd")) {
+        console_write("FadalOS: small, inspectable, and user-aware.\r\n");
+        return;
+    }
+    if (f_streq(path, "/etc/fadal-release")) {
+        console_write("FadalOS 0.1.0 UEFI desktop / Fadal64 independent runtime\r\n");
+        return;
+    }
+    if (f_streq(path, "/etc/dictionary")) {
+        console_write("system files are immutable in the Phase 1 UEFI payload\r\n");
+        console_write("use the installer and signed system image to update them\r\n");
+        return;
+    }
+    if (shell_is_directory(path)) {
+        console_write("cat: is a directory\r\n");
+        return;
+    }
+    if (!f_starts(path, "/home/root/")) {
+        console_write("cat: file not found\r\n");
+        return;
+    }
+    name = path + 11;
+    while (*name != '\0') {
+        if (*name == '/') {
+            console_write("cat: nested directories are not supported\r\n");
+            return;
+        }
+        name++;
+    }
+    name = path + 11;
     if (desktop_services == (fadal_uefi_services *)0 ||
         desktop_services->home_available == 0) {
         console_write("cat: persistent home unavailable\r\n");
@@ -1036,8 +1183,11 @@ static void home_cat_command(char *name) {
 }
 
 static void home_write_command(char *arguments) {
+    char path[SHELL_PATH_MAX];
     char *separator = arguments;
     char *contents;
+    const char *name;
+    const char *scan;
     fadal_net_u32 result;
     while (*separator != '\0' && *separator != ' ') separator++;
     if (*separator == '\0') {
@@ -1052,7 +1202,22 @@ static void home_write_command(char *arguments) {
         console_write("write: persistent home unavailable\r\n");
         return;
     }
-    result = desktop_services->home_write(arguments, contents, f_length(contents));
+    if (!shell_normalize_path(arguments, path, sizeof(path))) {
+        console_write("write: invalid path\r\n");
+        return;
+    }
+    if (!f_starts(path, "/home/root/")) {
+        console_write("write: only /home/root is writable\r\n");
+        return;
+    }
+    name = path + 11;
+    for (scan = name; *scan != '\0'; scan++) {
+        if (*scan == '/') {
+            console_write("write: nested directories are not supported\r\n");
+            return;
+        }
+    }
+    result = desktop_services->home_write(name, contents, f_length(contents));
     if (result == FADAL_HOME_OK) console_write("write: saved in /home/root\r\n");
     else if (result == FADAL_HOME_INVALID_NAME) console_write("write: invalid filename\r\n");
     else if (result == FADAL_HOME_TOO_LARGE) console_write("write: file exceeds 4096 bytes\r\n");
@@ -1266,7 +1431,9 @@ static u8 serial_getc(void) {
 
 static void prompt(void) {
     terminal_view_offset = 0;
-    console_write("fadal:/home/root# ");
+    console_write("fadal:");
+    console_write(shell_current_directory);
+    console_write("# ");
 }
 
 static void print_uid(void) {
@@ -1281,22 +1448,16 @@ static void run_command(char *line) {
     } else if (f_streq(line, "clear")) {
         console_clear();
     } else if (f_streq(line, "pwd")) {
-        console_write("/home/root\r\n");
-    } else if (f_streq(line, "ls") || f_streq(line, "ls /home/root")) {
-        home_list_command();
-    } else if (f_streq(line, "ls /")) {
-        console_write("bin  dev  etc  home  ram  tmp\r\n");
-    } else if (f_streq(line, "ls /etc")) {
-        console_write("fadal-release  motd  dictionary  (read-only)\r\n");
-    } else if (f_streq(line, "cd /") || f_streq(line, "cd /home/root")) {
-        console_write("directory changed\r\n");
-    } else if (f_streq(line, "cat /etc/motd")) {
-        console_write("FadalOS: small, inspectable, and user-aware.\r\n");
-    } else if (f_streq(line, "cat /etc/fadal-release")) {
-        console_write("FadalOS 0.1.0 UEFI desktop / Fadal64 independent runtime\r\n");
-    } else if (f_streq(line, "cat /etc/dictionary")) {
-        console_write("system files are immutable in the Phase 1 UEFI payload\r\n");
-        console_write("use the installer and signed system image to update them\r\n");
+        console_write(shell_current_directory);
+        console_write("\r\n");
+    } else if (f_streq(line, "ls")) {
+        shell_list_path(NULL);
+    } else if (f_starts(line, "ls ")) {
+        shell_list_path(line + 3);
+    } else if (f_streq(line, "cd")) {
+        shell_change_directory(NULL);
+    } else if (f_starts(line, "cd ")) {
+        shell_change_directory(line + 3);
     } else if (f_streq(line, "whoami")) {
         console_write(current_user);
         console_write("\r\n");
@@ -1348,10 +1509,8 @@ static void run_command(char *line) {
     } else if (f_streq(line, "exit")) {
         console_write("FadalOS halted. You may close the UTM/QEMU session.\r\n");
         for (;;) __asm__ volatile ("hlt");
-    } else if (f_starts(line, "cd ")) {
-        console_write("cd: persistent path resolver is scheduled for Phase 1B\r\n");
     } else if (f_starts(line, "cat ")) {
-        home_cat_command(line + 4);
+        shell_cat_path(line + 4);
     } else {
         console_write("fadal: command not found; type help\r\n");
     }

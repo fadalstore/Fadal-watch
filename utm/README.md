@@ -17,7 +17,7 @@ UEFI GOP and drawn directly by the independent Fadal64 payload.
 Available Phase 1 console commands are:
 
 ```text
-help clear pwd ls cd cat whoami id uname fscan user drivers net download restart reboot shutdown poweroff exit
+help clear pwd ls cd cat write whoami id uname fscan user drivers net download restart reboot shutdown poweroff exit
 ```
 
 The console accepts input from both UTM's **Terminal** serial window and the
@@ -26,7 +26,7 @@ waits for UART transmit readiness, filters scan-code break events, and treats
 CRLF from mobile terminals as one Enter key. This prevents repeated empty
 prompts and garbled key sequences when using UTM SE.
 
-The current console provides a root identity (`uid=0`), a registered non-root Fadal identity (`uid=1000`), virtual `/home/root` and read-only `/etc` views, and a loopback-only FScan security result. `cat /etc/dictionary` reports the immutable system-file policy. `restart`/`reboot` use the QEMU reset port, while `shutdown`/`poweroff` use the ACPI/ISA power-off ports supported by UTM/QEMU. When firmware publishes the UEFI HTTP protocol or its Service Binding protocol, `download http://host/path FILE` performs a bounded HTTP GET and writes the response to the ESP. The desktop detects this capability at boot and reports `HTTP service unavailable` instead of pretending to have Internet access when the firmware does not publish it. OVMF's default build used for local QEMU testing does not publish the HTTP service; UTM/UTM SE must provide the protocol for this command to work. HTTPS/TLS and persistent user-home storage remain future work.
+The current console provides a root identity (`uid=0`), a registered non-root Fadal identity (`uid=1000`), a persistent flat `/home/root` directory, read-only `/etc` views, and a loopback-only FScan security result. `ls`, `cat NAME`, and `write NAME TEXT` access files stored under `FADALHOME` on the FAT32 EFI System Partition. `write` replaces a file with one line of text; names cannot contain paths and the loader caps files at 4096 bytes. The seeded README, motd, and profile are created only when absent. Files survive a guest restart as long as UTM retains the same disk image. This is an initial persistent-home layer, not yet a general VFS: nested directories, deletion, per-user storage isolation, and power-loss journaling are not implemented. `cat /etc/dictionary` reports the immutable system-file policy. `restart`/`reboot` use the QEMU reset port, while `shutdown`/`poweroff` use the ACPI/ISA power-off ports supported by UTM/QEMU. When firmware publishes the UEFI HTTP protocol or its Service Binding protocol, `download http://host/path FILE` performs a bounded HTTP GET and writes the response to the ESP. The desktop detects this capability at boot and reports `HTTP service unavailable` instead of pretending to have Internet access when the firmware does not publish it. OVMF's default build used for local QEMU testing does not publish the HTTP service; UTM/UTM SE must provide the protocol for this command to work. HTTPS/TLS remains future work.
 
 The bundle uses the current UTM configuration schema: `Backend=QEMU`, `ConfigurationVersion=4`, a `Drive` entry pointing to `Data/fadal-uefi.img`, UEFI enabled, an RTL8139 network adapter, and a built-in serial **Terminal**. This avoids the legacy `Drives`/`System` configuration format that older packages used and that UTM SE rejects as invalid. The refreshed image was boot-tested with OVMF/QEMU using GOP `1280x800`; this is the same UEFI framebuffer path used by UTM's VGA display.
 

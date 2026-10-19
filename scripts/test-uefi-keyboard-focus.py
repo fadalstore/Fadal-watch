@@ -25,6 +25,93 @@ def send_keys(process: subprocess.Popen[str], keys: tuple[str, ...]) -> None:
         send_monitor_command(process, f"sendkey {key}")
 
 
+def send_text(process: subprocess.Popen[str], text: str) -> None:
+    key_names = {" ": "spc", ".": "dot", "/": "slash", "-": "minus"}
+    send_keys(process, tuple(key_names.get(character, character) for character in text) + ("ret",))
+
+
+def wait_for_serial_text(path: Path, text: str, count: int = 1,
+                         timeout: float = 5.0) -> str:
+    deadline = time.monotonic() + timeout
+    serial = ""
+    while time.monotonic() < deadline:
+        serial = path.read_text(errors="replace") if path.exists() else ""
+        if serial.count(text) >= count:
+            return serial
+        time.sleep(0.1)
+    raise RuntimeError(f"timed out waiting for serial output {text!r}; recent output: {serial[-1000:]}")
+
+
+def wait_for_shell_prompt(path: Path, count: int, timeout: float = 5.0) -> str:
+    return wait_for_serial_text(path, "fadal:/home/root#", count=count, timeout=timeout)
+
+
+def run_persistent_home_checks(process: subprocess.Popen[str], serial_log: Path,
+                               debug_log: Path,
+                               timeout: float) -> None:
+    serial = serial_log.read_text(errors="replace")
+    prompt = "fadal:/home/root#"
+    prompt_count = serial.count(prompt)
+    if prompt_count == 0:
+        raise RuntimeError("persistent-home test started without a shell prompt")
+
+    send_text(process, "ls")
+    serial = wait_for_serial_text(serial_log, ".profile")
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    if not all(name in serial for name in ("README", "motd", ".profile")):
+        raise RuntimeError("persistent home did not list the first-boot default files")
+    send_text(process, "cat readme")
+    serial = wait_for_serial_text(serial_log, "This is the FadalOS Phase 1 console.")
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    if "This is the FadalOS Phase 1 console." not in serial:
+        raise RuntimeError("cat did not read the seeded persistent README; guest output: " +
+                           serial[-1200:])
+    send_text(process, "write persist diskdatalong")
+    serial = wait_for_serial_text(serial_log, "write: saved in /home/root")
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    send_text(process, "write persist ok")
+    serial = wait_for_serial_text(serial_log, "write: saved in /home/root", count=2)
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    send_text(process, "write ../escape nope")
+    wait_for_serial_text(serial_log, "write: invalid filename")
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+
+    send_text(process, "restart")
+    deadline = time.monotonic() + timeout
+    marker = b"FADALOS_CONSOLE_ENTRY"
+    while time.monotonic() < deadline:
+        if debug_log.exists() and debug_log.read_bytes().count(marker) >= 2:
+            break
+        if process.poll() is not None:
+            raise RuntimeError(f"QEMU exited during persistent-home reboot ({process.returncode})")
+        time.sleep(0.2)
+    else:
+        raise RuntimeError("guest did not boot a second time after the restart command")
+
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count, timeout=timeout)
+    send_text(process, "ls")
+    wait_for_serial_text(serial_log, "persist\n")
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    send_text(process, "cat persist")
+    serial = wait_for_serial_text(serial_log, "ok\n")
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    if "persist\n" not in serial:
+        raise RuntimeError("the user file was not listed after reboot")
+    if "ok\n" not in serial:
+        raise RuntimeError("the user file contents did not survive reboot; guest output: " +
+                           serial[-1200:])
+    print("PASS: persistent /home/root files list, read, overwrite, and reject paths.")
+    print("PASS: file contents survive a full QEMU/OVMF guest reboot.")
+
+
 def ppm_pixels(path: Path) -> bytes:
     image = path.read_bytes()
     header = image.split(b"\n", 3)
@@ -280,6 +367,8 @@ def main() -> int:
                         help="also test terminal minimize/maximize/restore/close with the PS/2 mouse")
     parser.add_argument("--window-resize", action="store_true",
                         help="also test terminal edge/corner resizing and minimum bounds")
+    parser.add_argument("--persistent-home", action="store_true",
+                        help="test ESP-backed /home/root files across a guest reboot")
     parser.add_argument("--window-screenshot", type=Path,
                         default=root / "kernel/uefi/out/window-controls.ppm")
     parser.add_argument("--resize-screenshot", type=Path,
@@ -321,8 +410,10 @@ def main() -> int:
             "-serial", f"file:{serial_log}",
             "-debugcon", f"file:{debug_log}",
             "-global", "isa-debugcon.iobase=0x402",
-            "-no-reboot", "-no-shutdown",
+            "-no-shutdown",
         ]
+        if not args.persistent_home:
+            command.append("-no-reboot")
         process = subprocess.Popen(
             command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
             stderr=subprocess.STDOUT, text=True,
@@ -363,6 +454,8 @@ def main() -> int:
 
             print("PASS: Tab moved focus to the desktop and terminal input was suppressed.")
             print("PASS: Tab restored terminal focus and the help command executed.")
+            if args.persistent_home:
+                run_persistent_home_checks(process, serial_log, debug_log, args.timeout)
             if args.terminal_input:
                 send_keys(process, ("h", "e", "p", "left", "l", "ret"))
                 time.sleep(0.6)

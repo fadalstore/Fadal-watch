@@ -170,6 +170,22 @@ work area. Text reflows between soft wraps while preserving explicit newlines;
 the editor remains bounded to the visible prompt row. The final geometry capture
 is `kernel/uefi/out/window-resize.ppm`.
 
+Run the persistent-home regression with:
+
+```sh
+make -C kernel/uefi test-persistent-home
+```
+
+The test boots a fresh ESP under QEMU/OVMF, checks the seeded `/home/root`
+files, creates and overwrites a file, triggers a guest reboot, then lists and
+reads the file again. After QEMU exits, `mcopy` reads the raw FAT32 ESP and
+compares the stored bytes with the expected content. The UEFI loader backs the
+flat `/home/root` directory with `FADALHOME` at the ESP root. `write NAME TEXT`
+stores one line and overwrites an existing file; names are single path
+components and the backend caps each file at 4096 bytes. This is persistent
+storage, not yet a general VFS: nested directories, delete, multi-user
+permissions/isolation, and power-loss journaling are not implemented.
+
 The UEFI desktop keeps Boot Services active so it can discover the EFI HTTP
 protocol or its HTTP Service Binding protocol. When firmware provides it, the
 terminal accepts:

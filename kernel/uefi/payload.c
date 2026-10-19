@@ -967,6 +967,98 @@ static int f_starts(const char *text, const char *prefix) {
     }
     return 1;
 }
+
+static void console_write(const char *text);
+
+static u32 f_length(const char *text) {
+    u32 length = 0;
+    while (text[length] != '\0') length++;
+    return length;
+}
+
+static void home_seed_file(const char *name, const char *contents) {
+    char probe[1];
+    u32 read_size = 0;
+    if (desktop_services == (fadal_uefi_services *)0 ||
+        desktop_services->home_available == 0) return;
+    if (desktop_services->home_read(name, probe, sizeof(probe), &read_size) ==
+        FADAL_HOME_NOT_FOUND) {
+        desktop_services->home_write(name, contents, f_length(contents));
+    }
+}
+
+static void home_seed_defaults(void) {
+    home_seed_file("README", "Welcome to FadalOS.\r\nThis is the FadalOS Phase 1 console.\r\n");
+    home_seed_file("motd", "FadalOS: small, inspectable, and user-aware.\r\n");
+    home_seed_file(".profile", "# FadalOS root profile\r\n");
+}
+
+static void home_list_command(void) {
+    char entries[512];
+    u32 written = 0;
+    fadal_net_u32 result;
+    if (desktop_services == (fadal_uefi_services *)0 ||
+        desktop_services->home_available == 0) {
+        console_write("ls: persistent home unavailable\r\n");
+        return;
+    }
+    result = desktop_services->home_list(entries, sizeof(entries), &written);
+    if (result != FADAL_HOME_OK) {
+        console_write("ls: could not read persistent home\r\n");
+        return;
+    }
+    if (written == 0) console_write("(empty)\r\n");
+    else console_write(entries);
+}
+
+static void home_cat_command(char *name) {
+    char contents[4096 + 1];
+    u32 read_size = 0;
+    fadal_net_u32 result;
+    if (f_starts(name, "/home/root/")) name += 11;
+    if (desktop_services == (fadal_uefi_services *)0 ||
+        desktop_services->home_available == 0) {
+        console_write("cat: persistent home unavailable\r\n");
+        return;
+    }
+    result = desktop_services->home_read(name, contents, sizeof(contents) - 1U, &read_size);
+    if (result == FADAL_HOME_NOT_FOUND) {
+        console_write("cat: file not found in /home/root\r\n");
+        return;
+    }
+    if (result != FADAL_HOME_OK || read_size >= sizeof(contents)) {
+        console_write("cat: could not read file\r\n");
+        return;
+    }
+    contents[read_size] = '\0';
+    console_write(contents);
+    if (read_size == 0 || contents[read_size - 1U] != '\n') console_write("\r\n");
+}
+
+static void home_write_command(char *arguments) {
+    char *separator = arguments;
+    char *contents;
+    fadal_net_u32 result;
+    while (*separator != '\0' && *separator != ' ') separator++;
+    if (*separator == '\0') {
+        console_write("write: usage write NAME TEXT\r\n");
+        return;
+    }
+    *separator++ = '\0';
+    while (*separator == ' ') separator++;
+    contents = separator;
+    if (desktop_services == (fadal_uefi_services *)0 ||
+        desktop_services->home_available == 0) {
+        console_write("write: persistent home unavailable\r\n");
+        return;
+    }
+    result = desktop_services->home_write(arguments, contents, f_length(contents));
+    if (result == FADAL_HOME_OK) console_write("write: saved in /home/root\r\n");
+    else if (result == FADAL_HOME_INVALID_NAME) console_write("write: invalid filename\r\n");
+    else if (result == FADAL_HOME_TOO_LARGE) console_write("write: file exceeds 4096 bytes\r\n");
+    else console_write("write: could not save file\r\n");
+}
+
 static void fadal_restart(void) {
     fadal_outb(0x64, 0xfe);
     fadal_outb(0xcf9, 0x06);
@@ -1185,22 +1277,20 @@ static void print_uid(void) {
 static void run_command(char *line) {
     if (line[0] == '\0') return;
     if (f_streq(line, "help")) {
-        console_write("commands: help clear pwd ls cd cat whoami id uname fscan user drivers net download restart reboot shutdown poweroff exit\r\n");
+        console_write("commands: help clear pwd ls cd cat write whoami id uname fscan user drivers net download restart reboot shutdown poweroff exit\r\n");
     } else if (f_streq(line, "clear")) {
         console_clear();
     } else if (f_streq(line, "pwd")) {
         console_write("/home/root\r\n");
     } else if (f_streq(line, "ls") || f_streq(line, "ls /home/root")) {
-        console_write("README  motd  .profile\r\n");
+        home_list_command();
     } else if (f_streq(line, "ls /")) {
         console_write("bin  dev  etc  home  ram  tmp\r\n");
     } else if (f_streq(line, "ls /etc")) {
         console_write("fadal-release  motd  dictionary  (read-only)\r\n");
     } else if (f_streq(line, "cd /") || f_streq(line, "cd /home/root")) {
         console_write("directory changed\r\n");
-    } else if (f_streq(line, "cat README") || f_streq(line, "cat /home/root/README")) {
-        console_write("Welcome to FadalOS.\r\nThis is the FadalOS Phase 1 console.\r\n");
-    } else if (f_streq(line, "cat motd") || f_streq(line, "cat /etc/motd")) {
+    } else if (f_streq(line, "cat /etc/motd")) {
         console_write("FadalOS: small, inspectable, and user-aware.\r\n");
     } else if (f_streq(line, "cat /etc/fadal-release")) {
         console_write("FadalOS 0.1.0 UEFI desktop / Fadal64 independent runtime\r\n");
@@ -1247,6 +1337,8 @@ static void run_command(char *line) {
                 console_write(result != 0 ? "download: saved to ESP\r\n" : "download: failed\r\n");
             }
         }
+    } else if (f_starts(line, "write ")) {
+        home_write_command(line + 6);
     } else if (f_streq(line, "restart") || f_streq(line, "reboot")) {
         console_write("restarting FadalOS...\r\n");
         fadal_restart();
@@ -1259,7 +1351,7 @@ static void run_command(char *line) {
     } else if (f_starts(line, "cd ")) {
         console_write("cd: persistent path resolver is scheduled for Phase 1B\r\n");
     } else if (f_starts(line, "cat ")) {
-        console_write("cat: file not found in the Phase 1 console filesystem\r\n");
+        home_cat_command(line + 4);
     } else {
         console_write("fadal: command not found; type help\r\n");
     }
@@ -1276,6 +1368,7 @@ void fadal64_entry(fadal_framebuffer *incoming_framebuffer, fadal_uefi_services 
 
     framebuffer = incoming_framebuffer;
     desktop_services = services;
+    home_seed_defaults();
     if (framebuffer != (fadal_framebuffer *)0 && framebuffer->width >= 640 &&
         framebuffer->height >= 400) terminal_geometry_init();
     terminal_line_head = 0;
@@ -1290,7 +1383,10 @@ void fadal64_entry(fadal_framebuffer *incoming_framebuffer, fadal_uefi_services 
     for (index = 0; index < sizeof(debug_banner) - 1; index++) fadal_outb(0x402, (u8)debug_banner[index]);
     if (desktop_mode == 0) console_clear();
     console_write("FadalOS 0.1.0 / Fadal64 UEFI\r\n");
-    console_write("persistent home filesystem: pending Phase 1B\r\n");
+    console_write(desktop_services != (fadal_uefi_services *)0 &&
+                  desktop_services->home_available != 0 ?
+                  "persistent home filesystem: online at /home/root\r\n" :
+                  "persistent home filesystem: unavailable\r\n");
     console_write("type 'help' for commands\r\n\r\n");
 
     for (;;) {

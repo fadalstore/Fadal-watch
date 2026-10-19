@@ -87,8 +87,165 @@ static void __attribute__((unused)) debug_marker(const char *text) {
     }
 }
 static EFI_FILE_HANDLE g_fadal_root;
+static EFI_FILE_HANDLE g_fadal_home;
 static EFI_HTTP_PROTOCOL *g_fadal_http;
 static EFI_HANDLE g_fadal_http_child;
+static fadal_net_u32 fadal_home_name(const char *name, CHAR16 wide_name[48]) {
+    UINTN length = 0;
+    if (name == NULL || wide_name == NULL) return FADAL_HOME_INVALID_NAME;
+    while (name[length] != '\0') {
+        UINT8 value = (UINT8)name[length];
+        if (length >= 47 || !((value >= 'a' && value <= 'z') ||
+                              (value >= 'A' && value <= 'Z') ||
+                              (value >= '0' && value <= '9') ||
+                              value == '_' || value == '-' || value == '.')) {
+            return FADAL_HOME_INVALID_NAME;
+        }
+        wide_name[length] = (CHAR16)value;
+        length++;
+    }
+    if (length == 0 || (length == 1 && name[0] == '.') ||
+        (length == 2 && name[0] == '.' && name[1] == '.')) {
+        return FADAL_HOME_INVALID_NAME;
+    }
+    wide_name[length] = 0;
+    return FADAL_HOME_OK;
+}
+
+static fadal_net_u32 fadal_home_status(EFI_STATUS status) {
+    if (status == EFI_SUCCESS) return FADAL_HOME_OK;
+    if (status == EFI_NOT_FOUND) return FADAL_HOME_NOT_FOUND;
+    if (status == EFI_BUFFER_TOO_SMALL) return FADAL_HOME_TOO_LARGE;
+    return FADAL_HOME_FAILED;
+}
+
+static fadal_net_u32 fadal_home_init(void) {
+    static CHAR16 directory_name[] = L"\\FADALHOME";
+    EFI_STATUS status;
+    if (g_fadal_root == NULL) return FADAL_HOME_UNAVAILABLE;
+    status = uefi_call_wrapper(g_fadal_root->Open, 5, g_fadal_root,
+                               &g_fadal_home, directory_name,
+                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE |
+                                   EFI_FILE_MODE_CREATE,
+                               EFI_FILE_DIRECTORY);
+    if (EFI_ERROR(status) || g_fadal_home == NULL) {
+        g_fadal_home = NULL;
+        return FADAL_HOME_UNAVAILABLE;
+    }
+    status = uefi_call_wrapper(g_fadal_home->Flush, 1, g_fadal_home);
+    if (EFI_ERROR(status)) {
+        uefi_call_wrapper(g_fadal_home->Close, 1, g_fadal_home);
+        g_fadal_home = NULL;
+        return FADAL_HOME_UNAVAILABLE;
+    }
+    return FADAL_HOME_OK;
+}
+
+static fadal_net_u32 fadal_home_list(char *buffer, fadal_net_u32 capacity,
+                                     fadal_net_u32 *written) {
+    UINT8 info_storage[512] __attribute__((aligned(8)));
+    UINTN output_size = 0;
+    EFI_STATUS status;
+    if (written != NULL) *written = 0;
+    if (g_fadal_home == NULL) return FADAL_HOME_UNAVAILABLE;
+    if (buffer == NULL || written == NULL || capacity == 0) return FADAL_HOME_TOO_LARGE;
+    buffer[0] = '\0';
+    status = uefi_call_wrapper(g_fadal_home->SetPosition, 2, g_fadal_home, 0);
+    if (EFI_ERROR(status)) return fadal_home_status(status);
+    for (;;) {
+        UINTN info_size = sizeof(info_storage);
+        EFI_FILE_INFO *info = (EFI_FILE_INFO *)info_storage;
+        UINTN index;
+        UINTN name_length = 0;
+        char ascii_name[48];
+        status = uefi_call_wrapper(g_fadal_home->Read, 3, g_fadal_home,
+                                   &info_size, info_storage);
+        if (EFI_ERROR(status)) return fadal_home_status(status);
+        if (info_size == 0) break;
+        if (info_size < SIZE_OF_EFI_FILE_INFO + sizeof(CHAR16)) return FADAL_HOME_FAILED;
+        if ((info->Attribute & EFI_FILE_DIRECTORY) != 0) continue;
+        while (name_length < 47 && info->FileName[name_length] != 0) {
+            if (info->FileName[name_length] > 0x7f) break;
+            ascii_name[name_length] = (char)info->FileName[name_length];
+            name_length++;
+        }
+        if (name_length == 0 || info->FileName[name_length] != 0) continue;
+        ascii_name[name_length] = '\0';
+        if ((name_length == 1 && ascii_name[0] == '.') ||
+            (name_length == 2 && ascii_name[0] == '.' && ascii_name[1] == '.')) continue;
+        for (index = 0; index < name_length; index++) {
+            char value = ascii_name[index];
+            if (!((value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') ||
+                  (value >= '0' && value <= '9') || value == '_' || value == '-' || value == '.')) {
+                break;
+            }
+        }
+        if (index != name_length) continue;
+        if (output_size + name_length + 1 >= capacity) return FADAL_HOME_TOO_LARGE;
+        for (index = 0; index < name_length; index++) buffer[output_size++] = ascii_name[index];
+        buffer[output_size++] = '\n';
+    }
+    buffer[output_size] = '\0';
+    *written = (fadal_net_u32)output_size;
+    return FADAL_HOME_OK;
+}
+
+static fadal_net_u32 fadal_home_read(const char *name, char *buffer,
+                                     fadal_net_u32 capacity,
+                                     fadal_net_u32 *read_size) {
+    CHAR16 wide_name[48];
+    EFI_FILE_HANDLE file = NULL;
+    UINTN size = capacity;
+    EFI_STATUS status;
+    fadal_net_u32 result = fadal_home_name(name, wide_name);
+    if (read_size != NULL) *read_size = 0;
+    if (result != FADAL_HOME_OK) return result;
+    if (g_fadal_home == NULL) return FADAL_HOME_UNAVAILABLE;
+    if (buffer == NULL || read_size == NULL || capacity == 0) return FADAL_HOME_TOO_LARGE;
+    status = uefi_call_wrapper(g_fadal_home->Open, 5, g_fadal_home, &file,
+                               wide_name, EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(status)) return fadal_home_status(status);
+    status = uefi_call_wrapper(file->Read, 3, file, &size, buffer);
+    uefi_call_wrapper(file->Close, 1, file);
+    if (EFI_ERROR(status)) return fadal_home_status(status);
+    *read_size = (fadal_net_u32)size;
+    return FADAL_HOME_OK;
+}
+
+static fadal_net_u32 fadal_home_write(const char *name, const char *buffer,
+                                      fadal_net_u32 size) {
+    CHAR16 wide_name[48];
+    EFI_FILE_HANDLE file = NULL;
+    EFI_STATUS status;
+    UINTN write_size;
+    fadal_net_u32 result = fadal_home_name(name, wide_name);
+    if (result != FADAL_HOME_OK) return result;
+    if (g_fadal_home == NULL) return FADAL_HOME_UNAVAILABLE;
+    if ((buffer == NULL && size != 0) || size > 4096) return FADAL_HOME_TOO_LARGE;
+    status = uefi_call_wrapper(g_fadal_home->Open, 5, g_fadal_home, &file,
+                               wide_name, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+    if (status == EFI_SUCCESS) {
+        status = uefi_call_wrapper(file->Delete, 1, file);
+        file = NULL;
+        if (status != EFI_SUCCESS) return fadal_home_status(status);
+    } else if (status != EFI_NOT_FOUND) {
+        return fadal_home_status(status);
+    }
+    status = uefi_call_wrapper(g_fadal_home->Open, 5, g_fadal_home, &file,
+                               wide_name, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE |
+                                   EFI_FILE_MODE_CREATE,
+                               0);
+    if (EFI_ERROR(status)) return fadal_home_status(status);
+    write_size = size;
+    if (size != 0) {
+        status = uefi_call_wrapper(file->Write, 3, file, &write_size, (VOID *)buffer);
+        if (!EFI_ERROR(status) && write_size != size) status = EFI_DEVICE_ERROR;
+    }
+    if (!EFI_ERROR(status)) status = uefi_call_wrapper(file->Flush, 1, file);
+    uefi_call_wrapper(file->Close, 1, file);
+    return fadal_home_status(status);
+}
+
 static fadal_net_u32 fadal_http_download(const char *url, const char *name) {
     CHAR16 wide_url[256];
     CHAR16 wide_name[64];
@@ -478,6 +635,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
         return status;
     }
     g_fadal_root = root;
+    g_fadal_home = NULL;
+    if (fadal_home_init() == FADAL_HOME_OK) {
+        Print(L"persistent home ready: \\FADALHOME\r\n");
+    } else {
+        Print(L"persistent home unavailable; file commands disabled\r\n");
+    }
     g_fadal_http = NULL;
     g_fadal_http_child = NULL;
     status = uefi_call_wrapper(BS->LocateProtocol, 3, &gFadalHttpProtocolGuid, NULL,
@@ -525,6 +688,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
     }
     services.http_download = fadal_http_download;
     services.http_available = g_fadal_http != NULL;
+    services.home_list = fadal_home_list;
+    services.home_read = fadal_home_read;
+    services.home_write = fadal_home_write;
+    services.home_available = g_fadal_home != NULL;
     entry = (FADAL_UEFI_ENTRY)((UINT8 *)payload + entry_offset);
     entry(&framebuffer, &services);
     return EFI_SUCCESS;

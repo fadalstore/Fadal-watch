@@ -74,8 +74,9 @@ Verified commands are `scripts/validate-repo.sh --uefi`,
 `make -C kernel/uefi test-page-protection`,
 `make -C kernel/uefi test-keyboard-focus`,
 `make -C kernel/uefi test-terminal-input`,
-`make -C kernel/uefi test-window-controls`, and
-`make -C kernel/uefi test-window-resize`. The focus regression boots the
+`make -C kernel/uefi test-window-controls`,
+`make -C kernel/uefi test-window-resize`, and
+`make -C kernel/uefi test-persistent-home`. The focus regression boots the
 production ESP under QEMU/OVMF, proves desktop-focused typing does not reach the
 shell, then returns focus and executes `help`. The terminal-input regression
 reconstructs commands through cursor editing and verifies that PageUp/PageDown
@@ -100,6 +101,16 @@ reflow, edge/corner drags, minimum dimensions, and restored original bounds. Its
 final geometry capture is `kernel/uefi/out/window-resize.ppm`. Keep the BIOS
 shell and UEFI desktop as separate deliverables. Always boot-test loader or
 compositor changes under QEMU/UTM and inspect the framebuffer.
+
+The first persistent-home slice backs the flat `/home/root` view with the ESP's
+`FADALHOME` directory through validated loader callbacks. `ls`, `cat NAME`,
+and `write NAME TEXT` are backed by real EFI file operations; first boot seeds
+README, motd, and profile files only when missing. Writes replace old content,
+are capped at 4096 bytes, and survive a guest reboot on the same disk. The
+QEMU/OVMF test verifies listing, reading, overwrite truncation, reset persistence,
+and exact bytes extracted from the FAT image. This is not yet a general VFS:
+nested directories, deletion, per-user isolation, and power-loss journaling
+remain unimplemented.
 
 Separately, continue native Git smart-HTTP only after the TCP receive, HTTP parsing, TLS boundary, and certificate strategy are explicitly designed. Do not describe the current `github` shell bridge as a native clone implementation.
 

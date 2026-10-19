@@ -30,6 +30,7 @@ PF_TEST_EFI ?= $(OUT)/PFTESTX64.EFI
 PF_TEST_IMAGE ?= $(OUT)/page-protection.img
 FOCUS_TEST_SCRIPT ?= ../../scripts/test-uefi-keyboard-focus.py
 FOCUS_TEST_IMAGE ?= ../out/fadal-uefi.img
+HOME_TEST_IMAGE ?= $(OUT)/persistent-home.img
 FOCUS_TEST_SCREEN ?= $(OUT)/keyboard-focus.ppm
 TERMINAL_SCROLL_SCREEN ?= $(OUT)/terminal-scrollback.ppm
 TERMINAL_TAIL_SCREEN ?= $(OUT)/terminal-tail.ppm
@@ -74,7 +75,7 @@ OBJCOPY_FLAGS := \
 
 .PHONY: all check check-toolchain payload image page-protection-efi \
 	test-page-protection test-keyboard-focus test-terminal-input \
-	test-window-controls test-window-resize clean help
+	test-window-controls test-window-resize test-persistent-home clean help
 
 all: $(BOOT_EFI)
 
@@ -197,6 +198,20 @@ test-window-resize: check payload
 		--screenshot "$(abspath $(FOCUS_TEST_SCREEN))" \
 		--resize-screenshot "$(abspath $(WINDOW_RESIZE_SCREEN))"
 
+test-persistent-home: check payload
+	@rm -f "$(HOME_TEST_IMAGE)" "$(OUT)/persistent-home.actual" "$(OUT)/persistent-home.expected"
+	UEFI_IMAGE="$(abspath $(HOME_TEST_IMAGE))" \
+		$(MAKE) image UEFI_KERNEL="$(abspath $(PAYLOAD_BIN))"
+	python3 "$(FOCUS_TEST_SCRIPT)" --image "$(abspath $(HOME_TEST_IMAGE))" \
+		--qemu "$(QEMU)" --ovmf-code "$(OVMF_CODE)" \
+		--ovmf-vars "$(OVMF_VARS)" --persistent-home \
+		--screenshot "$(abspath $(FOCUS_TEST_SCREEN))"
+	mcopy -i "$(abspath $(HOME_TEST_IMAGE))@@1048576" \
+		::/FADALHOME/PERSIST "$(abspath $(OUT)/persistent-home.actual)"
+	@printf 'ok' > "$(OUT)/persistent-home.expected"
+	cmp "$(OUT)/persistent-home.expected" "$(OUT)/persistent-home.actual"
+	@echo "PASS: raw ESP home-file bytes match after the guest reboot."
+
 check: $(BOOT_EFI)
 	@$(OBJDUMP) -f $(BOOT_EFI) | grep -E -q 'pei-x86-64|pe-x86-64' || \
 		(echo "error: $(BOOT_EFI) has the wrong object format" >&2; exit 1)
@@ -219,6 +234,7 @@ help:
 	@echo "make test-terminal-input  test line editing and scrollback in QEMU/OVMF"
 	@echo "make test-window-controls test terminal window controls with QEMU/OVMF mouse"
 	@echo "make test-window-resize   test terminal edge/corner resize with QEMU/OVMF mouse"
+	@echo "make test-persistent-home test ESP-backed home files across a QEMU/OVMF reboot"
 	@echo "EFI_INC=... EFI_CRT=... EFI_LDSCRIPT=... EFI_LIBDIR=... override GNU-EFI paths"
 
 clean:

@@ -128,8 +128,28 @@ def run_persistent_home_checks(process: subprocess.Popen[str], serial_log: Path,
     serial = wait_for_serial_text(serial_log, "write: saved in /home/root", count=2)
     prompt_count += 1
     serial = wait_for_shell_prompt(serial_log, prompt_count)
+    send_text(process, "write scratch removeme", serial_log)
+    wait_for_serial_text(serial_log, "write: saved in /home/root", count=3)
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    send_text(process, "rm scratch", serial_log)
+    wait_for_serial_text(serial_log, "rm: removed from /home/root")
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    send_text(process, "rm guarddir", serial_log)
+    wait_for_serial_text(serial_log, "rm: cannot remove a directory")
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    send_text(process, "write guarddir nope", serial_log)
+    wait_for_serial_text(serial_log, "write: cannot replace a directory")
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
     send_text(process, "write ../escape nope", serial_log)
     wait_for_serial_text(serial_log, "write: only /home/root is writable")
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    send_text(process, "rm ../escape", serial_log)
+    wait_for_serial_text(serial_log, "rm: only /home/root files can be removed")
     prompt_count += 1
     serial = wait_for_shell_prompt(serial_log, prompt_count)
 
@@ -147,20 +167,25 @@ def run_persistent_home_checks(process: subprocess.Popen[str], serial_log: Path,
 
     prompt_count += 1
     serial = wait_for_shell_prompt(serial_log, prompt_count, timeout=timeout)
+    listing_offset = serial_log.stat().st_size
     send_text(process, "ls", serial_log)
     wait_for_serial_text(serial_log, "persist\n")
     prompt_count += 1
     serial = wait_for_shell_prompt(serial_log, prompt_count)
+    listing_output = serial_log.read_bytes()[listing_offset:]
+    if b"persist\n" not in listing_output:
+        raise RuntimeError("the user file was not listed after reboot")
+    if b"scratch\n" in listing_output:
+        raise RuntimeError("the deleted file reappeared after reboot")
     send_text(process, "cat persist", serial_log)
     serial = wait_for_serial_text(serial_log, "ok\n")
     prompt_count += 1
     serial = wait_for_shell_prompt(serial_log, prompt_count)
-    if "persist\n" not in serial:
-        raise RuntimeError("the user file was not listed after reboot")
     if "ok\n" not in serial:
         raise RuntimeError("the user file contents did not survive reboot; guest output: " +
                            serial[-1200:])
-    print("PASS: persistent /home/root files list, read, overwrite, and reject paths.")
+    print("PASS: /home/root files list, read, overwrite, delete, and reject out-of-home paths.")
+    print("PASS: deleted home entries stay absent after a full QEMU/OVMF reboot.")
     print("PASS: file contents survive a full QEMU/OVMF guest reboot.")
 
 

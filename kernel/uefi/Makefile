@@ -199,18 +199,29 @@ test-window-resize: check payload
 		--resize-screenshot "$(abspath $(WINDOW_RESIZE_SCREEN))"
 
 test-persistent-home: check payload
-	@rm -f "$(HOME_TEST_IMAGE)" "$(OUT)/persistent-home.actual" "$(OUT)/persistent-home.expected"
+	@rm -f "$(HOME_TEST_IMAGE)" "$(OUT)/persistent-home.actual" "$(OUT)/persistent-home.expected" "$(OUT)/persistent-home.deleted"
 	UEFI_IMAGE="$(abspath $(HOME_TEST_IMAGE))" \
 		$(MAKE) image UEFI_KERNEL="$(abspath $(PAYLOAD_BIN))"
+	mmd -i "$(abspath $(HOME_TEST_IMAGE))@@1048576" ::/FADALHOME
+	mmd -i "$(abspath $(HOME_TEST_IMAGE))@@1048576" ::/FADALHOME/GUARDDIR
 	python3 "$(FOCUS_TEST_SCRIPT)" --image "$(abspath $(HOME_TEST_IMAGE))" \
 		--qemu "$(QEMU)" --ovmf-code "$(OVMF_CODE)" \
 		--ovmf-vars "$(OVMF_VARS)" --persistent-home \
 		--screenshot "$(abspath $(FOCUS_TEST_SCREEN))"
 	mcopy -i "$(abspath $(HOME_TEST_IMAGE))@@1048576" \
 		::/FADALHOME/PERSIST "$(abspath $(OUT)/persistent-home.actual)"
-	@printf 'ok' > "$(OUT)/persistent-home.expected"
-	cmp "$(OUT)/persistent-home.expected" "$(OUT)/persistent-home.actual"
-	@echo "PASS: raw ESP home-file bytes match after the guest reboot."
+		@printf 'ok' > "$(OUT)/persistent-home.expected"
+		cmp "$(OUT)/persistent-home.expected" "$(OUT)/persistent-home.actual"
+		@echo "PASS: raw ESP home-file bytes match after the guest reboot."
+		@if mcopy -i "$(abspath $(HOME_TEST_IMAGE))@@1048576" \
+			::/FADALHOME/SCRATCH "$(abspath $(OUT)/persistent-home.deleted)" >/dev/null 2>&1; then \
+			rm -f "$(OUT)/persistent-home.deleted"; \
+			echo "FAIL: deleted home file is still present on the ESP." >&2; exit 1; \
+		else \
+			echo "PASS: deleted home file is absent from the raw ESP."; \
+		fi
+		mdir -i "$(abspath $(HOME_TEST_IMAGE))@@1048576" ::/FADALHOME/GUARDDIR >/dev/null
+		@echo "PASS: home file operations did not remove a directory."
 
 check: $(BOOT_EFI)
 	@$(OBJDUMP) -f $(BOOT_EFI) | grep -E -q 'pei-x86-64|pe-x86-64' || \

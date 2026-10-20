@@ -1219,9 +1219,47 @@ static void home_write_command(char *arguments) {
     }
     result = desktop_services->home_write(name, contents, f_length(contents));
     if (result == FADAL_HOME_OK) console_write("write: saved in /home/root\r\n");
+    else if (result == FADAL_HOME_IS_DIRECTORY) console_write("write: cannot replace a directory\r\n");
     else if (result == FADAL_HOME_INVALID_NAME) console_write("write: invalid filename\r\n");
     else if (result == FADAL_HOME_TOO_LARGE) console_write("write: file exceeds 4096 bytes\r\n");
     else console_write("write: could not save file\r\n");
+}
+
+static void home_delete_command(const char *argument) {
+    char path[SHELL_PATH_MAX];
+    const char *name;
+    const char *scan;
+    fadal_net_u32 result;
+    if (argument == NULL || argument[0] == '\0') {
+        console_write("rm: usage rm PATH\r\n");
+        return;
+    }
+    if (!shell_normalize_path(argument, path, sizeof(path))) {
+        console_write("rm: invalid path\r\n");
+        return;
+    }
+    if (!f_starts(path, "/home/root/")) {
+        console_write("rm: only /home/root files can be removed\r\n");
+        return;
+    }
+    name = path + 11;
+    for (scan = name; *scan != '\0'; scan++) {
+        if (*scan == '/') {
+            console_write("rm: nested directories are not supported\r\n");
+            return;
+        }
+    }
+    if (desktop_services == (fadal_uefi_services *)0 ||
+        desktop_services->home_available == 0 || desktop_services->home_delete == NULL) {
+        console_write("rm: persistent home unavailable\r\n");
+        return;
+    }
+    result = desktop_services->home_delete(name);
+    if (result == FADAL_HOME_OK) console_write("rm: removed from /home/root\r\n");
+    else if (result == FADAL_HOME_NOT_FOUND) console_write("rm: file not found in /home/root\r\n");
+    else if (result == FADAL_HOME_IS_DIRECTORY) console_write("rm: cannot remove a directory\r\n");
+    else if (result == FADAL_HOME_INVALID_NAME) console_write("rm: invalid filename\r\n");
+    else console_write("rm: could not remove file\r\n");
 }
 
 static void fadal_restart(void) {
@@ -1444,7 +1482,7 @@ static void print_uid(void) {
 static void run_command(char *line) {
     if (line[0] == '\0') return;
     if (f_streq(line, "help")) {
-        console_write("commands: help clear pwd ls cd cat write whoami id uname fscan user drivers net download restart reboot shutdown poweroff exit\r\n");
+        console_write("commands: help clear pwd ls cd cat write rm whoami id uname fscan user drivers net download restart reboot shutdown poweroff exit\r\n");
     } else if (f_streq(line, "clear")) {
         console_clear();
     } else if (f_streq(line, "pwd")) {
@@ -1500,6 +1538,10 @@ static void run_command(char *line) {
         }
     } else if (f_starts(line, "write ")) {
         home_write_command(line + 6);
+    } else if (f_streq(line, "rm")) {
+        home_delete_command(NULL);
+    } else if (f_starts(line, "rm ")) {
+        home_delete_command(line + 3);
     } else if (f_streq(line, "restart") || f_streq(line, "reboot")) {
         console_write("restarting FadalOS...\r\n");
         fadal_restart();

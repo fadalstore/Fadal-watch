@@ -11,6 +11,7 @@ typedef fadal_net_u32 (*fadal_home_read_fn)(const char *name, char *buffer,
                                              fadal_net_u32 *read_size);
 typedef fadal_net_u32 (*fadal_home_write_fn)(const char *name, const char *buffer,
                                               fadal_net_u32 size);
+typedef fadal_net_u32 (*fadal_home_delete_fn)(const char *name);
 
 typedef struct {
     fadal_http_download_fn http_download;
@@ -19,6 +20,7 @@ typedef struct {
     fadal_home_read_fn home_read;
     fadal_home_write_fn home_write;
     fadal_net_u32 home_available;
+    fadal_home_delete_fn home_delete;
 } fadal_uefi_services;
 
 #define FADAL_HTTP_OK 0
@@ -33,5 +35,6 @@ typedef struct {
 #define FADAL_HOME_NOT_FOUND 3
 #define FADAL_HOME_FAILED 4
 #define FADAL_HOME_TOO_LARGE 5
+#define FADAL_HOME_IS_DIRECTORY 6
 
 #endif

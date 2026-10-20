@@ -72,6 +72,7 @@ static EFI_GUID gFadalHttpProtocolGuid = {
 static EFI_GUID gFadalHttpBindingGuid = {
     0xbdc8e6af, 0xd9bc, 0x4379, {0xa7, 0x2a, 0xe0, 0xc4, 0xe7, 0x5d, 0xae, 0x1c}
 };
+static EFI_GUID gFadalFileInfoGuid = EFI_FILE_INFO_ID;
 typedef struct _FADAL_SERVICE_BINDING FADAL_SERVICE_BINDING;
 typedef EFI_STATUS (EFIAPI *FADAL_CREATE_CHILD)(FADAL_SERVICE_BINDING *, EFI_HANDLE *);
 typedef EFI_STATUS (EFIAPI *FADAL_DESTROY_CHILD)(FADAL_SERVICE_BINDING *, EFI_HANDLE);
@@ -212,6 +213,19 @@ static fadal_net_u32 fadal_home_read(const char *name, char *buffer,
     return FADAL_HOME_OK;
 }
 
+static fadal_net_u32 fadal_home_entry_is_directory(EFI_FILE_HANDLE file) {
+    UINT8 info_storage[512] __attribute__((aligned(8)));
+    UINTN info_size = sizeof(info_storage);
+    EFI_FILE_INFO *info = (EFI_FILE_INFO *)info_storage;
+    EFI_STATUS status;
+    status = uefi_call_wrapper(file->GetInfo, 4, file, &gFadalFileInfoGuid,
+                               &info_size, info_storage);
+    if (EFI_ERROR(status)) return fadal_home_status(status);
+    if (info_size < SIZE_OF_EFI_FILE_INFO) return FADAL_HOME_FAILED;
+    if ((info->Attribute & EFI_FILE_DIRECTORY) != 0) return FADAL_HOME_IS_DIRECTORY;
+    return FADAL_HOME_OK;
+}
+
 static fadal_net_u32 fadal_home_write(const char *name, const char *buffer,
                                       fadal_net_u32 size) {
     CHAR16 wide_name[48];
@@ -225,6 +239,11 @@ static fadal_net_u32 fadal_home_write(const char *name, const char *buffer,
     status = uefi_call_wrapper(g_fadal_home->Open, 5, g_fadal_home, &file,
                                wide_name, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
     if (status == EFI_SUCCESS) {
+        result = fadal_home_entry_is_directory(file);
+        if (result != FADAL_HOME_OK) {
+            uefi_call_wrapper(file->Close, 1, file);
+            return result;
+        }
         status = uefi_call_wrapper(file->Delete, 1, file);
         file = NULL;
         if (status != EFI_SUCCESS) return fadal_home_status(status);
@@ -243,6 +262,28 @@ static fadal_net_u32 fadal_home_write(const char *name, const char *buffer,
     }
     if (!EFI_ERROR(status)) status = uefi_call_wrapper(file->Flush, 1, file);
     uefi_call_wrapper(file->Close, 1, file);
+    return fadal_home_status(status);
+}
+
+static fadal_net_u32 fadal_home_delete(const char *name) {
+    CHAR16 wide_name[48];
+    EFI_FILE_HANDLE file = NULL;
+    EFI_STATUS status;
+    fadal_net_u32 result = fadal_home_name(name, wide_name);
+    if (result != FADAL_HOME_OK) return result;
+    if (g_fadal_home == NULL) return FADAL_HOME_UNAVAILABLE;
+    status = uefi_call_wrapper(g_fadal_home->Open, 5, g_fadal_home, &file,
+                               wide_name, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+    if (EFI_ERROR(status)) return fadal_home_status(status);
+    result = fadal_home_entry_is_directory(file);
+    if (result != FADAL_HOME_OK) {
+        uefi_call_wrapper(file->Close, 1, file);
+        return result;
+    }
+    status = uefi_call_wrapper(file->Delete, 1, file);
+    file = NULL;
+    if (status != EFI_SUCCESS) return fadal_home_status(status);
+    status = uefi_call_wrapper(g_fadal_home->Flush, 1, g_fadal_home);
     return fadal_home_status(status);
 }
 
@@ -692,6 +733,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
     services.home_read = fadal_home_read;
     services.home_write = fadal_home_write;
     services.home_available = g_fadal_home != NULL;
+    services.home_delete = fadal_home_delete;
     entry = (FADAL_UEFI_ENTRY)((UINT8 *)payload + entry_offset);
     entry(&framebuffer, &services);
     return EFI_SUCCESS;

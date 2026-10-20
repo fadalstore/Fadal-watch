@@ -178,17 +178,19 @@ make -C kernel/uefi test-persistent-home
 
 The test boots a fresh ESP under QEMU/OVMF, checks the seeded `/home/root`
 files, changes to `/etc`, verifies `pwd`, reads `motd` relative to `/etc`,
-resolves a relative `cd` back to `/home/root`, reads the seeded README, creates
-and overwrites a file, triggers a guest reboot, then lists and reads the file
-again. After QEMU exits, `mcopy` reads the raw FAT32 ESP and compares the stored
-bytes with the expected content.
+resolves a relative `cd` back to `/home/root`, and reads the seeded README. It
+creates and overwrites `persist`, deletes `scratch`, verifies out-of-home and
+directory operations are refused, then reboots and checks that `persist` remains
+and `scratch` stays absent. After QEMU exits, `mcopy` compares the raw FAT32
+contents; the test also confirms the seeded directory was not removed.
 The UEFI loader backs the flat `/home/root` directory with `FADALHOME` at the
-ESP root. The prompt reflects the current directory; `cd`, `ls`, `cat`, and
-`write` accept normalized absolute or relative paths with `.` and `..`. `/etc`
-files are read-only, writes are confined to `/home/root`, nested directories
-are rejected, and each stored file is capped at 4096 bytes. This is persistent
-storage, not yet a general VFS: nested home directories, delete, multi-user
-permissions/isolation, and power-loss journaling are not implemented.
+ESP root. The prompt reflects the current directory; `cd`, `ls`, `cat`, `write`,
+and `rm` accept normalized absolute or relative paths with `.` and `..`. `/etc`
+files are read-only, writes and deletes are confined to single-component files
+under `/home/root`, directory removal/replacement is refused, and each stored
+file is capped at 4096 bytes. This is persistent storage, not yet a general VFS:
+nested home directories, multi-user permissions/isolation, and power-loss
+journaling are not implemented.
 
 The UEFI desktop keeps Boot Services active so it can discover the EFI HTTP
 protocol or its HTTP Service Binding protocol. When firmware provides it, the

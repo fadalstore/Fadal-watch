@@ -153,6 +153,10 @@ menu can restore that in-memory session. The PS/2 setup now waits for device
 ACK/RESEND responses so command replies cannot desynchronize subsequent mouse
 packets. The final framebuffer is saved to
 `kernel/uefi/out/window-controls.ppm`.
+The same regression holds the pointer down while moving across Start and checks
+that the menu does not toggle repeatedly. Click actions run only on a press edge;
+unchanged mouse packets are ignored, and normal pointer movement uses a small
+saved-under cursor update rather than repainting the full desktop.
 
 Run the terminal window-resize regression with:
 

@@ -64,6 +64,13 @@ PS/2 AUX bytes are separated from keyboard bytes. Shell keystrokes are ignored
 unless the terminal owns focus; UART input remains an explicit path back to the
 terminal.
 
+The UTM pointer-jitter fix makes desktop clicks edge-triggered: a held left
+button or touchscreen contact acts once, while drag/resize continues until
+release. Unchanged PS/2 mouse packets are discarded, and ordinary pointer motion
+updates the saved-under cursor instead of repainting the entire GOP desktop.
+`test-window-controls` checks that moving a held pointer over Start does not
+repeatedly toggle the menu.
+
 The UEFI terminal interaction milestone is implemented: Left/Right, Home/End,
 insertion at the cursor, Backspace, and Delete edit the current command; PageUp
 and PageDown page through the bounded 64-line scrollback. The editor limits the

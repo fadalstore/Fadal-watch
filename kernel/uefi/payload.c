@@ -100,6 +100,12 @@ static u8 start_open;
 static u32 mouse_x;
 static u32 mouse_y;
 static u32 mouse_buttons;
+static u32 desktop_mouse_buttons;
+static u32 cursor_background[12][8];
+static u32 cursor_saved_x;
+static u32 cursor_saved_y;
+static u8 cursor_saved_valid;
+static u8 desktop_redrawing;
 static u32 terminal_x = 270;
 static u32 terminal_y = 98;
 static u32 terminal_width = 958;
@@ -145,6 +151,9 @@ static u32 current_uid = USER_ROOT;
 static const char current_user[] = "root";
 static char shell_current_directory[SHELL_PATH_MAX] = "/home/root";
 static u8 input_focus = FOCUS_TERMINAL;
+
+static void cursor_restore(void);
+static void cursor_draw(void);
 
 static void fb_pixel(u32 x, u32 y, u32 color) {
     volatile u32 *pixels;
@@ -288,6 +297,7 @@ static void terminal_render(void) {
     bottom = terminal_y + terminal_height - 20;
     rows = terminal_view_rows();
     if (rows == 0 || right <= left || bottom <= top) return;
+    if (desktop_redrawing == 0) cursor_restore();
     fb_fill(left, top, right, bottom, TERMINAL_BG);
     visible = terminal_lines_used < rows ? terminal_lines_used : rows;
     max_offset = terminal_lines_used - visible;
@@ -308,6 +318,7 @@ static void terminal_render(void) {
             fb_fill(cursor_x, cursor_y, cursor_x + 2, cursor_y + 8, 0x00ffffff);
         }
     }
+    if (desktop_redrawing == 0) cursor_draw();
 }
 
 static void terminal_draw_cell(u32 column, char value) {
@@ -316,6 +327,7 @@ static void terminal_draw_cell(u32 column, char value) {
     u32 top = terminal_y + 56;
     u32 row;
     if (terminal_view_offset != 0 || rows == 0 || column >= terminal_view_columns()) return;
+    if (desktop_redrawing == 0) cursor_restore();
     row = terminal_lines_used > rows ? rows - 1 : terminal_lines_used - 1;
     top += row * 9;
     left += column * 6;
@@ -326,6 +338,7 @@ static void terminal_draw_cell(u32 column, char value) {
         glyph[1] = '\0';
         fb_text(left, top, glyph, 0x00d8eaff, 1);
     }
+    if (desktop_redrawing == 0) cursor_draw();
 }
 
 static void terminal_putc(char value) {
@@ -573,22 +586,61 @@ static void mouse_init(void) {
     mouse_x = framebuffer->width / 2;
     mouse_y = framebuffer->height / 2;
     mouse_buttons = 0;
+    desktop_mouse_buttons = 0;
+    cursor_saved_valid = 0;
 }
 
 static void cursor_draw(void) {
     static const u8 arrow[12] = {1, 3, 7, 15, 31, 63, 127, 255, 127, 71, 3, 1};
+    volatile u32 *pixels;
     u32 row;
     u32 column;
+    if (desktop_mode == 0 || framebuffer == (fadal_framebuffer *)0 || framebuffer->base == 0) return;
+    pixels = (volatile u32 *)(u64)framebuffer->base;
+    cursor_saved_x = mouse_x;
+    cursor_saved_y = mouse_y;
     for (row = 0; row < 12; row++) {
         for (column = 0; column < 8; column++) {
-            if ((arrow[row] & (1U << (7 - column))) != 0) {
-                fb_pixel(mouse_x + column, mouse_y + row, 0x00ffffff);
+            u32 x = mouse_x + column;
+            u32 y = mouse_y + row;
+            if (x >= framebuffer->width || y >= framebuffer->height) {
+                cursor_background[row][column] = 0;
+                continue;
             }
+            cursor_background[row][column] = pixels[y * framebuffer->pixels_per_scanline + x];
+            if ((arrow[row] & (1U << (7 - column))) != 0)
+                pixels[y * framebuffer->pixels_per_scanline + x] = 0x00ffffff;
         }
     }
+    cursor_saved_valid = 1;
+}
+
+static void cursor_restore(void) {
+    volatile u32 *pixels;
+    u32 row;
+    u32 column;
+    if (cursor_saved_valid == 0 || framebuffer == (fadal_framebuffer *)0 || framebuffer->base == 0) return;
+    pixels = (volatile u32 *)(u64)framebuffer->base;
+    for (row = 0; row < 12; row++) {
+        for (column = 0; column < 8; column++) {
+            u32 x = cursor_saved_x + column;
+            u32 y = cursor_saved_y + row;
+            if (x < framebuffer->width && y < framebuffer->height)
+                pixels[y * framebuffer->pixels_per_scanline + x] = cursor_background[row][column];
+        }
+    }
+    cursor_saved_valid = 0;
+}
+
+static void cursor_update(void) {
+    if (cursor_saved_valid != 0 && cursor_saved_x == mouse_x && cursor_saved_y == mouse_y) return;
+    cursor_restore();
+    cursor_draw();
 }
 
 static void desktop_redraw(void) {
+    cursor_saved_valid = 0;
+    desktop_redrawing = 1;
     desktop_render();
     terminal_render();
     if (start_open != 0) {
@@ -600,6 +652,7 @@ static void desktop_redraw(void) {
         fb_text(54, framebuffer->height - 184, "FILES", 0x00ffffff, 2);
         fb_text(54, framebuffer->height - 130, "SYSTEM", 0x00ffffff, 2);
     }
+    desktop_redrawing = 0;
     cursor_draw();
 }
 
@@ -777,7 +830,10 @@ static int event_pop(fadal_event *event) {
 
 static void desktop_handle_mouse(const fadal_event *event) {
     u32 right;
+    int pressed;
     if (event->type != EVENT_MOUSE) return;
+    pressed = (event->buttons & 1U) != 0 && (desktop_mouse_buttons & 1U) == 0;
+    desktop_mouse_buttons = event->buttons;
     if (terminal_resizing != 0) {
         if ((event->buttons & 1U) != 0) {
             terminal_resize_apply();
@@ -816,7 +872,7 @@ static void desktop_handle_mouse(const fadal_event *event) {
         desktop_redraw();
         return;
     }
-    if ((event->buttons & 1U) == 0) return;
+    if (pressed == 0) return;
     if (mouse_y >= framebuffer->height - 52 && mouse_x >= 142 && mouse_x < 282) {
         terminal_open = 1;
         terminal_minimized = 0;
@@ -916,6 +972,7 @@ static void mouse_poll(void) {
     u8 status;
     int dx;
     int dy;
+    u32 previous_buttons = mouse_buttons;
     status = fadal_inb(KBD_STATUS);
     if (mouse_enabled == 0 || (status & (KBD_STATUS_OUTPUT_FULL | KBD_STATUS_AUX_DATA)) !=
         (KBD_STATUS_OUTPUT_FULL | KBD_STATUS_AUX_DATA)) return;
@@ -934,11 +991,9 @@ static void mouse_poll(void) {
     if (dy < 0 && mouse_y < (u32)(-dy)) mouse_y = 0;
     else if (dy > 0 && mouse_y + (u32)dy >= framebuffer->height) mouse_y = framebuffer->height - 1;
     else mouse_y = (u32)((int)mouse_y + dy);
-    if ((mouse_packet[0] & 1) != 0 && (mouse_buttons & 1) == 0) {
-        mouse_buttons |= 1;
-    } else if ((mouse_packet[0] & 1) == 0) {
-        mouse_buttons &= ~1U;
-    }
+    if ((mouse_packet[0] & 1) != 0) mouse_buttons |= 1;
+    else mouse_buttons &= ~1U;
+    if (dx == 0 && dy == 0 && mouse_buttons == previous_buttons) return;
     event_push(EVENT_MOUSE, 0, dx, dy, mouse_buttons);
 }
 
@@ -1474,7 +1529,7 @@ static u8 serial_getc(void) {
             }
             if (event.type == EVENT_MOUSE) {
                 desktop_handle_mouse(&event);
-                if (event.dx != 0 || event.dy != 0) desktop_redraw();
+                if (event.dx != 0 || event.dy != 0) cursor_update();
             }
         }
         __asm__ volatile ("pause");

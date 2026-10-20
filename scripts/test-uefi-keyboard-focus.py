@@ -383,6 +383,14 @@ def run_window_control_checks(process: subprocess.Popen[str], temp: Path,
         raise RuntimeError("Start-menu reopen: terminal did not regain keyboard focus")
     print("PASS: close hides the terminal, and Start > Terminal reopens the same session.")
 
+    move_mouse_to(process, mouse, 70, 773)
+    send_monitor_command(process, "mouse_button 1", delay=0.2)
+    move_mouse_to(process, mouse, 82, 773)
+    send_monitor_command(process, "mouse_button 0", delay=0.22)
+    capture_frame(process, state)
+    assert_pixel(state, 30, 550, (26, 49, 85), "held pointer on Start")
+    print("PASS: a held mouse/touch contact does not repeat click actions or toggle the menu.")
+
 
 def run_window_resize_checks(process: subprocess.Popen[str], temp: Path,
                               screenshot: Path) -> None:

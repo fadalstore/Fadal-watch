@@ -1039,9 +1039,16 @@ static int shell_normalize_path(const char *path, char *output, u32 capacity) {
 }
 
 static int shell_is_directory(const char *path) {
-    return f_streq(path, "/") || f_streq(path, "/bin") || f_streq(path, "/dev") ||
-           f_streq(path, "/etc") || f_streq(path, "/home") ||
-           f_streq(path, "/home/root") || f_streq(path, "/ram") || f_streq(path, "/tmp");
+    if (f_streq(path, "/") || f_streq(path, "/bin") || f_streq(path, "/dev") ||
+        f_streq(path, "/etc") || f_streq(path, "/home") ||
+        f_streq(path, "/home/root") || f_streq(path, "/ram") || f_streq(path, "/tmp")) {
+        return 1;
+    }
+    return f_starts(path, "/home/root/") &&
+           desktop_services != (fadal_uefi_services *)0 &&
+           desktop_services->home_available != 0 &&
+           desktop_services->home_is_directory != NULL &&
+           desktop_services->home_is_directory(path + 11) == FADAL_HOME_OK;
 }
 
 static void shell_set_current_directory(const char *path) {
@@ -1070,7 +1077,7 @@ static void home_seed_defaults(void) {
     home_seed_file(".profile", "# FadalOS root profile\r\n");
 }
 
-static void home_list_command(void) {
+static void home_list_command(const char *relative_path) {
     char entries[512];
     u32 written = 0;
     fadal_net_u32 result;
@@ -1079,7 +1086,7 @@ static void home_list_command(void) {
         console_write("ls: persistent home unavailable\r\n");
         return;
     }
-    result = desktop_services->home_list(entries, sizeof(entries), &written);
+    result = desktop_services->home_list(relative_path, entries, sizeof(entries), &written);
     if (result != FADAL_HOME_OK) {
         console_write("ls: could not read persistent home\r\n");
         return;
@@ -1102,7 +1109,8 @@ static void shell_list_path(const char *argument) {
     if (f_streq(path, "/")) console_write("bin  dev  etc  home  ram  tmp\r\n");
     else if (f_streq(path, "/home")) console_write("root\r\n");
     else if (f_streq(path, "/etc")) console_write("fadal-release  motd  dictionary  (read-only)\r\n");
-    else if (f_streq(path, "/home/root")) home_list_command();
+    else if (f_streq(path, "/home/root")) home_list_command("");
+    else if (f_starts(path, "/home/root/")) home_list_command(path + 11);
     else console_write("(empty)\r\n");
 }
 
@@ -1155,14 +1163,6 @@ static void shell_cat_path(const char *argument) {
         return;
     }
     name = path + 11;
-    while (*name != '\0') {
-        if (*name == '/') {
-            console_write("cat: nested directories are not supported\r\n");
-            return;
-        }
-        name++;
-    }
-    name = path + 11;
     if (desktop_services == (fadal_uefi_services *)0 ||
         desktop_services->home_available == 0) {
         console_write("cat: persistent home unavailable\r\n");
@@ -1187,7 +1187,6 @@ static void home_write_command(char *arguments) {
     char *separator = arguments;
     char *contents;
     const char *name;
-    const char *scan;
     fadal_net_u32 result;
     while (*separator != '\0' && *separator != ' ') separator++;
     if (*separator == '\0') {
@@ -1211,12 +1210,6 @@ static void home_write_command(char *arguments) {
         return;
     }
     name = path + 11;
-    for (scan = name; *scan != '\0'; scan++) {
-        if (*scan == '/') {
-            console_write("write: nested directories are not supported\r\n");
-            return;
-        }
-    }
     result = desktop_services->home_write(name, contents, f_length(contents));
     if (result == FADAL_HOME_OK) console_write("write: saved in /home/root\r\n");
     else if (result == FADAL_HOME_IS_DIRECTORY) console_write("write: cannot replace a directory\r\n");
@@ -1228,7 +1221,6 @@ static void home_write_command(char *arguments) {
 static void home_delete_command(const char *argument) {
     char path[SHELL_PATH_MAX];
     const char *name;
-    const char *scan;
     fadal_net_u32 result;
     if (argument == NULL || argument[0] == '\0') {
         console_write("rm: usage rm PATH\r\n");
@@ -1243,12 +1235,6 @@ static void home_delete_command(const char *argument) {
         return;
     }
     name = path + 11;
-    for (scan = name; *scan != '\0'; scan++) {
-        if (*scan == '/') {
-            console_write("rm: nested directories are not supported\r\n");
-            return;
-        }
-    }
     if (desktop_services == (fadal_uefi_services *)0 ||
         desktop_services->home_available == 0 || desktop_services->home_delete == NULL) {
         console_write("rm: persistent home unavailable\r\n");
@@ -1260,6 +1246,34 @@ static void home_delete_command(const char *argument) {
     else if (result == FADAL_HOME_IS_DIRECTORY) console_write("rm: cannot remove a directory\r\n");
     else if (result == FADAL_HOME_INVALID_NAME) console_write("rm: invalid filename\r\n");
     else console_write("rm: could not remove file\r\n");
+}
+
+static void home_mkdir_command(const char *argument) {
+    char path[SHELL_PATH_MAX];
+    fadal_net_u32 result;
+    if (argument == NULL || argument[0] == '\0') {
+        console_write("mkdir: usage mkdir PATH\r\n");
+        return;
+    }
+    if (!shell_normalize_path(argument, path, sizeof(path))) {
+        console_write("mkdir: invalid path\r\n");
+        return;
+    }
+    if (!f_starts(path, "/home/root/")) {
+        console_write("mkdir: only /home/root is writable\r\n");
+        return;
+    }
+    if (desktop_services == (fadal_uefi_services *)0 ||
+        desktop_services->home_available == 0 || desktop_services->home_mkdir == NULL) {
+        console_write("mkdir: persistent home unavailable\r\n");
+        return;
+    }
+    result = desktop_services->home_mkdir(path + 11);
+    if (result == FADAL_HOME_OK) console_write("mkdir: created in /home/root\r\n");
+    else if (result == FADAL_HOME_ALREADY_EXISTS) console_write("mkdir: already exists\r\n");
+    else if (result == FADAL_HOME_NOT_FOUND) console_write("mkdir: parent directory not found\r\n");
+    else if (result == FADAL_HOME_INVALID_NAME) console_write("mkdir: invalid path\r\n");
+    else console_write("mkdir: could not create directory\r\n");
 }
 
 static void fadal_restart(void) {
@@ -1482,7 +1496,7 @@ static void print_uid(void) {
 static void run_command(char *line) {
     if (line[0] == '\0') return;
     if (f_streq(line, "help")) {
-        console_write("commands: help clear pwd ls cd cat write rm whoami id uname fscan user drivers net download restart reboot shutdown poweroff exit\r\n");
+        console_write("commands: help clear pwd ls cd cat write mkdir rm whoami id uname fscan user drivers net download restart reboot shutdown poweroff exit\r\n");
     } else if (f_streq(line, "clear")) {
         console_clear();
     } else if (f_streq(line, "pwd")) {
@@ -1538,6 +1552,10 @@ static void run_command(char *line) {
         }
     } else if (f_starts(line, "write ")) {
         home_write_command(line + 6);
+    } else if (f_streq(line, "mkdir")) {
+        home_mkdir_command(NULL);
+    } else if (f_starts(line, "mkdir ")) {
+        home_mkdir_command(line + 6);
     } else if (f_streq(line, "rm")) {
         home_delete_command(NULL);
     } else if (f_starts(line, "rm ")) {

@@ -136,6 +136,60 @@ def run_persistent_home_checks(process: subprocess.Popen[str], serial_log: Path,
     wait_for_serial_text(serial_log, "rm: removed from /home/root")
     prompt_count += 1
     serial = wait_for_shell_prompt(serial_log, prompt_count)
+    send_text(process, "mkdir guarddir", serial_log)
+    wait_for_serial_text(serial_log, "mkdir: created in /home/root")
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    send_text(process, "mkdir guarddir", serial_log)
+    wait_for_serial_text(serial_log, "mkdir: already exists")
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    send_text(process, "cd guarddir", serial_log)
+    wait_for_serial_text(serial_log, "directory changed", count=3)
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    if "fadal:/home/root/guarddir#" not in serial:
+        raise RuntimeError("cd did not enter the persistent home subdirectory")
+    send_text(process, "mkdir child", serial_log)
+    wait_for_serial_text(serial_log, "mkdir: created in /home/root", count=2)
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    send_text(process, "cd child", serial_log)
+    wait_for_serial_text(serial_log, "directory changed", count=4)
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    if "fadal:/home/root/guarddir/child#" not in serial:
+        raise RuntimeError("cd did not enter a second-level home directory")
+    send_text(process, "pwd", serial_log)
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    normalized_serial = serial.replace("\r\n", "\n").replace("\r", "")
+    if "/home/root/guarddir/child\nfadal:/home/root/guarddir/child#" not in normalized_serial:
+        raise RuntimeError("pwd did not report the nested home directory")
+    send_text(process, "write note nestedvalue", serial_log)
+    wait_for_serial_text(serial_log, "write: saved in /home/root", count=4)
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    send_text(process, "cat note", serial_log)
+    wait_for_serial_text(serial_log, "nestedvalue", count=2)
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    send_text(process, "ls", serial_log)
+    wait_for_serial_text(serial_log, "note\n")
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    send_text(process, "cd ..", serial_log)
+    wait_for_serial_text(serial_log, "directory changed", count=5)
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    send_text(process, "ls", serial_log)
+    wait_for_serial_text(serial_log, "child/\n")
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    send_text(process, "cd ..", serial_log)
+    wait_for_serial_text(serial_log, "directory changed", count=6)
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
     send_text(process, "rm guarddir", serial_log)
     wait_for_serial_text(serial_log, "rm: cannot remove a directory")
     prompt_count += 1
@@ -177,6 +231,8 @@ def run_persistent_home_checks(process: subprocess.Popen[str], serial_log: Path,
         raise RuntimeError("the user file was not listed after reboot")
     if b"scratch\n" in listing_output:
         raise RuntimeError("the deleted file reappeared after reboot")
+    if b"guarddir/" not in listing_output.lower():
+        raise RuntimeError("the home subdirectory did not persist after reboot")
     send_text(process, "cat persist", serial_log)
     serial = wait_for_serial_text(serial_log, "ok\n")
     prompt_count += 1
@@ -184,7 +240,33 @@ def run_persistent_home_checks(process: subprocess.Popen[str], serial_log: Path,
     if "ok\n" not in serial:
         raise RuntimeError("the user file contents did not survive reboot; guest output: " +
                            serial[-1200:])
-    print("PASS: /home/root files list, read, overwrite, delete, and reject out-of-home paths.")
+    send_text(process, "cd guarddir/child", serial_log)
+    wait_for_serial_text(serial_log, "directory changed", count=7)
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    if "fadal:/home/root/guarddir/child#" not in serial:
+        raise RuntimeError("the second-level home directory could not be entered after reboot")
+    nested_listing_offset = serial_log.stat().st_size
+    send_text(process, "ls", serial_log)
+    wait_for_serial_text(serial_log, "note\n", count=2)
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    if b"note\n" not in serial_log.read_bytes()[nested_listing_offset:]:
+        raise RuntimeError("the nested file was not listed after reboot")
+    send_text(process, "cat note", serial_log)
+    wait_for_serial_text(serial_log, "nestedvalue", count=3)
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    send_text(process, "cd ../..", serial_log)
+    wait_for_serial_text(serial_log, "directory changed", count=8)
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    send_text(process, "rm guarddir/child/note", serial_log)
+    wait_for_serial_text(serial_log, "rm: removed from /home/root", count=2)
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count)
+    print("PASS: persistent home supports mkdir, cd, ls, cat, write, and rm on nested paths.")
+    print("PASS: /home/root confines writes/deletes and refuses directory removal.")
     print("PASS: deleted home entries stay absent after a full QEMU/OVMF reboot.")
     print("PASS: file contents survive a full QEMU/OVMF guest reboot.")
 
@@ -547,7 +629,8 @@ def main() -> int:
                 time.sleep(0.6)
                 serial = serial_log.read_text(errors="replace") if serial_log.exists() else ""
                 if serial.count("commands: help clear pwd") < 3:
-                    raise RuntimeError("Home/Right/End/Delete editing did not execute the reconstructed help command")
+                    raise RuntimeError("Home/Right/End/Delete editing did not execute the reconstructed help command; "
+                                       "recent output: " + serial[-1200:])
 
                 send_keys(process, ("h", "e", "l", "p", "left", "backspace", "l", "ret"))
                 time.sleep(0.6)

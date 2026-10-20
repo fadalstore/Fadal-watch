@@ -102,28 +102,29 @@ final geometry capture is `kernel/uefi/out/window-resize.ppm`. Keep the BIOS
 shell and UEFI desktop as separate deliverables. Always boot-test loader or
 compositor changes under QEMU/UTM and inspect the framebuffer.
 
-The first persistent-home slice backs the flat `/home/root` view with the ESP's
-`FADALHOME` directory through validated loader callbacks. `ls`, `cat NAME`,
-`write NAME TEXT`, and `rm PATH` use EFI file operations; first boot seeds
-README, motd, and profile files only when missing. Writes replace old content,
-are capped at 4096 bytes, and survive a guest reboot on the same disk. Removal
-is restricted to single-component home files; metadata checks refuse to delete
-or overwrite directories, and the home directory is flushed after deletion.
-The QEMU/OVMF test verifies listing, reading, overwrite truncation, path
-confinement, deletion and directory refusal across reboot, and exact file bytes
-extracted from the FAT image. This is not yet a general VFS: nested directories,
-per-user isolation, and power-loss journaling remain unimplemented.
+The persistent-home view is backed by the ESP's `FADALHOME` directory through
+validated loader callbacks. `ls`, `cat PATH`, `write PATH TEXT`, `mkdir PATH`,
+and `rm PATH` use EFI file operations; first boot seeds README, motd, and profile
+files only when missing. Files can live in nested directories created one level
+at a time (each parent must already exist); writes replace old content, are
+capped at 4096 bytes, and survive a guest reboot on the same disk. `rm` removes
+files only, and EFI metadata checks prevent directory deletion or replacement.
+The QEMU/OVMF test verifies listing, reading, overwrite truncation, directory
+creation, nested file operations, path confinement, reboot persistence, safe
+deletion, and exact file bytes extracted from the FAT image. This is not yet a
+general VFS: per-user isolation, directory removal, and power-loss journaling
+remain unimplemented.
 
 The shell path-resolution slice is implemented with a bounded current-working-
 directory resolver initialized at `/home/root`; the live path appears in the
-prompt. `pwd`, `cd [PATH]`, `ls [PATH]`, `cat PATH`, and `write PATH TEXT` accept
-normalized absolute or relative paths with `.` and `..`; `/etc` files are
-read-only, writes remain confined to the flat `/home/root` store, and nested
-home directories are rejected.
+prompt. `pwd`, `cd [PATH]`, `ls [PATH]`, `cat PATH`, `write PATH TEXT`,
+`mkdir PATH`, and `rm PATH` accept normalized absolute or relative paths with
+`.` and `..`. `/etc` files are read-only; writes and deletes remain confined to
+`/home/root`, and `mkdir` requires its parent directory to exist.
 The persistent-home regression also verifies `cd /etc`, `pwd`, a relative read of
 `motd`, relative `cd` back to `/home/root`, and reading the seeded README there.
-It creates and removes a temporary home file, confirms the deletion persists
-across reboot, and verifies a seeded directory is neither removable nor
+It creates a directory and nested file, confirms both survive reboot, then
+removes the nested file and verifies the directory is neither removable nor
 replaceable by `write`.
 
 Separately, continue native Git smart-HTTP only after the TCP receive, HTTP parsing, TLS boundary, and certificate strategy are explicitly designed. Do not describe the current `github` shell bridge as a native clone implementation.

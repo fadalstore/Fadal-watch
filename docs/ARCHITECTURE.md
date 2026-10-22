@@ -23,6 +23,19 @@ The project has two boot paths that share the same design goal but are built sep
 
 `boot.S` loads the kernel image into memory and enters 32-bit protected mode. The kernel initializes the GDT, IDT, PIC, PIT, E820 memory map, page allocator, heap, slab caches, ATA/FAT12 storage, VFS, network probe, process table, scheduler, syscall gate, and ring-3 shell. Boot self-tests write deterministic traces to COM1. The `kernel/Makefile` smoke test treats those traces as the compatibility contract.
 
+The BIOS networking path uses RTL8139 Ethernet frames and the small `fnet.c`
+IPv4/ARP/UDP/TCP layer. Its current single TCP connection consumes one sequence
+number for SYN, retries SYN with the original ISN, and validates SYN-ACK against
+ISN+1. It has a bounded 4 KiB receive ring, computes checksums across full received
+TCP segments, accepts only in-order data that fits the advertised receive window, and acknowledges gaps,
+duplicates, or full-window data without advancing its receive sequence. Reads
+drain the ring and advertise the reopened window. `make -C kernel check` injects
+synthetic segments to verify truncated-frame rejection, multi-segment reads,
+duplicate/gap rejection, backpressure, and ring wrap. This remains a transport foundation—not general
+TCP: out-of-order reassembly, retransmission timers, congestion control, and a
+complete FIN/close lifecycle are not implemented; writes remain limited to 128
+bytes per segment.
+
 ## Userspace boundary
 
 `fsh.c` is compiled as a separate fixed-address executable. The kernel places the resulting `FSH.BIN` in the FAT12 image, loads it through VFS, maps its user pages, and enters it through the ring-3 ABI. Syscall numbers and register meanings are implemented in `kernel/kernel.c`; any ABI change must update both the dispatcher and `fsh.c`.

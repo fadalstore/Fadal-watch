@@ -131,6 +131,7 @@ check: clean independence $(OUT)/fadal-kernel.img
 		@grep -q "disk: ATA primary-master IDENTIFY passed" $(OUT)/smoke.log
 		@grep -q "network: RTL8139 PCI NIC detected; RX/TX DMA online" $(OUT)/smoke.log
 		@grep -q "network: Ethernet II + ARP + IPv4 checksum foundation passed" $(OUT)/smoke.log
+		@grep -q "network: TCP buffered stream and Git pkt-line self-test passed" $(OUT)/smoke.log
 		@grep -q "memory: 16 MiB identity paging online" $(OUT)/smoke.log
 		@grep -q "memory: slab caches online (process, fat12_dirent)" $(OUT)/smoke.log
 		@grep -q "memory: slab allocation/reuse self-test passed" $(OUT)/smoke.log

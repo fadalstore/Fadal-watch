@@ -10,6 +10,7 @@
 #define TCP_RST 0x04
 #define TCP_ACK 0x10
 #define FNET_TCP_PAYLOAD_MAX 128
+#define FNET_TCP_RX_CAPACITY 4096
 #define DHCP_CLIENT_PORT 68
 #define DHCP_SERVER_PORT 67
 #define DHCP_MAGIC 0x63825363
@@ -51,13 +52,16 @@ enum fnet_tcp_state { FNET_TCP_CLOSED, FNET_TCP_SYN_SENT, FNET_TCP_ESTABLISHED }
 struct fnet_tcp_connection {
     fnet_u8 valid;
     fnet_u8 state;
+    fnet_u8 syn_sent;
     fnet_u16 local_port;
     fnet_u16 remote_port;
     fnet_u32 remote_ip;
     fnet_u32 send_next;
     fnet_u32 receive_next;
-    fnet_u16 payload_length;
-    fnet_u8 payload[FNET_TCP_PAYLOAD_MAX];
+    fnet_u16 receive_head;
+    fnet_u16 receive_tail;
+    fnet_u16 receive_length;
+    fnet_u8 receive_buffer[FNET_TCP_RX_CAPACITY];
 };
 static struct fnet_tcp_connection tcp_connection;
 static fnet_u8 git_clone_state;
@@ -94,7 +98,10 @@ static void arp_cache_clear(void) {
     }
     tcp_connection.valid = 0;
     tcp_connection.state = FNET_TCP_CLOSED;
-    tcp_connection.payload_length = 0;
+    tcp_connection.syn_sent = 0;
+    tcp_connection.receive_head = 0;
+    tcp_connection.receive_tail = 0;
+    tcp_connection.receive_length = 0;
     git_clone_state = 0;
 }
 static void arp_cache_store(fnet_u32 ip, const fnet_u8 *mac) {
@@ -168,11 +175,14 @@ fnet_u8 fnet_ipv4_receive(const fnet_u8 *frame, fnet_u32 length) {
     fnet_u32 header_length = (fnet_u32)(header[0] & 0x0f) * 4;
     fnet_u32 total_length = get16(header + 2);
     fnet_u32 destination = get32(header + 16);
+    if (version != 4 || header_length < 20 || total_length < header_length ||
+        total_length > length - 14U || fnet_ipv4_checksum(header, header_length) != 0) {
+        ipv4_drop_count++;
+        return FNET_IPV4_NOT_LOCAL;
+    }
     fnet_u8 dhcp_destination = header[9] == IPV4_UDP && total_length >= header_length + 8 &&
         get16(header + header_length + 2) == DHCP_CLIENT_PORT;
-    if (version != 4 || header_length < 20 || total_length < header_length ||
-        total_length > length || fnet_ipv4_checksum(header, header_length) != 0 ||
-        (destination != local_ip && destination != 0xffffffff && !dhcp_destination)) {
+    if (destination != local_ip && destination != 0xffffffff && !dhcp_destination) {
         ipv4_drop_count++;
         return FNET_IPV4_NOT_LOCAL;
     }
@@ -233,7 +243,7 @@ fnet_u8 fnet_udp_receive(const fnet_u8 *frame, fnet_u32 length) {
     fnet_u32 header_length = (fnet_u32)(ip[0] & 0x0f) * 4;
     fnet_u32 total_length = get16(ip + 2);
     if ((ip[0] >> 4) != 4 || ip[9] != IPV4_UDP || header_length < 20 ||
-        total_length < header_length + 8 || total_length > length) return 0;
+        total_length < header_length + 8 || total_length > length - 14U) return 0;
     const fnet_u8 *udp = ip + header_length;
     fnet_u16 udp_length = get16(udp + 4);
     fnet_u16 checksum = get16(udp + 6);
@@ -276,12 +286,39 @@ fnet_u32 fnet_udp_send(fnet_u32 destination_ip, fnet_u16 source_port,
 }
 static fnet_u16 tcp_checksum(fnet_u32 source_ip, fnet_u32 destination_ip,
                              const fnet_u8 *tcp, fnet_u32 length) {
-    fnet_u8 pseudo[160];
-    if (length > 148) return 0;
-    put32(pseudo, source_ip); put32(pseudo + 4, destination_ip);
-    pseudo[8] = 0; pseudo[9] = IPV4_TCP; put16(pseudo + 10, (fnet_u16)length);
-    for (fnet_u32 index = 0; index < length; index++) pseudo[12 + index] = tcp[index];
-    return fnet_ipv4_checksum(pseudo, 12 + length);
+    fnet_u32 sum = 0;
+    sum += (source_ip >> 16) & 0xffff;
+    sum += source_ip & 0xffff;
+    sum += (destination_ip >> 16) & 0xffff;
+    sum += destination_ip & 0xffff;
+    sum += IPV4_TCP;
+    sum += length;
+    for (fnet_u32 index = 0; index + 1 < length; index += 2)
+        sum += ((fnet_u32)tcp[index] << 8) | tcp[index + 1];
+    if ((length & 1U) != 0) sum += (fnet_u32)tcp[length - 1] << 8;
+    while (sum >> 16) sum = (sum & 0xffffU) + (sum >> 16);
+    return (fnet_u16)~sum;
+}
+static fnet_u16 tcp_receive_window(void) {
+    return (fnet_u16)(FNET_TCP_RX_CAPACITY - tcp_connection.receive_length);
+}
+static fnet_u16 tcp_test_data_segment(fnet_u8 *frame, fnet_u32 sequence,
+                                      fnet_u32 stream_offset, fnet_u16 payload_length) {
+    fnet_u32 frame_length = 54U + payload_length;
+    for (fnet_u32 index = 0; index < frame_length; index++) frame[index] = 0;
+    put16(frame + 12, ETH_IPV4);
+    frame[14] = 0x45; put16(frame + 16, (fnet_u16)(40U + payload_length));
+    frame[22] = 64; frame[23] = IPV4_TCP;
+    put32(frame + 26, tcp_connection.remote_ip); put32(frame + 30, local_ip);
+    put16(frame + 24, fnet_ipv4_checksum(frame + 14, 20));
+    put16(frame + 34, tcp_connection.remote_port); put16(frame + 36, tcp_connection.local_port);
+    put32(frame + 38, sequence); put32(frame + 42, tcp_connection.send_next);
+    frame[46] = 0x50; frame[47] = TCP_ACK; put16(frame + 48, tcp_receive_window());
+    for (fnet_u32 index = 0; index < payload_length; index++)
+        frame[54 + index] = (fnet_u8)((stream_offset + index) % 251U + 1U);
+    put16(frame + 50, tcp_checksum(tcp_connection.remote_ip, local_ip,
+                                   frame + 34, 20U + payload_length));
+    return (fnet_u16)frame_length;
 }
 static fnet_u32 fnet_tcp_segment(fnet_u32 destination_ip, fnet_u16 source_port,
                                  fnet_u16 destination_port, fnet_u32 sequence,
@@ -296,15 +333,18 @@ static fnet_u32 fnet_tcp_segment(fnet_u32 destination_ip, fnet_u16 source_port,
     put16(frame + 24, fnet_ipv4_checksum(frame + 14, 20));
     put16(frame + 34, source_port); put16(frame + 36, destination_port);
     put32(frame + 38, sequence); put32(frame + 42, acknowledgment);
-    frame[46] = 0x50; frame[47] = flags; put16(frame + 48, 4096); put16(frame + 50, 0);
+    frame[46] = 0x50; frame[47] = flags; put16(frame + 48, tcp_receive_window()); put16(frame + 50, 0);
     put16(frame + 52, 0); put16(frame + 50, tcp_checksum(local_ip, destination_ip, frame + 34, 20));
     return rtl8139_tx(frame, 60);
 }
 fnet_u8 fnet_tcp_connect(fnet_u32 destination_ip, fnet_u16 destination_port, fnet_u16 local_port) {
+    fnet_u32 syn_sequence;
+    fnet_u32 sent;
     if (!ready || destination_port == 0 || local_port == 0) return 0;
     if (!tcp_connection.valid) {
         tcp_connection.valid = 1;
         tcp_connection.state = FNET_TCP_SYN_SENT;
+        tcp_connection.syn_sent = 0;
         tcp_connection.local_port = local_port;
         tcp_connection.remote_port = destination_port;
         tcp_connection.remote_ip = destination_ip;
@@ -312,8 +352,15 @@ fnet_u8 fnet_tcp_connect(fnet_u32 destination_ip, fnet_u16 destination_port, fne
         tcp_connection.receive_next = 0;
     }
     if (tcp_connection.state != FNET_TCP_SYN_SENT) return tcp_connection.state == FNET_TCP_ESTABLISHED;
-    return fnet_tcp_segment(destination_ip, local_port, destination_port,
-                            tcp_connection.send_next, 0, TCP_SYN) != 0;
+    syn_sequence = tcp_connection.send_next;
+    if (tcp_connection.syn_sent != 0) syn_sequence--;
+    sent = fnet_tcp_segment(destination_ip, local_port, destination_port,
+                            syn_sequence, 0, TCP_SYN);
+    if (sent != 0 && tcp_connection.syn_sent == 0) {
+        tcp_connection.send_next++;
+        tcp_connection.syn_sent = 1;
+    }
+    return sent != 0;
 }
 fnet_u8 fnet_tcp_receive(const fnet_u8 *frame, fnet_u32 length) {
     if (!ready || !frame || length < 54 || get16(frame + 12) != ETH_IPV4) return 0;
@@ -321,7 +368,7 @@ fnet_u8 fnet_tcp_receive(const fnet_u8 *frame, fnet_u32 length) {
     fnet_u32 ip_header_length = (fnet_u32)(ip[0] & 0x0f) * 4;
     fnet_u32 total_length = get16(ip + 2);
     if ((ip[0] >> 4) != 4 || ip[9] != IPV4_TCP || ip_header_length < 20 ||
-        total_length < ip_header_length + 20 || total_length > length) return 0;
+        total_length < ip_header_length + 20 || total_length > length - 14U) return 0;
     const fnet_u8 *tcp = ip + ip_header_length;
     fnet_u32 tcp_header_length = (fnet_u32)(tcp[12] >> 4) * 4;
     if (tcp_header_length < 20 || tcp_header_length > total_length - ip_header_length ||
@@ -342,29 +389,42 @@ fnet_u8 fnet_tcp_receive(const fnet_u8 *frame, fnet_u32 length) {
                          tcp_connection.receive_next, TCP_ACK);
         return 2;
     }
+    if (tcp_connection.state != FNET_TCP_ESTABLISHED) return 0;
     fnet_u32 tcp_payload_length = total_length - ip_header_length - tcp_header_length;
-    if (tcp_connection.state == FNET_TCP_ESTABLISHED && tcp_payload_length != 0 &&
-        sequence == tcp_connection.receive_next && tcp_connection.payload_length == 0) {
-        fnet_u32 copy_length = tcp_payload_length < FNET_TCP_PAYLOAD_MAX ?
-            tcp_payload_length : FNET_TCP_PAYLOAD_MAX;
-        for (fnet_u32 index = 0; index < copy_length; index++)
-            tcp_connection.payload[index] = tcp[tcp_header_length + index];
-        tcp_connection.payload_length = (fnet_u16)copy_length;
+    if (tcp_payload_length == 0) return 1;
+    if (sequence == tcp_connection.receive_next &&
+        tcp_payload_length <= FNET_TCP_RX_CAPACITY - (fnet_u32)tcp_connection.receive_length) {
+        for (fnet_u32 index = 0; index < tcp_payload_length; index++) {
+            tcp_connection.receive_buffer[tcp_connection.receive_tail] = tcp[tcp_header_length + index];
+            tcp_connection.receive_tail = (fnet_u16)((tcp_connection.receive_tail + 1U) % FNET_TCP_RX_CAPACITY);
+        }
+        tcp_connection.receive_length = (fnet_u16)(tcp_connection.receive_length + tcp_payload_length);
         tcp_connection.receive_next += tcp_payload_length;
         fnet_tcp_segment(tcp_connection.remote_ip, tcp_connection.local_port,
                          tcp_connection.remote_port, tcp_connection.send_next,
                          tcp_connection.receive_next, TCP_ACK);
         return 3;
     }
-    return tcp_connection.state == FNET_TCP_ESTABLISHED;
+    /* Duplicates, gaps, and data that does not fit remain unconsumed. */
+    fnet_tcp_segment(tcp_connection.remote_ip, tcp_connection.local_port,
+                     tcp_connection.remote_port, tcp_connection.send_next,
+                     tcp_connection.receive_next, TCP_ACK);
+    return 1;
 }
 fnet_u8 fnet_tcp_state(void) { return tcp_connection.state; }
 fnet_u16 fnet_tcp_read(fnet_u8 *payload, fnet_u16 capacity) {
-    if (!payload || capacity == 0 || tcp_connection.payload_length == 0) return 0;
-    fnet_u16 length = tcp_connection.payload_length < capacity ?
-        tcp_connection.payload_length : capacity;
-    for (fnet_u32 index = 0; index < length; index++) payload[index] = tcp_connection.payload[index];
-    tcp_connection.payload_length = 0;
+    if (!payload || capacity == 0 || tcp_connection.receive_length == 0) return 0;
+    fnet_u16 length = tcp_connection.receive_length < capacity ?
+        tcp_connection.receive_length : capacity;
+    for (fnet_u32 index = 0; index < length; index++) {
+        payload[index] = tcp_connection.receive_buffer[tcp_connection.receive_head];
+        tcp_connection.receive_head = (fnet_u16)((tcp_connection.receive_head + 1U) % FNET_TCP_RX_CAPACITY);
+    }
+    tcp_connection.receive_length = (fnet_u16)(tcp_connection.receive_length - length);
+    if (tcp_connection.state == FNET_TCP_ESTABLISHED)
+        fnet_tcp_segment(tcp_connection.remote_ip, tcp_connection.local_port,
+                         tcp_connection.remote_port, tcp_connection.send_next,
+                         tcp_connection.receive_next, TCP_ACK);
     return length;
 }
 fnet_u32 fnet_tcp_write(const fnet_u8 *payload, fnet_u16 length) {
@@ -380,7 +440,7 @@ fnet_u32 fnet_tcp_write(const fnet_u8 *payload, fnet_u16 length) {
     put16(frame + 24, fnet_ipv4_checksum(frame + 14, 20));
     put16(frame + 34, tcp_connection.local_port); put16(frame + 36, tcp_connection.remote_port);
     put32(frame + 38, tcp_connection.send_next); put32(frame + 42, tcp_connection.receive_next);
-    frame[46] = 0x50; frame[47] = TCP_ACK; put16(frame + 48, 4096); put16(frame + 50, 0); put16(frame + 52, 0);
+    frame[46] = 0x50; frame[47] = TCP_ACK; put16(frame + 48, tcp_receive_window()); put16(frame + 50, 0); put16(frame + 52, 0);
     for (fnet_u32 index = 0; index < length; index++) frame[54 + index] = payload[index];
     put16(frame + 50, tcp_checksum(local_ip, tcp_connection.remote_ip, frame + 34, 20 + length));
     fnet_u32 sent = rtl8139_tx(frame, 60 > 54 + length ? 60 : 54 + length);
@@ -544,9 +604,11 @@ fnet_u32 fnet_poll(void) {
     return parsed;
 }
 fnet_u8 fnet_self_test(void) {
-    fnet_u8 header[20], reply[ARP_FRAME_LENGTH], cached_mac[6], ipv4[64], udp_readback[8], tcp[60];
+    fnet_u8 header[20], reply[ARP_FRAME_LENGTH], cached_mac[6], ipv4[64], udp_readback[8];
+    fnet_u8 tcp[FNET_FRAME_MAX], tcp_readback[1600];
     fnet_u8 git_request[128], git_advertisement[64], git_oid[40];
     fnet_u32 next_hop, source_ip;
+    fnet_u32 tcp_base_sequence;
     fnet_u16 source_port;
     for (fnet_u32 index = 0; index < sizeof(header); index++) header[index] = 0;
     header[0] = 0x45; header[8] = 64; header[9] = 1; put16(header + 2, 20);
@@ -584,21 +646,55 @@ fnet_u8 fnet_self_test(void) {
         source_ip != 0x02020014 || source_port != 4000 || udp_readback[0] != 'd' ||
         udp_readback[1] != 'n' || udp_readback[2] != 's') return 0;
     if (!fnet_ipv4_route(0x08080808, &next_hop, cached_mac) || next_hop != gateway_ip) return 0;
-    if (!fnet_tcp_connect(gateway_ip, 443, 54000)) return 0;
+    if (!fnet_tcp_connect(gateway_ip, 443, 54000) || tcp_connection.send_next != 0x46444c55 ||
+        !fnet_tcp_connect(gateway_ip, 443, 54000) || tcp_connection.send_next != 0x46444c55) return 0;
     for (fnet_u32 index = 0; index < sizeof(tcp); index++) tcp[index] = 0;
     put16(tcp + 12, ETH_IPV4); tcp[14] = 0x45; put16(tcp + 16, 40);
     tcp[22] = 64; tcp[23] = IPV4_TCP; put32(tcp + 26, gateway_ip); put32(tcp + 30, local_ip);
     put16(tcp + 24, fnet_ipv4_checksum(tcp + 14, 20));
     put16(tcp + 34, 443); put16(tcp + 36, 54000); put32(tcp + 38, 0x1000);
-    put32(tcp + 42, 0x46444c54); tcp[46] = 0x50; tcp[47] = TCP_SYN | TCP_ACK;
+    put32(tcp + 42, 0x46444c55); tcp[46] = 0x50; tcp[47] = TCP_SYN | TCP_ACK;
     put16(tcp + 48, 4096); put16(tcp + 50, 0);
     put16(tcp + 50, tcp_checksum(gateway_ip, local_ip, tcp + 34, 20));
     if (fnet_tcp_receive(tcp, sizeof(tcp)) != 2 || fnet_tcp_state() != FNET_TCP_ESTABLISHED) return 0;
-    put16(tcp + 16, 42); put32(tcp + 38, 0x1001); put32(tcp + 42, 0x46444c54);
+    put16(tcp + 16, 42); put32(tcp + 38, 0x1001); put32(tcp + 42, 0x46444c55);
     tcp[54] = 'O'; tcp[55] = 'K'; put16(tcp + 50, 0);
     put16(tcp + 50, tcp_checksum(gateway_ip, local_ip, tcp + 34, 22));
-    if (fnet_tcp_receive(tcp, sizeof(tcp)) != 3 || tcp_connection.payload_length != 2 ||
+    if (fnet_tcp_receive(tcp, sizeof(tcp)) != 3 || tcp_connection.receive_length != 2 ||
         fnet_tcp_read(cached_mac, sizeof(cached_mac)) != 2 || cached_mac[0] != 'O' || cached_mac[1] != 'K') return 0;
+    tcp_base_sequence = tcp_connection.receive_next;
+    fnet_u16 segment_length = tcp_test_data_segment(tcp, tcp_base_sequence, 0, 301);
+    if (fnet_ipv4_receive(tcp, segment_length - 1U) != FNET_IPV4_NOT_LOCAL ||
+        fnet_tcp_receive(tcp, segment_length - 1U) != 0 || tcp_connection.receive_length != 0) return 0;
+    if (fnet_tcp_receive(tcp, segment_length) != 3) return 0;
+    segment_length = tcp_test_data_segment(tcp, tcp_base_sequence + 301, 301, 299);
+    if (fnet_tcp_receive(tcp, segment_length) != 3 || tcp_connection.receive_length != 600) return 0;
+    segment_length = tcp_test_data_segment(tcp, tcp_base_sequence, 0, 301);
+    if (fnet_tcp_receive(tcp, segment_length) != 1 || tcp_connection.receive_length != 600) return 0;
+    segment_length = tcp_test_data_segment(tcp, tcp_base_sequence + 610, 610, 2);
+    if (fnet_tcp_receive(tcp, segment_length) != 1 || tcp_connection.receive_next != tcp_base_sequence + 600 ||
+        tcp_connection.receive_length != 600) return 0;
+    if (fnet_tcp_read(tcp_readback, 500) != 500) return 0;
+    for (fnet_u32 index = 0; index < 500; index++)
+        if (tcp_readback[index] != (fnet_u8)(index % 251U + 1U)) return 0;
+    segment_length = tcp_test_data_segment(tcp, tcp_base_sequence + 600, 600, 1400);
+    if (fnet_tcp_receive(tcp, segment_length) != 3) return 0;
+    segment_length = tcp_test_data_segment(tcp, tcp_base_sequence + 2000, 2000, 1400);
+    if (fnet_tcp_receive(tcp, segment_length) != 3 || tcp_connection.receive_length != 2900) return 0;
+    segment_length = tcp_test_data_segment(tcp, tcp_base_sequence + 3400, 3400, 1400);
+    if (fnet_tcp_receive(tcp, segment_length) != 1 || tcp_connection.receive_next != tcp_base_sequence + 3400 ||
+        tcp_receive_window() != 1196) return 0;
+    if (fnet_tcp_read(tcp_readback, sizeof(tcp_readback)) != 1600) return 0;
+    for (fnet_u32 index = 0; index < 1600; index++)
+        if (tcp_readback[index] != (fnet_u8)((500U + index) % 251U + 1U)) return 0;
+    if (fnet_tcp_read(tcp_readback, sizeof(tcp_readback)) != 1300) return 0;
+    for (fnet_u32 index = 0; index < 1300; index++)
+        if (tcp_readback[index] != (fnet_u8)((2100U + index) % 251U + 1U)) return 0;
+    segment_length = tcp_test_data_segment(tcp, tcp_base_sequence + 3400, 3400, 1400);
+    if (fnet_tcp_receive(tcp, segment_length) != 3 || tcp_connection.receive_head <= tcp_connection.receive_tail) return 0;
+    if (fnet_tcp_read(tcp_readback, sizeof(tcp_readback)) != 1400) return 0;
+    for (fnet_u32 index = 0; index < 1400; index++)
+        if (tcp_readback[index] != (fnet_u8)((3400U + index) % 251U + 1U)) return 0;
     fnet_u16 request_length = fnet_git_build_upload_pack_request(
         (const fnet_u8 *)"/fadalstore/Fadal-watch.git", (const fnet_u8 *)"github.com",
         git_request, sizeof(git_request));

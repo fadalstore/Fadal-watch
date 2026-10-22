@@ -144,7 +144,9 @@ It creates a directory and nested file, confirms both survive reboot, then
 removes the nested file and verifies the directory is neither removable nor
 replaceable by `write`.
 
-Separately, continue native Git smart-HTTP only after the TCP receive, HTTP parsing, TLS boundary, and certificate strategy are explicitly designed. Do not describe the current `github` shell bridge as a native clone implementation.
+**TCP receive slice:** `kernel/fnet.c` hadda wuxuu leeyahay 4 KiB ring buffer oo bounded ah, checksum-ku wuxuu daboolaa TCP segments waaweyn oo ay ku jiraan payload dhererkiisu odd yahay, waxaana la aqbalaa oo keliya xogta in-order ah ee boos ku filan haysa. TCP window-ga la xayeysiiyo wuxuu la socdaa booska bannaan; duplicate, gap, ama segment ka weyn booska jira lama tirtiro si khaldan—ACK-gu wuxuu hayaa receive sequence-kii, si sender-ku dib ugu soo gudbiyo. Handshake-ku hadda wuxuu cunaa hal sequence number-ka SYN, SYN retry-guna wuxuu isticmaalaa ISN-kii hore; SYN-ACK-ga waxaa laga rabaa ACK=ISN+1. `make -C kernel check` wuxuu ku tijaabiyaa handshake-kan, frame truncated ah, multi-segment stream, partial reads, duplicate/gap, backpressure, iyo ring wrap.
+
+Tani weli ma aha TCP dhamaystiran: hal connection oo keliya ayaa jira; out-of-order reassembly, retransmission timers, congestion control, iyo FIN/close lifecycle buuxa ma jiraan. Dhinaca send-ku wuxuu weli ku xaddidan yahay 128 bytes per segment. Tallaabada xigta waa naqshadda HTTP parsing iyo xadka TLS/certificate strategy ka hor Git smart-HTTP; ha lagu tilmaamin `github` shell bridge-ka hadda jira inuu yahay native clone.
 
 ## What not to assume
 

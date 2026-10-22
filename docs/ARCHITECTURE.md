@@ -36,6 +36,20 @@ TCP: out-of-order reassembly, retransmission timers, congestion control, and a
 complete FIN/close lifecycle are not implemented; writes remain limited to 128
 bytes per segment.
 
+`kernel/http.c` is a separate, incremental HTTP/1 response parser. It bounds
+status/header/trailer lines and aggregate headers, streams decoded message-body
+bytes to a caller sink, and supports `Content-Length`, chunked transfer coding,
+and close-delimited bodies completed by explicit EOF. It rejects ambiguous
+`Content-Length` plus `Transfer-Encoding`, duplicate framing fields, unsupported
+transfer codings, and malformed/truncated messages. The boot self-test covers
+fixed-length, chunked, interim `100 Continue`, close-delimited, and error cases.
+This parser accepts **plaintext HTTP bytes only** and is not connected to the
+native Git transport. Any future HTTPS path must place a TLS session layer below
+this parser, authenticate the peer certificate and requested hostname, and pass
+only decrypted application bytes upward. TLS, certificate validation, and
+Git smart-HTTP integration are not implemented; do not send HTTP to an HTTPS
+endpoint or treat parser success as transport security.
+
 ## Userspace boundary
 
 `fsh.c` is compiled as a separate fixed-address executable. The kernel places the resulting `FSH.BIN` in the FAT12 image, loads it through VFS, maps its user pages, and enters it through the ring-3 ABI. Syscall numbers and register meanings are implemented in `kernel/kernel.c`; any ABI change must update both the dispatcher and `fsh.c`.

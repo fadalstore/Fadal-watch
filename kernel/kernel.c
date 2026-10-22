@@ -8,6 +8,7 @@
 #include "rtl8139.h"
 #include "fnet.h"
 #include "gitpack.h"
+#include "http.h"
 #include "identity.h"
 #include "auth.h"
 
@@ -2459,6 +2460,11 @@ void kernel_main(void) {
         }
     } else {
         kernel_write("network: no RTL8139 PCI NIC detected; loopback remains active\n");
+    }
+    if (http_response_self_test()) {
+        kernel_write("network: bounded HTTP/1 response parser self-test passed\n");
+    } else {
+        kernel_write("network: bounded HTTP/1 response parser self-test failed\n");
     }
     if (gitpack_self_test()) {
         kernel_write("storage: Git SHA-1 and packfile checksum self-test passed\n");

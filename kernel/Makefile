@@ -32,7 +32,7 @@ $(OUT):
 $(OUT)/boot.o: boot.S | $(OUT)
 	$(AS) --32 -o $@ $<
 
-$(OUT)/kernel.o: kernel.c fat12.h ata.h ramdisk.h slab.h vfs.h rtl8139.h fnet.h gitpack.h identity.h auth.h | $(OUT)
+$(OUT)/kernel.o: kernel.c fat12.h ata.h ramdisk.h slab.h vfs.h rtl8139.h fnet.h gitpack.h http.h identity.h auth.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(OUT)/fat12.o: fat12.c fat12.h | $(OUT)
@@ -72,6 +72,9 @@ $(OUT)/fnet.o: fnet.c fnet.h rtl8139.h | $(OUT)
 $(OUT)/gitpack.o: gitpack.c gitpack.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+$(OUT)/http.o: http.c http.h | $(OUT)
+	$(CC) $(CFLAGS) -Os -c -o $@ $<
+
 $(OUT)/auth.o: auth.c auth.h gitpack.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
@@ -92,8 +95,8 @@ $(OUT)/fsh_blob.o: $(OUT)/fsh.bin
 $(OUT)/interrupts.o: interrupts.S kernel.c | $(OUT)
 	$(AS) --32 -o $@ $<
 
-$(OUT)/kernel.elf: $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/ramfs.o $(OUT)/fscan.o $(OUT)/rtl8139.o $(OUT)/fnet.o $(OUT)/gitpack.o $(OUT)/auth.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/ramfs.o $(OUT)/fscan.o $(OUT)/rtl8139.o $(OUT)/fnet.o $(OUT)/gitpack.o $(OUT)/auth.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o
+$(OUT)/kernel.elf: $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/ramfs.o $(OUT)/fscan.o $(OUT)/rtl8139.o $(OUT)/fnet.o $(OUT)/gitpack.o $(OUT)/http.o $(OUT)/auth.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(OUT)/kernel.o $(OUT)/fat12.o $(OUT)/ata.o $(OUT)/ramdisk.o $(OUT)/ramfs.o $(OUT)/fscan.o $(OUT)/rtl8139.o $(OUT)/fnet.o $(OUT)/gitpack.o $(OUT)/http.o $(OUT)/auth.o $(OUT)/slab.o $(OUT)/vfs.o $(OUT)/fsh_blob.o $(OUT)/interrupts.o
 
 phase1b-objects: $(OUT)/blockdev.o $(OUT)/fadalfs.o
 	@echo "FadalFS Phase 1B objects compiled: $^"
@@ -132,6 +135,7 @@ check: clean independence $(OUT)/fadal-kernel.img
 		@grep -q "network: RTL8139 PCI NIC detected; RX/TX DMA online" $(OUT)/smoke.log
 		@grep -q "network: Ethernet II + ARP + IPv4 checksum foundation passed" $(OUT)/smoke.log
 		@grep -q "network: TCP buffered stream and Git pkt-line self-test passed" $(OUT)/smoke.log
+		@grep -q "network: bounded HTTP/1 response parser self-test passed" $(OUT)/smoke.log
 		@grep -q "memory: 16 MiB identity paging online" $(OUT)/smoke.log
 		@grep -q "memory: slab caches online (process, fat12_dirent)" $(OUT)/smoke.log
 		@grep -q "memory: slab allocation/reuse self-test passed" $(OUT)/smoke.log

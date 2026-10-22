@@ -146,7 +146,8 @@ replaceable by `write`.
 
 **TCP receive slice:** `kernel/fnet.c` hadda wuxuu leeyahay 4 KiB ring buffer oo bounded ah, checksum-ku wuxuu daboolaa TCP segments waaweyn oo ay ku jiraan payload dhererkiisu odd yahay, waxaana la aqbalaa oo keliya xogta in-order ah ee boos ku filan haysa. TCP window-ga la xayeysiiyo wuxuu la socdaa booska bannaan; duplicate, gap, ama segment ka weyn booska jira lama tirtiro si khaldan—ACK-gu wuxuu hayaa receive sequence-kii, si sender-ku dib ugu soo gudbiyo. Handshake-ku hadda wuxuu cunaa hal sequence number-ka SYN, SYN retry-guna wuxuu isticmaalaa ISN-kii hore; SYN-ACK-ga waxaa laga rabaa ACK=ISN+1. `make -C kernel check` wuxuu ku tijaabiyaa handshake-kan, frame truncated ah, multi-segment stream, partial reads, duplicate/gap, backpressure, iyo ring wrap.
 
-Tani weli ma aha TCP dhamaystiran: hal connection oo keliya ayaa jira; out-of-order reassembly, retransmission timers, congestion control, iyo FIN/close lifecycle buuxa ma jiraan. Dhinaca send-ku wuxuu weli ku xaddidan yahay 128 bytes per segment. Tallaabada xigta waa naqshadda HTTP parsing iyo xadka TLS/certificate strategy ka hor Git smart-HTTP; ha lagu tilmaamin `github` shell bridge-ka hadda jira inuu yahay native clone.
+**HTTP parser:** `kernel/http.c`/`kernel/http.h` waxaa lagu daray parser response HTTP/1 ah oo incremental ah, xaddidanna leh; wuxuu taageeraa `Content-Length`, `Transfer-Encoding: chunked` (oo trailers leh), 1xx interim response, iyo body ku dhammaada EOF. Body-ga waxaa si qaybo ah loogu gudbiyaa callback; parser-ku wuxuu diidaa `Content-Length` iyo `Transfer-Encoding` isku mar, framing fields laba-jeer ah, coding aan la taageerin, status khaldan, iyo EOF aan dhammaystirnayn. `make -C kernel check` wuxuu tijaabiyaa fixed-length, chunked, `100 Continue`, close-delimited body, conflicting/duplicate framing, iyo short body. Parser-ka looma xirin Git/TCP flow-ga.
+
 
 ## What not to assume
 

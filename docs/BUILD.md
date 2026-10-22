@@ -37,6 +37,13 @@ make -C kernel run-vga
 
 The image is written to `kernel/out/fadal-kernel.img`. `check` must remain the required pre-push test because it verifies the serial boot trace, FAT12 persistence, VFS, scheduler, syscalls, network path, and independence guard. The networking self-test validates SYN/SYN-ACK sequence numbers and repeat-SYN behavior, rejects a truncated IP/TCP frame, then injects even- and odd-sized synthetic TCP segments across multiple reads to verify checksum handling, duplicate/out-of-order rejection, receive-window backpressure, and ring-buffer wrap; its serial pass line is asserted by the Makefile.
 
+The same boot check runs the independent HTTP/1 response parser tests even if no
+NIC is available. They cover fixed-length and close-delimited bodies, chunked
+transfer with trailers, a `100 Continue` interim response, split input, framing
+ambiguity and duplicate-header rejection, malformed status codes, and
+incomplete-body EOF rejection. This is parser-only
+coverage; it does not validate TLS or HTTPS transport.
+
 The default compiler variables can be overridden when a toolchain uses different names:
 
 ```sh

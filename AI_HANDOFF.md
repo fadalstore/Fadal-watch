@@ -71,6 +71,16 @@ updates the saved-under cursor instead of repainting the entire GOP desktop.
 `test-window-controls` checks that moving a held pointer over Start does not
 repeatedly toggle the menu.
 
+**Files** ee Start hadda waxa uu furaa browser framebuffer ah oo adeegsada
+home-list iyo read callbacks-ka ESP. Wuxuu taxaa `/home/root`, wuxuu geli karaa
+folder-hoosaadyo kana soo noqon karaa parent-ka, wuxuuna soo bandhigaa labada sadar
+ee ugu horreeya faylka ASCII-ga la doortay; preview-gu waa akhris-keliya.
+**System** waxa uu furaa panel muujinaya x86_64, UEFI/GOP, ilaalinta xusuusta FDL64
+v3, helitaanka persistent home, iyo UEFI HTTP. Escape ama badhanka close ayaa
+xira panel kasta; taskbar-ku wuxuu dib u soo celiyaa terminal-ka. QEMU regression-ka
+`test-window-controls` wuxuu xaqiijiyaa home entries-ka, preview-ga faylka, iyo
+xogta System panel-ka.
+
 The UEFI terminal interaction milestone is implemented: Left/Right, Home/End,
 insertion at the cursor, Backspace, and Delete edit the current command; PageUp
 and PageDown page through the bounded 64-line scrollback. The editor limits the

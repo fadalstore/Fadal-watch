@@ -157,6 +157,11 @@ The same regression holds the pointer down while moving across Start and checks
 that the menu does not toggle repeatedly. Click actions run only on a press edge;
 unchanged mouse packets are ignored, and normal pointer movement uses a small
 saved-under cursor update rather than repainting the full desktop.
+It also launches **Start > Files** and verifies that ESP-backed home entries and
+a selected-file preview render, then launches **Start > System** and checks that
+the capability panel is visible. Files navigation is limited to browsing the
+persistent home tree; the preview is read-only. Either panel closes with Escape
+or its titlebar close button.
 
 Run the terminal window-resize regression with:
 

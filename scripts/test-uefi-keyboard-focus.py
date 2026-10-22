@@ -391,6 +391,26 @@ def run_window_control_checks(process: subprocess.Popen[str], temp: Path,
     assert_pixel(state, 30, 550, (26, 49, 85), "held pointer on Start")
     print("PASS: a held mouse/touch contact does not repeat click actions or toggle the menu.")
 
+    click_mouse(process, mouse, 160, 624)
+    capture_frame(process, state)
+    assert_pixel(state, 270, 125, (45, 95, 155), "Files app titlebar")
+    if bytes((216, 234, 255)) not in ppm_region(state, 284, 250, 1000, 560):
+        raise RuntimeError("Files app opened without rendering persistent home entries")
+    click_mouse(process, mouse, 350, 261)
+    capture_frame(process, state)
+    if bytes((126, 214, 167)) not in ppm_region(state, 286, 594, 550, 632):
+        raise RuntimeError("Files app did not render a preview after selecting a home file")
+    print("PASS: Start > Files lists persistent ESP entries and previews a selected file.")
+
+    click_mouse(process, mouse, 995, 137)
+    click_mouse(process, mouse, 70, 773)
+    click_mouse(process, mouse, 160, 678)
+    capture_frame(process, state)
+    assert_pixel(state, 270, 125, (36, 63, 109), "System app titlebar")
+    if bytes((216, 234, 255)) not in ppm_region(state, 288, 190, 990, 430):
+        raise RuntimeError("System app opened without rendering system information")
+    print("PASS: Start > System opens the information panel with UEFI/runtime status.")
+
 
 def run_window_resize_checks(process: subprocess.Popen[str], temp: Path,
                               screenshot: Path) -> None:

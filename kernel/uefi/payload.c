@@ -68,6 +68,11 @@ const u8 fadal64_layout[40] = {
 #define FOCUS_TERMINAL 1
 #define FOCUS_START_MENU 2
 #define FOCUS_DESKTOP 3
+#define FOCUS_FILES 4
+#define FOCUS_SYSTEM 5
+#define APP_NONE 0
+#define APP_FILES 1
+#define APP_SYSTEM 2
 #define KBD_STATUS_OUTPUT_FULL 0x01
 #define KBD_STATUS_AUX_DATA 0x20
 #define EVENT_KEYBOARD 1
@@ -97,6 +102,7 @@ static u8 mouse_enabled;
 static u8 mouse_packet_index;
 static u8 mouse_packet[3];
 static u8 start_open;
+static u8 desktop_app;
 static u32 mouse_x;
 static u32 mouse_y;
 static u32 mouse_buttons;
@@ -150,10 +156,18 @@ static fadal_uefi_services *desktop_services;
 static u32 current_uid = USER_ROOT;
 static const char current_user[] = "root";
 static char shell_current_directory[SHELL_PATH_MAX] = "/home/root";
+static char files_browser_path[SHELL_PATH_MAX] = "/home/root";
+static char files_browser_entries[512];
+static u32 files_browser_entries_size;
+static u32 files_browser_status;
+static char files_browser_selected[48];
+static char files_browser_preview[257];
 static u8 input_focus = FOCUS_TERMINAL;
 
 static void cursor_restore(void);
 static void cursor_draw(void);
+static void files_browser_refresh(void);
+static void files_browser_click(u32 mouse_y);
 
 static void fb_pixel(u32 x, u32 y, u32 color) {
     volatile u32 *pixels;
@@ -494,6 +508,95 @@ static void terminal_draw_window_controls(void) {
     }
 }
 
+static void desktop_app_bounds(u32 *left, u32 *top, u32 *width, u32 *height) {
+    *width = framebuffer->width > 820 ? 760 : framebuffer->width - 40;
+    *height = framebuffer->height > 620 ? 560 : framebuffer->height - 60;
+    *left = (framebuffer->width - *width) / 2;
+    *top = (framebuffer->height - *height) / 2;
+}
+
+static void desktop_app_render(void) {
+    u32 left;
+    u32 top;
+    u32 width;
+    u32 height;
+    u32 right;
+    u32 index;
+    u32 preview_source = 0;
+    if (desktop_app == APP_NONE) return;
+    desktop_app_bounds(&left, &top, &width, &height);
+    right = left + width;
+    fb_fill(left, top, right, top + height, 0x000d1528);
+    fb_fill(left, top, right, top + 38,
+            desktop_app == APP_FILES ? 0x002d5f9b : 0x00243f6d);
+    fb_text(left + 16, top + 12,
+            desktop_app == APP_FILES ? "FILES" : "SYSTEM", 0x00ffffff, 2);
+    fb_fill(right - 38, top + 7, right - 8, top + 31, 0x00944755);
+    fb_text(right - 29, top + 12, "X", 0x00ffffff, 1);
+    if (desktop_app == APP_FILES) {
+        u32 source = 0;
+        u32 row = 0;
+        fb_text(left + 24, top + 58, "LOCATION", 0x007ed6a7, 1);
+        fb_text(left + 24, top + 76, files_browser_path, 0x00d8eaff, 1);
+        fb_text(left + 24, top + 104, "[UP]", 0x008dc5ff, 1);
+        if (files_browser_status != FADAL_HOME_OK) {
+            fb_text(left + 24, top + 140, "HOME STORAGE UNAVAILABLE", 0x00ffaaaa, 1);
+        } else if (files_browser_entries_size == 0) {
+            fb_text(left + 24, top + 140, "THIS DIRECTORY IS EMPTY", 0x00d8eaff, 1);
+        } else {
+            while (source < files_browser_entries_size && row < 15) {
+                char entry[48];
+                u32 length = 0;
+                while (source < files_browser_entries_size &&
+                       files_browser_entries[source] != '\n' && length + 1U < sizeof(entry)) {
+                    entry[length++] = files_browser_entries[source++];
+                }
+                while (source < files_browser_entries_size && files_browser_entries[source] != '\n') source++;
+                if (source < files_browser_entries_size) source++;
+                entry[length] = '\0';
+                fb_text(left + 24, top + 130 + row * 22, entry,
+                        length != 0 && entry[length - 1U] == '/' ? 0x008dc5ff : 0x00d8eaff, 1);
+                row++;
+            }
+        }
+        if (files_browser_selected[0] != '\0') {
+            fb_fill(left + 16, top + height - 76, right - 16, top + height - 18, 0x00182745);
+            fb_text(left + 26, top + height - 64, "PREVIEW", 0x007ed6a7, 1);
+            fb_text(left + 100, top + height - 64, files_browser_selected, 0x00d8eaff, 1);
+            for (index = 0; index < 2; index++) {
+                char line[64];
+                u32 column = 0;
+                while (files_browser_preview[preview_source] != '\0' &&
+                       files_browser_preview[preview_source] != '\r' &&
+                       files_browser_preview[preview_source] != '\n') {
+                    if (column + 1U < sizeof(line)) line[column++] = files_browser_preview[preview_source];
+                    preview_source++;
+                }
+                line[column] = '\0';
+                if (files_browser_preview[preview_source] == '\r') preview_source++;
+                if (files_browser_preview[preview_source] == '\n') preview_source++;
+                if (line[0] != '\0') fb_text(left + 26, top + height - 44 + index * 14, line, 0x00d8eaff, 1);
+            }
+        } else {
+            fb_text(left + 24, top + height - 18, "TAP A FOLDER TO OPEN - ESC TO CLOSE", 0x0097aac8, 1);
+        }
+    } else {
+        fb_text(left + 28, top + 78, "ARCHITECTURE: X86_64", 0x00d8eaff, 1);
+        fb_text(left + 28, top + 112, "BOOT: UEFI FIRMWARE + GOP DISPLAY", 0x00d8eaff, 1);
+        fb_text(left + 28, top + 146, "MEMORY: FDL64 V3 W X PROTECTION", 0x00d8eaff, 1);
+        fb_text(left + 28, top + 180,
+                desktop_services != NULL && desktop_services->home_available != 0 ?
+                "PERSISTENT HOME: AVAILABLE" : "PERSISTENT HOME: UNAVAILABLE",
+                0x00d8eaff, 1);
+        fb_text(left + 28, top + 214,
+                desktop_services != NULL && desktop_services->http_available != 0 ?
+                "UEFI HTTP: AVAILABLE" : "UEFI HTTP: UNAVAILABLE",
+                0x00d8eaff, 1);
+        fb_text(left + 28, top + 248, "NETWORK: FIRMWARE SERVICE DEPENDENT", 0x00d8eaff, 1);
+        fb_text(left + 28, top + height - 32, "ESC TO CLOSE - TAB RETURNS TO TERMINAL", 0x0097aac8, 1);
+    }
+}
+
 static void desktop_render(void) {
     u32 width;
     u32 height;
@@ -643,6 +746,7 @@ static void desktop_redraw(void) {
     desktop_redrawing = 1;
     desktop_render();
     terminal_render();
+    desktop_app_render();
     if (start_open != 0) {
         fb_fill(26, framebuffer->height - 270, 290, framebuffer->height - 54, 0x001a3155);
         fb_fill(38, framebuffer->height - 252, 278, framebuffer->height - 208, 0x002d5f9b);
@@ -834,6 +938,37 @@ static void desktop_handle_mouse(const fadal_event *event) {
     if (event->type != EVENT_MOUSE) return;
     pressed = (event->buttons & 1U) != 0 && (desktop_mouse_buttons & 1U) == 0;
     desktop_mouse_buttons = event->buttons;
+    if (desktop_app != APP_NONE) {
+        u32 app_left;
+        u32 app_top;
+        u32 app_width;
+        u32 app_height;
+        if (pressed == 0) return;
+        desktop_app_bounds(&app_left, &app_top, &app_width, &app_height);
+        if (mouse_x >= app_left + app_width - 38 && mouse_x < app_left + app_width - 8 &&
+            mouse_y >= app_top + 7 && mouse_y < app_top + 31) {
+            desktop_app = APP_NONE;
+            input_focus = terminal_open != 0 && terminal_minimized == 0 ?
+                          FOCUS_TERMINAL : FOCUS_DESKTOP;
+            desktop_status = "APP CLOSED";
+        } else if (mouse_y >= framebuffer->height - 52 && mouse_x >= 142 && mouse_x < 282) {
+            desktop_app = APP_NONE;
+            terminal_open = 1;
+            terminal_minimized = 0;
+            input_focus = FOCUS_TERMINAL;
+            desktop_status = "TERMINAL RESTORED";
+        } else if (mouse_x < 150 && mouse_y > framebuffer->height - 70) {
+            desktop_app = APP_NONE;
+            start_open = 1;
+            input_focus = FOCUS_START_MENU;
+            desktop_status = "START MENU OPEN";
+        } else if (desktop_app == APP_FILES &&
+                   mouse_x >= app_left + 12 && mouse_x < app_left + app_width - 12) {
+            files_browser_click(mouse_y);
+        }
+        desktop_redraw();
+        return;
+    }
     if (terminal_resizing != 0) {
         if ((event->buttons & 1U) != 0) {
             terminal_resize_apply();
@@ -951,13 +1086,22 @@ static void desktop_handle_mouse(const fadal_event *event) {
     } else if (start_open != 0 && mouse_x >= 38 && mouse_x < 278 &&
                mouse_y >= framebuffer->height - 198 && mouse_y < framebuffer->height - 154) {
         start_open = 0;
-        input_focus = FOCUS_DESKTOP;
-        desktop_status = "FILES SELECTED";
+        desktop_app = APP_FILES;
+        input_focus = FOCUS_FILES;
+        {
+            const char *root = "/home/root";
+            u32 index;
+            for (index = 0; root[index] != '\0'; index++) files_browser_path[index] = root[index];
+            files_browser_path[index] = '\0';
+        }
+        files_browser_refresh();
+        desktop_status = "FILES OPEN";
     } else if (start_open != 0 && mouse_x >= 38 && mouse_x < 278 &&
                mouse_y >= framebuffer->height - 144 && mouse_y < framebuffer->height - 100) {
         start_open = 0;
-        input_focus = FOCUS_DESKTOP;
-        desktop_status = "SYSTEM SELECTED";
+        desktop_app = APP_SYSTEM;
+        input_focus = FOCUS_SYSTEM;
+        desktop_status = "SYSTEM INFO";
     } else if (start_open != 0) {
         input_focus = FOCUS_START_MENU;
     } else {
@@ -1113,6 +1257,103 @@ static void shell_set_current_directory(const char *path) {
         index++;
     }
     shell_current_directory[index] = '\0';
+}
+
+static void files_browser_refresh(void) {
+    const char *relative = "";
+    if (desktop_services == NULL || desktop_services->home_available == 0 ||
+        desktop_services->home_list == NULL) {
+        files_browser_status = FADAL_HOME_UNAVAILABLE;
+        files_browser_entries_size = 0;
+        files_browser_entries[0] = '\0';
+        return;
+    }
+    if (!f_streq(files_browser_path, "/home/root")) relative = files_browser_path + 11;
+    files_browser_entries_size = 0;
+    files_browser_status = desktop_services->home_list(relative, files_browser_entries,
+                                                        sizeof(files_browser_entries),
+                                                        &files_browser_entries_size);
+    if (files_browser_status != FADAL_HOME_OK) {
+        files_browser_entries_size = 0;
+        files_browser_entries[0] = '\0';
+    }
+    files_browser_selected[0] = '\0';
+    files_browser_preview[0] = '\0';
+}
+
+static void files_browser_click(u32 y) {
+    u32 left;
+    u32 top;
+    u32 width;
+    u32 height;
+    u32 row;
+    u32 source = 0;
+    u32 index = 0;
+    char entry[48];
+    desktop_app_bounds(&left, &top, &width, &height);
+    (void)left;
+    (void)width;
+    (void)height;
+    if (y >= top + 100 && y < top + 126) {
+        u32 length = f_length(files_browser_path);
+        if (length > 10) {
+            while (length > 10 && files_browser_path[length - 1U] != '/') length--;
+            if (length > 10) files_browser_path[length - 1U] = '\0';
+            else files_browser_path[10] = '\0';
+            files_browser_refresh();
+        }
+        return;
+    }
+    if (y < top + 128 || y >= top + 458 || files_browser_status != FADAL_HOME_OK) return;
+    row = (y - (top + 130)) / 22U;
+    while (source < files_browser_entries_size && index < row) {
+        if (files_browser_entries[source++] == '\n') index++;
+    }
+    if (index != row || source >= files_browser_entries_size) return;
+    index = 0;
+    while (source < files_browser_entries_size && files_browser_entries[source] != '\n' &&
+           index + 1U < sizeof(entry)) entry[index++] = files_browser_entries[source++];
+    entry[index] = '\0';
+    if (index == 0) return;
+    if (entry[index - 1U] == '/') {
+        u32 path_size = f_length(files_browser_path);
+        entry[--index] = '\0';
+        if (path_size + index + 2U >= sizeof(files_browser_path)) return;
+        files_browser_path[path_size++] = '/';
+        for (source = 0; source < index; source++) files_browser_path[path_size++] = entry[source];
+        files_browser_path[path_size] = '\0';
+        files_browser_refresh();
+        return;
+    }
+    for (source = 0; source <= index; source++) files_browser_selected[source] = entry[source];
+    files_browser_preview[0] = '\0';
+    if (desktop_services != NULL && desktop_services->home_read != NULL) {
+        char relative[SHELL_PATH_MAX];
+        u32 relative_size = 0;
+        u32 read_size = 0;
+        if (!f_streq(files_browser_path, "/home/root")) {
+            const char *part = files_browser_path + 11;
+            while (part[relative_size] != '\0' && relative_size + 1U < sizeof(relative)) {
+                relative[relative_size] = part[relative_size];
+                relative_size++;
+            }
+            relative[relative_size++] = '/';
+        }
+        for (source = 0; source < index && relative_size + 1U < sizeof(relative); source++)
+            relative[relative_size++] = entry[source];
+        relative[relative_size] = '\0';
+        if (desktop_services->home_read(relative, files_browser_preview,
+                                        sizeof(files_browser_preview) - 1U,
+                                        &read_size) == FADAL_HOME_OK) {
+            if (read_size >= sizeof(files_browser_preview)) read_size = sizeof(files_browser_preview) - 1U;
+            for (source = 0; source < read_size; source++) {
+                char value = files_browser_preview[source];
+                if (value == '\r' || value == '\n') continue;
+                if ((u8)value < 32 || (u8)value > 126) files_browser_preview[source] = ' ';
+            }
+            files_browser_preview[read_size] = '\0';
+        }
+    }
 }
 
 static void home_seed_file(const char *name, const char *contents) {
@@ -1463,6 +1704,23 @@ static void event_pump(void) {
 
 static int desktop_handle_keyboard(const fadal_event *event) {
     u8 value = event->code;
+    if (desktop_app != APP_NONE) {
+        if (value == 27) {
+            desktop_app = APP_NONE;
+            input_focus = terminal_open != 0 && terminal_minimized == 0 ?
+                          FOCUS_TERMINAL : FOCUS_DESKTOP;
+            desktop_status = "APP CLOSED";
+            desktop_redraw();
+        } else if (value == '\t') {
+            desktop_app = APP_NONE;
+            terminal_open = 1;
+            terminal_minimized = 0;
+            input_focus = FOCUS_TERMINAL;
+            desktop_status = "TERMINAL FOCUSED";
+            desktop_redraw();
+        }
+        return 0;
+    }
     if (value == '\t') {
         start_open = 0;
         if (input_focus == FOCUS_TERMINAL) {

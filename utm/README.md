@@ -14,6 +14,15 @@ desktop: a blue workspace, `FADAL OS` top bar, desktop welcome card, terminal
 panel, status indicator, and `START` taskbar. The framebuffer is supplied by
 UEFI GOP and drawn directly by the independent Fadal64 payload.
 
+The Start menu's **Files** entry opens a basic read-only browser for the
+persistent `/home/root` tree. It displays ESP-backed entries, lets you open
+nested folders and go up to the parent, and previews the first two lines of a
+selected file. Use the terminal's `write` and `rm` commands to change files.
+**System** opens a status panel showing the x86_64/UEFI/GOP runtime, FDL64 v3
+memory-protection mode, and whether the firmware exposes persistent storage and
+HTTP. Close either panel with Escape or its titlebar close button; the taskbar
+restores the terminal.
+
 Available Phase 1 console commands are:
 
 ```text

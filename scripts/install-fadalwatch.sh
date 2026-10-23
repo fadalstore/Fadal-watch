@@ -43,9 +43,9 @@ fetch "FadalWatch-UTM-iOS.zip" "$DEST/FadalWatch-UTM-iOS.zip"
 fetch "FadalWatch-iOS-source.zip" "$DEST/FadalWatch-iOS-source.zip"
 fetch "install/fadal-kernel.img" "$DEST/fadal-kernel.img"
 
-expected_utm="aef809b4b6af29359fcdde01bb298d6434ab6420c42c4addcfe8277f568e7b36"
+expected_utm="b8e4945a25919245a8acdb81a85afe6ab499af9477f0865b112331c45c3b13be"
 expected_source="ed59a510bb3119b15e981b24a65034fceea3bb41387cc11262276d15ece773ff"
-expected_bios="285939762ccffc6d8eb49568bcd4dddc8ca90bd14679cff8424c1e3d064e269c"
+expected_bios="49cda76f4886f2d187879961ddaaebdae5581b59b45eaaf51b0156a902e3f336"
 
 if command -v sha256sum >/dev/null 2>&1; then
     actual_utm="$(sha256sum "$DEST/FadalWatch-UTM-iOS.zip" | awk '{print $1}')"
@@ -65,4 +65,4 @@ printf '\nFadalWatch download complete.\n'
 printf 'UTM package: %s\n' "$DEST/FadalWatch-UTM-iOS.zip"
 printf 'iOS source:  %s\n' "$DEST/FadalWatch-iOS-source.zip"
 printf 'BIOS image:  %s\n' "$DEST/fadal-kernel.img"
-printf '\nTo import on iOS, extract FadalWatch-UTM-iOS.zip and open the .utm bundle in UTM using Emulate.\n'
+printf '\nTo import on iOS, extract FadalWatch-UTM-iOS.zip and open FadalWatch-UEFI.utm for the desktop or FadalWatch-BIOS.utm for the 32-bit kernel in UTM using Emulate.\n'

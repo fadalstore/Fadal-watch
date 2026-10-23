@@ -37,6 +37,8 @@ make -C kernel run-vga
 
 The image is written to `kernel/out/fadal-kernel.img`. `check` must remain the required pre-push test because it verifies the serial boot trace, FAT12 persistence, VFS, scheduler, syscalls, network path, and independence guard. The networking self-test validates SYN/SYN-ACK sequence numbers and repeat-SYN behavior, rejects a truncated IP/TCP frame, then injects even- and odd-sized synthetic TCP segments across multiple reads to verify checksum handling, duplicate/out-of-order rejection, receive-window backpressure, and ring-buffer wrap; its serial pass line is asserted by the Makefile.
 
+After `make -C kernel check`, run `scripts/package-utm.sh` to copy the verified BIOS image into `artifacts/`, `install/`, and the separate `FadalWatch-BIOS.utm` profile, rebuild both UTM ZIP aliases with the existing UEFI desktop preserved, and refresh the installer and artifact checksums. The BIOS profile is SeaBIOS/`pc` and must remain separate from the UEFI ESP image; never overwrite `Data/fadal-uefi.img` with the BIOS disk.
+
 The same boot check runs the independent HTTP/1 response parser tests even if no
 NIC is available. They cover fixed-length and close-delimited bodies, chunked
 transfer with trailers, a `100 Continue` interim response, split input, framing

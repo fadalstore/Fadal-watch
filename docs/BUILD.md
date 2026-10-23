@@ -168,9 +168,13 @@ unchanged mouse packets are ignored, and normal pointer movement uses a small
 saved-under cursor update rather than repainting the full desktop.
 It also launches **Start > Files** and verifies that ESP-backed home entries and
 a selected-file preview render, then launches **Start > System** and checks that
-the capability panel is visible. Files navigation is limited to browsing the
-persistent home tree; the preview is read-only. Either panel closes with Escape
-or its titlebar close button.
+the capability panel is visible. Finally it launches **Start > Browser**, tests
+URL keyboard editing and Enter handling, and follows the Downloads shortcut back
+to the persistent folder in Files. The payload boot trace includes an HTML-to-text
+self-test covering basic entities, line breaks, and removal of script/style text.
+Files previews remain read-only. Apps close with Escape or their titlebar close
+button. The default QEMU/OVMF firmware has no UEFI HTTP service, so this regression
+checks the browser's explicit unavailable/status UI, not a live network fetch.
 
 Run the terminal window-resize regression with:
 

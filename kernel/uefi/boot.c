@@ -301,7 +301,7 @@ static fadal_net_u32 fadal_home_write(const char *name, const char *buffer,
     fadal_net_u32 result = fadal_home_path(name, wide_name, 0);
     if (result != FADAL_HOME_OK) return result;
     if (g_fadal_home == NULL) return FADAL_HOME_UNAVAILABLE;
-    if ((buffer == NULL && size != 0) || size > 4096) return FADAL_HOME_TOO_LARGE;
+    if ((buffer == NULL && size != 0) || size > 65536) return FADAL_HOME_TOO_LARGE;
     status = uefi_call_wrapper(g_fadal_home->Open, 5, g_fadal_home, &file,
                                wide_name, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
     if (status == EFI_SUCCESS) {
@@ -403,14 +403,17 @@ static fadal_net_u32 fadal_home_mkdir(const char *path) {
     return fadal_home_status(status);
 }
 
+static char fadal_ascii_lower(char value) {
+    return value >= 'A' && value <= 'Z' ? (char)(value - 'A' + 'a') : value;
+}
+
 static fadal_net_u32 fadal_http_download(const char *url, const char *name) {
     CHAR16 wide_url[256];
-    CHAR16 wide_name[64];
+    CHAR16 wide_name[128];
     UINTN url_length = 0;
     UINTN name_length = 0;
     UINTN index;
     EFI_STATUS status;
-    EFI_FILE_HANDLE file = NULL;
     VOID *buffer = NULL;
     UINTN buffer_size = 65536;
     UINTN write_size;
@@ -423,16 +426,16 @@ static fadal_net_u32 fadal_http_download(const char *url, const char *name) {
     FADAL_HTTP_TOKEN response_token;
     FADAL_HTTP_CONFIG_DATA config_data;
     FADAL_HTTPV4_ACCESS_POINT access_point;
-    if (g_fadal_http == NULL || g_fadal_root == NULL || url == NULL || name == NULL) return 0;
+    if (g_fadal_http == NULL || g_fadal_home == NULL || url == NULL || name == NULL) return 0;
     while (url[url_length] != '\0' && url_length + 1 < sizeof(wide_url) / sizeof(wide_url[0])) url_length++;
     while (name[name_length] != '\0' && name_length + 1 < sizeof(wide_name) / sizeof(wide_name[0])) name_length++;
     if (url[url_length] != '\0' || name[name_length] != '\0' || url_length < 7 ||
-        url[0] != 'h' || url[1] != 't' || url[2] != 't' || url[3] != 'p' || url[4] != ':' ||
-        url[5] != '/' || url[6] != '/') return 0;
+        fadal_ascii_lower(url[0]) != 'h' || fadal_ascii_lower(url[1]) != 't' ||
+        fadal_ascii_lower(url[2]) != 't' || fadal_ascii_lower(url[3]) != 'p' ||
+        url[4] != ':' || url[5] != '/' || url[6] != '/') return 0;
+    if (fadal_home_path(name, wide_name, 0) != FADAL_HOME_OK) return 0;
     for (index = 0; index < url_length; index++) wide_url[index] = (CHAR16)(UINT8)url[index];
-    for (index = 0; index < name_length; index++) wide_name[index] = (CHAR16)(UINT8)name[index];
     wide_url[url_length] = 0;
-    wide_name[name_length] = 0;
     config_data.HttpVersion = 1;
     config_data.TimeOutMillisec = 5000;
     config_data.LocalAddressIsIPv6 = FALSE;
@@ -467,7 +470,7 @@ static fadal_net_u32 fadal_http_download(const char *url, const char *name) {
     response_token.Status = EFI_NOT_READY;
     response_token.Message = &response_message;
     status = uefi_call_wrapper(BS->AllocatePool, 3, EfiBootServicesData, buffer_size, &buffer);
-    if (EFI_ERROR(status)) return 0;
+    if (EFI_ERROR(status)) goto cleanup;
     response_message.Body = buffer;
     status = g_fadal_http->Configure(g_fadal_http, &config_data);
     if (EFI_ERROR(status)) goto cleanup;
@@ -485,19 +488,16 @@ static fadal_net_u32 fadal_http_download(const char *url, const char *name) {
         uefi_call_wrapper(BS->Stall, 1, 1000);
     }
     if (EFI_ERROR(response_token.Status) || response_data.StatusCode != 200) goto cleanup;
-    status = uefi_call_wrapper(g_fadal_root->Open, 5, g_fadal_root, &file, wide_name,
-                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0);
-    if (EFI_ERROR(status)) goto cleanup;
     write_size = response_message.BodyLength;
-    status = uefi_call_wrapper(file->Write, 3, file, &write_size, buffer);
-    uefi_call_wrapper(file->Close, 1, file);
-    if (EFI_ERROR(status) || write_size == 0) goto cleanup;
+    if (write_size == 0 || write_size > buffer_size ||
+        fadal_home_write(name, (const char *)buffer, (fadal_net_u32)write_size) != FADAL_HOME_OK) goto cleanup;
+    if (request_token.Event != NULL) uefi_call_wrapper(BS->CloseEvent, 1, request_token.Event);
+    if (response_token.Event != NULL) uefi_call_wrapper(BS->CloseEvent, 1, response_token.Event);
     uefi_call_wrapper(BS->FreePool, 1, buffer);
     return (fadal_net_u32)write_size;
 cleanup:
     if (request_token.Event != NULL) uefi_call_wrapper(BS->CloseEvent, 1, request_token.Event);
     if (response_token.Event != NULL) uefi_call_wrapper(BS->CloseEvent, 1, response_token.Event);
-    if (file != NULL) uefi_call_wrapper(file->Close, 1, file);
     if (buffer != NULL) uefi_call_wrapper(BS->FreePool, 1, buffer);
     return 0;
 }

@@ -77,9 +77,17 @@ folder-hoosaadyo kana soo noqon karaa parent-ka, wuxuuna soo bandhigaa labada sa
 ee ugu horreeya faylka ASCII-ga la doortay; preview-gu waa akhris-keliya.
 **System** waxa uu furaa panel muujinaya x86_64, UEFI/GOP, ilaalinta xusuusta FDL64
 v3, helitaanka persistent home, iyo UEFI HTTP. Escape ama badhanka close ayaa
-xira panel kasta; taskbar-ku wuxuu dib u soo celiyaa terminal-ka. QEMU regression-ka
-`test-window-controls` wuxuu xaqiijiyaa home entries-ka, preview-ga faylka, iyo
-xogta System panel-ka.
+xira panel kasta; taskbar-ku wuxuu dib u soo celiyaa terminal-ka. Start-ka waxa
+lagu daray **Fadal Browser**: URL waxaa lagu geliyaa keyboard-ka, firmware UEFI
+HTTP ayuu GET ku sameeyaa, HTML tags-ka caadiga ahna wuxuu uga soo saaraa ASCII
+text preview (xadka akhrisku waa 4 KiB). HTTPS/TLS, JavaScript, CSS, sawirro,
+redirects iyo clickable links ma taageero. Bogga iyo downloads-ka ilaa 64 KiB
+waxaa lagu kaydiyaa `/home/root/Downloads`; badhanka Downloads-ku wuxuu folder-kaas
+ka furaa Files. Haddii firmware-ku aanu bixin UEFI HTTP (sida OVMF ee QEMU-ga
+caadiga ah), app-ku si cad ayuu u muujinayaa in adeeggu maqan yahay.
+`test-window-controls` hadda wuxuu xaqiijiyaa Files preview, System panel,
+Browser launch, keyboard URL edit/Enter, HTML-to-text self-test, iyo Downloads
+shortcut-ka; ma sheeganayo in fetch Internet toos ah lagu tijaabiyay QEMU.
 
 The UEFI terminal interaction milestone is implemented: Left/Right, Home/End,
 insertion at the cursor, Backspace, and Delete edit the current command; PageUp

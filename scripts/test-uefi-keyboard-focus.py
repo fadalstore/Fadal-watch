@@ -411,6 +411,34 @@ def run_window_control_checks(process: subprocess.Popen[str], temp: Path,
         raise RuntimeError("System app opened without rendering system information")
     print("PASS: Start > System opens the information panel with UEFI/runtime status.")
 
+    click_mouse(process, mouse, 995, 137)
+    click_mouse(process, mouse, 70, 773)
+    click_mouse(process, mouse, 160, 728)
+    capture_frame(process, state)
+    assert_pixel(state, 270, 125, (45, 95, 155), "Browser app titlebar")
+    if bytes((126, 214, 167)) not in ppm_region(state, 280, 265, 1000, 295):
+        raise RuntimeError("Browser app did not render its address/status controls")
+    print("PASS: Start > Browser opens the native HTTP text-viewer panel.")
+
+    idle_status = ppm_region(state, 280, 265, 1000, 295)
+    click_mouse(process, mouse, 500, 202)
+    send_keys(process, ("h", "t", "t", "p", "s", "ret"))
+    capture_frame(process, state)
+    if ppm_region(state, 280, 265, 1000, 295) == idle_status:
+        raise RuntimeError("Browser URL keyboard editing did not update its visible status")
+    print("PASS: Browser accepts keyboard URL input and handles Enter without leaking to the shell.")
+
+    click_mouse(process, mouse, 420, 240)
+    capture_frame(process, state)
+    if bytes((126, 214, 167)) not in ppm_region(state, 280, 265, 1000, 295):
+        raise RuntimeError("Browser download control did not return a visible status")
+    click_mouse(process, mouse, 550, 240)
+    capture_frame(process, state)
+    assert_pixel(state, 270, 125, (45, 95, 155), "Browser Downloads shortcut")
+    if bytes((216, 234, 255)) not in ppm_region(state, 284, 185, 900, 215):
+        raise RuntimeError("Browser Downloads shortcut did not open the persistent Downloads folder")
+    print("PASS: Browser download control reports status and Downloads opens in Files.")
+
 
 def run_window_resize_checks(process: subprocess.Popen[str], temp: Path,
                               screenshot: Path) -> None:
@@ -618,6 +646,8 @@ def main() -> int:
             else:
                 raise RuntimeError("timed out waiting for the UEFI payload entry marker")
 
+            wait_for_serial_text(serial_log, "browser: HTML-to-text self-test passed",
+                                 timeout=args.timeout)
             time.sleep(0.8)
             send_monitor_command(process, "sendkey tab")
             wait_for_titlebar_color(process, temp / "focus-state.ppm", bytes((28, 49, 84)))
@@ -636,8 +666,8 @@ def main() -> int:
             send_monitor_command(process, "sendkey tab")
             wait_for_titlebar_color(process, temp / "focus-state.ppm", bytes((45, 95, 155)))
             send_keys(process, ("h", "e", "l", "p", "ret"))
-            time.sleep(0.6)
-            serial = serial_log.read_text(errors="replace") if serial_log.exists() else ""
+            serial = wait_for_serial_text(serial_log, "commands: help clear pwd",
+                                          timeout=args.timeout)
             if "commands: help clear pwd" not in serial:
                 raise RuntimeError("terminal did not receive and execute input after focus returned")
 

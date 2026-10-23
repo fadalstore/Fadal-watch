@@ -70,9 +70,11 @@ const u8 fadal64_layout[40] = {
 #define FOCUS_DESKTOP 3
 #define FOCUS_FILES 4
 #define FOCUS_SYSTEM 5
+#define FOCUS_BROWSER 6
 #define APP_NONE 0
 #define APP_FILES 1
 #define APP_SYSTEM 2
+#define APP_BROWSER 3
 #define KBD_STATUS_OUTPUT_FULL 0x01
 #define KBD_STATUS_AUX_DATA 0x20
 #define EVENT_KEYBOARD 1
@@ -162,12 +164,23 @@ static u32 files_browser_entries_size;
 static u32 files_browser_status;
 static char files_browser_selected[48];
 static char files_browser_preview[257];
+static char browser_url[256];
+static char browser_page_text[4096];
+static char browser_status[96] = "CLICK ADDRESS, TYPE A URL, PRESS ENTER OR GO";
+static u32 browser_url_cursor;
+static u8 browser_url_editing = 1;
+static u8 browser_page_loaded;
 static u8 input_focus = FOCUS_TERMINAL;
 
 static void cursor_restore(void);
 static void cursor_draw(void);
+static void desktop_redraw(void);
+static u32 f_length(const char *text);
 static void files_browser_refresh(void);
 static void files_browser_click(u32 mouse_y);
+static void browser_navigate(void);
+static void browser_download(void);
+static void browser_open_downloads(void);
 
 static void fb_pixel(u32 x, u32 y, u32 color) {
     volatile u32 *pixels;
@@ -515,6 +528,263 @@ static void desktop_app_bounds(u32 *left, u32 *top, u32 *width, u32 *height) {
     *top = (framebuffer->height - *height) / 2;
 }
 
+static char browser_lower(char value) {
+    return value >= 'A' && value <= 'Z' ? (char)(value - 'A' + 'a') : value;
+}
+
+static void browser_set_status(const char *text) {
+    u32 index = 0;
+    while (text[index] != '\0' && index + 1U < sizeof(browser_status)) {
+        browser_status[index] = text[index];
+        index++;
+    }
+    browser_status[index] = '\0';
+}
+
+static int browser_match_ci(const char *text, u32 length, u32 offset, const char *match) {
+    u32 index = 0;
+    while (match[index] != '\0') {
+        if (offset + index >= length || browser_lower(text[offset + index]) != match[index]) return 0;
+        index++;
+    }
+    return 1;
+}
+
+static void browser_append_text(char value, int newline, u32 *output) {
+    if (newline) {
+        while (*output != 0 && browser_page_text[*output - 1U] == ' ') (*output)--;
+        if (*output != 0 && browser_page_text[*output - 1U] != '\n' && *output + 1U < sizeof(browser_page_text))
+            browser_page_text[(*output)++] = '\n';
+        return;
+    }
+    if (value == '\r' || value == '\n' || value == '\t') value = ' ';
+    if ((u8)value < 32 || (u8)value > 126) value = ' ';
+    if (value == ' ' && (*output == 0 || browser_page_text[*output - 1U] == ' ' ||
+                         browser_page_text[*output - 1U] == '\n')) return;
+    if (*output + 1U < sizeof(browser_page_text)) browser_page_text[(*output)++] = value;
+}
+
+static void browser_extract_html(const char *html, u32 length) {
+    u32 source = 0;
+    u32 output = 0;
+    u8 hidden = 0;
+    browser_page_text[0] = '\0';
+    while (source < length && output + 1U < sizeof(browser_page_text)) {
+        if (hidden != 0 && html[source] != '<') {
+            source++;
+            continue;
+        }
+        if (html[source] == '<') {
+            u32 end = source + 1U;
+            int closing = end < length && html[end] == '/';
+            u32 name = end + (closing ? 1U : 0U);
+            while (end < length && html[end] != '>') end++;
+            if (end >= length) break;
+            if (hidden != 0) {
+                if (closing && ((hidden == 1 && browser_match_ci(html, length, name, "script")) ||
+                                (hidden == 2 && browser_match_ci(html, length, name, "style")))) hidden = 0;
+                source = end + 1U;
+                continue;
+            }
+            if (!closing && browser_match_ci(html, length, name, "script")) hidden = 1;
+            else if (!closing && browser_match_ci(html, length, name, "style")) hidden = 2;
+            else if (browser_match_ci(html, length, name, "br") ||
+                     browser_match_ci(html, length, name, "p") ||
+                     browser_match_ci(html, length, name, "div") ||
+                     browser_match_ci(html, length, name, "li") ||
+                     browser_match_ci(html, length, name, "h1") ||
+                     browser_match_ci(html, length, name, "h2") ||
+                     browser_match_ci(html, length, name, "tr")) {
+                browser_append_text(0, 1, &output);
+            }
+            source = end + 1U;
+            continue;
+        }
+        if (html[source] == '&') {
+            if (browser_match_ci(html, length, source, "&amp;")) {
+                browser_append_text('&', 0, &output); source += 5; continue;
+            }
+            if (browser_match_ci(html, length, source, "&lt;")) {
+                browser_append_text('<', 0, &output); source += 4; continue;
+            }
+            if (browser_match_ci(html, length, source, "&gt;")) {
+                browser_append_text('>', 0, &output); source += 4; continue;
+            }
+            if (browser_match_ci(html, length, source, "&quot;")) {
+                browser_append_text('"', 0, &output); source += 6; continue;
+            }
+            if (browser_match_ci(html, length, source, "&nbsp;")) {
+                browser_append_text(' ', 0, &output); source += 6; continue;
+            }
+        }
+        browser_append_text(html[source++], 0, &output);
+    }
+    while (output != 0 && (browser_page_text[output - 1U] == ' ' || browser_page_text[output - 1U] == '\n')) output--;
+    browser_page_text[output] = '\0';
+}
+
+static int browser_html_self_test(void) {
+    static const char sample[] =
+        "<style>hidden-style</style><h1>Hello &amp;</h1>"
+        "<script>hidden-script</script><p>world</p>";
+    static const char expected[] = "Hello &\nworld";
+    u32 index;
+    browser_extract_html(sample, sizeof(sample) - 1U);
+    for (index = 0; expected[index] != '\0'; index++) {
+        if (browser_page_text[index] != expected[index]) {
+            browser_page_text[0] = '\0';
+            return 0;
+        }
+    }
+    if (browser_page_text[index] != '\0') {
+        browser_page_text[0] = '\0';
+        return 0;
+    }
+    browser_page_text[0] = '\0';
+    return 1;
+}
+
+static int browser_downloads_ready(void) {
+    fadal_net_u32 result;
+    if (desktop_services == NULL || desktop_services->home_available == 0 ||
+        desktop_services->home_mkdir == NULL) return 0;
+    result = desktop_services->home_mkdir("Downloads");
+    return result == FADAL_HOME_OK || result == FADAL_HOME_ALREADY_EXISTS;
+}
+
+static void browser_navigate(void) {
+    char raw[4096];
+    u32 read_size = 0;
+    fadal_net_u32 downloaded;
+    if (browser_url[0] == '\0' ||
+        browser_match_ci(browser_url, f_length(browser_url), 0, "http://") == 0) {
+        browser_set_status("HTTP ONLY - ENTER A URL STARTING HTTP://");
+        browser_page_loaded = 0;
+        browser_page_text[0] = '\0';
+        desktop_redraw();
+        return;
+    }
+    if (desktop_services == NULL || desktop_services->http_available == 0 ||
+        desktop_services->http_download == NULL) {
+        browser_set_status("UEFI HTTP UNAVAILABLE - CHECK UTM NETWORK");
+        browser_page_loaded = 0;
+        browser_page_text[0] = '\0';
+        desktop_redraw();
+        return;
+    }
+    if (!browser_downloads_ready()) {
+        browser_set_status("DOWNLOADS FOLDER UNAVAILABLE");
+        desktop_redraw();
+        return;
+    }
+    browser_set_status("LOADING HTTP PAGE - PLEASE WAIT");
+    desktop_redraw();
+    downloaded = desktop_services->http_download(browser_url, "Downloads/page.html");
+    if (downloaded == 0) {
+        browser_set_status("PAGE LOAD FAILED - HTTP ERROR OR OVER 64 KB");
+        browser_page_loaded = 0;
+        browser_page_text[0] = '\0';
+        desktop_redraw();
+        return;
+    }
+    if (desktop_services->home_read == NULL ||
+        desktop_services->home_read("Downloads/page.html", raw, sizeof(raw) - 1U,
+                                     &read_size) != FADAL_HOME_OK) {
+        browser_set_status("PAGE SAVED BUT PREVIEW COULD NOT BE READ");
+        browser_page_loaded = 0;
+        desktop_redraw();
+        return;
+    }
+    if (read_size >= sizeof(raw)) read_size = sizeof(raw) - 1U;
+    raw[read_size] = '\0';
+    browser_extract_html(raw, read_size);
+    browser_page_loaded = 1;
+    browser_set_status(downloaded > sizeof(raw) - 1U ?
+                       "PAGE LOADED - TEXT PREVIEW LIMITED TO 4 KB" : "PAGE LOADED - TEXT VIEW ONLY");
+    desktop_redraw();
+}
+
+static void browser_download(void) {
+    char name[64];
+    char path[80] = "Downloads/";
+    u32 url_length = f_length(browser_url);
+    u32 start = 0;
+    u32 end = url_length;
+    u32 count = 0;
+    if (desktop_services == NULL || desktop_services->http_available == 0 ||
+        desktop_services->http_download == NULL) {
+        browser_set_status("UEFI HTTP UNAVAILABLE - CHECK UTM NETWORK");
+        desktop_redraw();
+        return;
+    }
+    if (browser_match_ci(browser_url, url_length, 0, "http://") == 0 ||
+        !browser_downloads_ready()) {
+        browser_set_status("ENTER A VALID HTTP URL FIRST");
+        desktop_redraw();
+        return;
+    }
+    for (u32 index = 7; index < url_length; index++) {
+        if (browser_url[index] == '/') start = index + 1U;
+        if (browser_url[index] == '?' || browser_url[index] == '#') { end = index; break; }
+    }
+    if (end <= start) {
+        browser_set_status("download.bin");
+        name[0] = 'd'; name[1] = 'o'; name[2] = 'w'; name[3] = 'n';
+        name[4] = 'l'; name[5] = 'o'; name[6] = 'a'; name[7] = 'd';
+        name[8] = '.'; name[9] = 'b'; name[10] = 'i'; name[11] = 'n';
+        name[12] = '\0';
+        count = 12;
+    } else {
+        for (u32 index = start; index < end && count < sizeof(name) - 1U; index++) {
+            char value = browser_url[index];
+            int valid = (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') ||
+                        (value >= '0' && value <= '9') || value == '.' || value == '_' || value == '-';
+            name[count++] = valid ? value : '_';
+        }
+        if (count == 0) {
+            name[0] = 'd'; name[1] = 'o'; name[2] = 'w'; name[3] = 'n';
+            name[4] = 'l'; name[5] = 'o'; name[6] = 'a'; name[7] = 'd';
+            name[8] = '.'; name[9] = 'b'; name[10] = 'i'; name[11] = 'n';
+            count = 12;
+        }
+        name[count] = '\0';
+    }
+    if ((count == 1U && name[0] == '.') ||
+        (count == 2U && name[0] == '.' && name[1] == '.')) {
+        name[0] = 'd'; name[1] = 'o'; name[2] = 'w'; name[3] = 'n';
+        name[4] = 'l'; name[5] = 'o'; name[6] = 'a'; name[7] = 'd';
+        name[8] = '.'; name[9] = 'b'; name[10] = 'i'; name[11] = 'n';
+        name[12] = '\0';
+        count = 12;
+    }
+    for (u32 index = 0; index < count; index++) path[10U + index] = name[index];
+    path[10U + count] = '\0';
+    browser_set_status("DOWNLOADING - PLEASE WAIT");
+    desktop_redraw();
+    if (desktop_services->http_download(browser_url, path) != 0) {
+        browser_set_status("DOWNLOAD SAVED IN FILES / DOWNLOADS");
+    } else {
+        browser_set_status("DOWNLOAD FAILED - HTTP ERROR OR OVER 64 KB");
+    }
+    desktop_redraw();
+}
+
+static void browser_open_downloads(void) {
+    static const char path[] = "/home/root/Downloads";
+    u32 index;
+    if (!browser_downloads_ready()) {
+        browser_set_status("DOWNLOADS FOLDER UNAVAILABLE");
+        desktop_redraw();
+        return;
+    }
+    for (index = 0; index < sizeof(path); index++) files_browser_path[index] = path[index];
+    desktop_app = APP_FILES;
+    input_focus = FOCUS_FILES;
+    files_browser_refresh();
+    desktop_status = "DOWNLOADS OPEN";
+    desktop_redraw();
+}
+
 static void desktop_app_render(void) {
     u32 left;
     u32 top;
@@ -523,14 +793,16 @@ static void desktop_app_render(void) {
     u32 right;
     u32 index;
     u32 preview_source = 0;
+    char browser_url_display[260];
     if (desktop_app == APP_NONE) return;
     desktop_app_bounds(&left, &top, &width, &height);
     right = left + width;
     fb_fill(left, top, right, top + height, 0x000d1528);
     fb_fill(left, top, right, top + 38,
-            desktop_app == APP_FILES ? 0x002d5f9b : 0x00243f6d);
-    fb_text(left + 16, top + 12,
-            desktop_app == APP_FILES ? "FILES" : "SYSTEM", 0x00ffffff, 2);
+            desktop_app == APP_FILES || desktop_app == APP_BROWSER ?
+            0x002d5f9b : 0x00243f6d);
+    fb_text(left + 16, top + 12, desktop_app == APP_FILES ? "FILES" :
+            desktop_app == APP_SYSTEM ? "SYSTEM" : "FADAL BROWSER", 0x00ffffff, 2);
     fb_fill(right - 38, top + 7, right - 8, top + 31, 0x00944755);
     fb_text(right - 29, top + 12, "X", 0x00ffffff, 1);
     if (desktop_app == APP_FILES) {
@@ -580,7 +852,7 @@ static void desktop_app_render(void) {
         } else {
             fb_text(left + 24, top + height - 18, "TAP A FOLDER TO OPEN - ESC TO CLOSE", 0x0097aac8, 1);
         }
-    } else {
+    } else if (desktop_app == APP_SYSTEM) {
         fb_text(left + 28, top + 78, "ARCHITECTURE: X86_64", 0x00d8eaff, 1);
         fb_text(left + 28, top + 112, "BOOT: UEFI FIRMWARE + GOP DISPLAY", 0x00d8eaff, 1);
         fb_text(left + 28, top + 146, "MEMORY: FDL64 V3 W X PROTECTION", 0x00d8eaff, 1);
@@ -594,6 +866,49 @@ static void desktop_app_render(void) {
                 0x00d8eaff, 1);
         fb_text(left + 28, top + 248, "NETWORK: FIRMWARE SERVICE DEPENDENT", 0x00d8eaff, 1);
         fb_text(left + 28, top + height - 32, "ESC TO CLOSE - TAB RETURNS TO TERMINAL", 0x0097aac8, 1);
+    } else {
+        u32 source = 0;
+        u32 row = 0;
+        u32 url_size = f_length(browser_url);
+        fb_text(left + 20, top + 52, "HTTP ADDRESS - ENTER OPENS", 0x007ed6a7, 1);
+        fb_fill(left + 18, top + 70, right - 18, top + 98,
+                browser_url_editing != 0 ? 0x00243f6d : 0x00182745);
+        if (url_size > sizeof(browser_url_display) - 2U) url_size = sizeof(browser_url_display) - 2U;
+        for (index = 0; index < url_size; index++) {
+            if (browser_url_editing != 0 && index == browser_url_cursor)
+                browser_url_display[source++] = '_';
+            browser_url_display[source++] = browser_url[index];
+        }
+        if (browser_url_editing != 0 && browser_url_cursor >= url_size)
+            browser_url_display[source++] = '_';
+        browser_url_display[source] = '\0';
+        fb_text(left + 26, top + 80, browser_url_display, 0x00d8eaff, 1);
+        fb_fill(left + 20, top + 108, left + 100, top + 140, 0x002d5f9b);
+        fb_fill(left + 110, top + 108, left + 218, top + 140, 0x002d5f9b);
+        fb_fill(left + 228, top + 108, left + 354, top + 140, 0x00243f6d);
+        fb_text(left + 43, top + 120, "GO", 0x00ffffff, 1);
+        fb_text(left + 124, top + 120, "DOWNLOAD", 0x00ffffff, 1);
+        fb_text(left + 240, top + 120, "DOWNLOADS", 0x00ffffff, 1);
+        fb_text(left + 20, top + 151, browser_status, 0x007ed6a7, 1);
+        fb_fill(left + 16, top + 170, right - 16, top + height - 42, 0x00111b33);
+        if (browser_page_loaded == 0) {
+            fb_text(left + 26, top + 196, "TEXT-ONLY HTTP BROWSER", 0x00d8eaff, 1);
+            fb_text(left + 26, top + 220, "HTTPS, JAVASCRIPT AND IMAGES ARE NOT SUPPORTED", 0x0097aac8, 1);
+        } else {
+            while (browser_page_text[source] != '\0' && row < 22) {
+                char line[104];
+                u32 column = 0;
+                while (browser_page_text[source] == '\n') source++;
+                while (browser_page_text[source] != '\0' && browser_page_text[source] != '\n' &&
+                       column + 1U < sizeof(line)) line[column++] = browser_page_text[source++];
+                line[column] = '\0';
+                if (browser_page_text[source] == '\n') source++;
+                if (line[0] != '\0') fb_text(left + 26, top + 182 + row * 16U, line, 0x00d8eaff, 1);
+                row++;
+            }
+        }
+        fb_text(left + 20, top + height - 28,
+                "HTTP ONLY - 64 KB MAX - PAGES ALSO SAVE TO DOWNLOADS", 0x0097aac8, 1);
     }
 }
 
@@ -752,9 +1067,11 @@ static void desktop_redraw(void) {
         fb_fill(38, framebuffer->height - 252, 278, framebuffer->height - 208, 0x002d5f9b);
         fb_fill(38, framebuffer->height - 198, 278, framebuffer->height - 154, 0x00243f6d);
         fb_fill(38, framebuffer->height - 144, 278, framebuffer->height - 100, 0x00243f6d);
+        fb_fill(38, framebuffer->height - 90, 278, framebuffer->height - 54, 0x00243f6d);
         fb_text(54, framebuffer->height - 238, "TERMINAL", 0x00ffffff, 2);
         fb_text(54, framebuffer->height - 184, "FILES", 0x00ffffff, 2);
         fb_text(54, framebuffer->height - 130, "SYSTEM", 0x00ffffff, 2);
+        fb_text(54, framebuffer->height - 76, "BROWSER", 0x00ffffff, 2);
     }
     desktop_redrawing = 0;
     cursor_draw();
@@ -965,6 +1282,23 @@ static void desktop_handle_mouse(const fadal_event *event) {
         } else if (desktop_app == APP_FILES &&
                    mouse_x >= app_left + 12 && mouse_x < app_left + app_width - 12) {
             files_browser_click(mouse_y);
+        } else if (desktop_app == APP_BROWSER) {
+            if (mouse_x >= app_left + 18 && mouse_x < app_left + app_width - 18 &&
+                mouse_y >= app_top + 70 && mouse_y < app_top + 100) {
+                browser_url_editing = 1;
+                browser_url[0] = '\0';
+                browser_url_cursor = 0;
+            } else if (mouse_y >= app_top + 108 && mouse_y < app_top + 142) {
+                if (mouse_x >= app_left + 20 && mouse_x < app_left + 100) {
+                    browser_url_editing = 0;
+                    browser_navigate();
+                } else if (mouse_x >= app_left + 110 && mouse_x < app_left + 218) {
+                    browser_url_editing = 0;
+                    browser_download();
+                } else if (mouse_x >= app_left + 228 && mouse_x < app_left + 354) {
+                    browser_open_downloads();
+                }
+            }
         }
         desktop_redraw();
         return;
@@ -1102,6 +1436,21 @@ static void desktop_handle_mouse(const fadal_event *event) {
         desktop_app = APP_SYSTEM;
         input_focus = FOCUS_SYSTEM;
         desktop_status = "SYSTEM INFO";
+    } else if (start_open != 0 && mouse_x >= 38 && mouse_x < 278 &&
+               mouse_y >= framebuffer->height - 90 && mouse_y < framebuffer->height - 54) {
+        static const char initial_url[] = "http://example.com/";
+        u32 index;
+        start_open = 0;
+        desktop_app = APP_BROWSER;
+        input_focus = FOCUS_BROWSER;
+        for (index = 0; index < sizeof(initial_url); index++) browser_url[index] = initial_url[index];
+        browser_url_cursor = f_length(browser_url);
+        browser_url_editing = 0;
+        browser_page_loaded = 0;
+        browser_page_text[0] = '\0';
+        browser_set_status("CLICK ADDRESS TO TYPE OR PRESS ENTER");
+        (void)browser_downloads_ready();
+        desktop_status = "BROWSER OPEN";
     } else if (start_open != 0) {
         input_focus = FOCUS_START_MENU;
     } else {
@@ -1718,6 +2067,34 @@ static int desktop_handle_keyboard(const fadal_event *event) {
             input_focus = FOCUS_TERMINAL;
             desktop_status = "TERMINAL FOCUSED";
             desktop_redraw();
+        } else if (desktop_app == APP_BROWSER && browser_url_editing != 0) {
+            u32 length = f_length(browser_url);
+            if (value == '\n') {
+                browser_url_editing = 0;
+                browser_navigate();
+                return 0;
+            }
+            if (value == '\b' && browser_url_cursor != 0) {
+                for (u32 index = browser_url_cursor; index < length; index++)
+                    browser_url[index - 1U] = browser_url[index];
+                browser_url_cursor--;
+            } else if (value == KEY_DELETE && browser_url_cursor < length) {
+                for (u32 index = browser_url_cursor; index < length; index++)
+                    browser_url[index] = browser_url[index + 1U];
+            } else if (value == KEY_LEFT && browser_url_cursor != 0) {
+                browser_url_cursor--;
+            } else if (value == KEY_RIGHT && browser_url_cursor < length) {
+                browser_url_cursor++;
+            } else if (value == KEY_HOME) {
+                browser_url_cursor = 0;
+            } else if (value == KEY_END) {
+                browser_url_cursor = length;
+            } else if (value >= 32 && value <= 126 && length + 1U < sizeof(browser_url)) {
+                for (u32 index = length + 1U; index > browser_url_cursor; index--)
+                    browser_url[index] = browser_url[index - 1U];
+                browser_url[browser_url_cursor++] = (char)value;
+            }
+            desktop_redraw();
         }
         return 0;
     }
@@ -1860,7 +2237,7 @@ static void run_command(char *line) {
                 console_write("download: UEFI HTTP service unavailable\r\n");
             } else {
                 fadal_net_u32 result = desktop_services->http_download(line + 9, separator);
-                console_write(result != 0 ? "download: saved to ESP\r\n" : "download: failed\r\n");
+                console_write(result != 0 ? "download: saved under /home/root\r\n" : "download: failed\r\n");
             }
         }
     } else if (f_starts(line, "write ")) {
@@ -1920,6 +2297,9 @@ void fadal64_entry(fadal_framebuffer *incoming_framebuffer, fadal_uefi_services 
                   "persistent home filesystem: online at /home/root\r\n" :
                   "persistent home filesystem: unavailable\r\n");
     console_write("type 'help' for commands\r\n\r\n");
+    console_write(browser_html_self_test() ?
+                  "browser: HTML-to-text self-test passed\r\n" :
+                  "browser: HTML-to-text self-test failed\r\n");
 
     for (;;) {
         prompt();

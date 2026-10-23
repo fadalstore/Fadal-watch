@@ -133,6 +133,6 @@ less install-fadalwatch.sh
 bash install-fadalwatch.sh
 ```
 
-After downloading, extract `FadalWatch-UTM-iOS.zip` and import one of its two bundles into UTM or UTM SE: `FadalWatch-UEFI.utm` for the Fadal64 desktop, or `FadalWatch-BIOS.utm` for the 32-bit BIOS kernel. On iOS, select **Emulate**, not **Virtualize**, because the guest is x86_64. The UEFI profile keeps the graphical desktop and persistent ESP home; the BIOS profile boots the independently built BIOS image, including the new HTTP response parser. The BIOS parser is plaintext-only and is not a TLS/HTTPS client. See [the UTM guide](utm/README.md) for profile details and limits.
+After downloading, extract `FadalWatch-UTM-iOS.zip` and import one of its two bundles into UTM or UTM SE: `FadalWatch-UEFI.utm` for the Fadal64 desktop, or `FadalWatch-BIOS.utm` for the 32-bit BIOS kernel. On iOS, select **Emulate**, not **Virtualize**, because the guest is x86_64. The UEFI profile keeps the graphical desktop and persistent ESP home; its Start menu includes a basic text-only HTTP browser with bounded downloads under `/home/root/Downloads` (not HTTPS or a full modern browser). The BIOS profile boots the independently built BIOS image, including the HTTP response parser. The BIOS parser is plaintext-only and is not a TLS/HTTPS client. See [the UTM guide](utm/README.md) for profile details and limits.
 
 A native `.ipa` still requires Apple signing and provisioning. The source archive is ready to open in Xcode on macOS.

@@ -41,14 +41,17 @@ status/header/trailer lines and aggregate headers, streams decoded message-body
 bytes to a caller sink, and supports `Content-Length`, chunked transfer coding,
 and close-delimited bodies completed by explicit EOF. It rejects ambiguous
 `Content-Length` plus `Transfer-Encoding`, duplicate framing fields, unsupported
-transfer codings, and malformed/truncated messages. The boot self-test covers
-fixed-length, chunked, interim `100 Continue`, close-delimited, and error cases.
-This parser accepts **plaintext HTTP bytes only** and is not connected to the
-native Git transport. Any future HTTPS path must place a TLS session layer below
-this parser, authenticate the peer certificate and requested hostname, and pass
-only decrypted application bytes upward. TLS, certificate validation, and
-Git smart-HTTP integration are not implemented; do not send HTTP to an HTTPS
-endpoint or treat parser success as transport security.
+transfer codings, and malformed/truncated messages. Self-tests cover fixed-length,
+chunked, interim `100 Continue`, close-delimited, and error cases. A TCP/HTTP
+adapter regression also injects a fragmented synthetic response through the
+real TCP receive ring and feeds each nonblocking read into this parser, checking
+the decoded body across segment and read boundaries. This verifies the byte-stream
+seam only; no live HTTP request client or native Git integration exists yet.
+The parser accepts **plaintext HTTP bytes only**. Any future HTTPS path must
+place a TLS session layer below it, authenticate the peer certificate and
+requested hostname, and pass only decrypted application bytes upward. TLS,
+certificate validation, and Git smart-HTTP integration are not implemented; do
+not send HTTP to an HTTPS endpoint or treat parser success as transport security.
 
 ## Userspace boundary
 

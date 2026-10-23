@@ -1,4 +1,5 @@
 #include "fnet.h"
+#include "http.h"
 #include "rtl8139.h"
 
 #define ETH_ARP 0x0806
@@ -319,6 +320,70 @@ static fnet_u16 tcp_test_data_segment(fnet_u8 *frame, fnet_u32 sequence,
     put16(frame + 50, tcp_checksum(tcp_connection.remote_ip, local_ip,
                                    frame + 34, 20U + payload_length));
     return (fnet_u16)frame_length;
+}
+static fnet_u16 tcp_test_payload_segment(fnet_u8 *frame, fnet_u32 sequence,
+                                         const fnet_u8 *payload, fnet_u16 payload_length) {
+    fnet_u32 frame_length = 54U + payload_length;
+    for (fnet_u32 index = 0; index < frame_length; index++) frame[index] = 0;
+    put16(frame + 12, ETH_IPV4);
+    frame[14] = 0x45; put16(frame + 16, (fnet_u16)(40U + payload_length));
+    frame[22] = 64; frame[23] = IPV4_TCP;
+    put32(frame + 26, tcp_connection.remote_ip); put32(frame + 30, local_ip);
+    put16(frame + 24, fnet_ipv4_checksum(frame + 14, 20));
+    put16(frame + 34, tcp_connection.remote_port); put16(frame + 36, tcp_connection.local_port);
+    put32(frame + 38, sequence); put32(frame + 42, tcp_connection.send_next);
+    frame[46] = 0x50; frame[47] = TCP_ACK; put16(frame + 48, tcp_receive_window());
+    for (fnet_u32 index = 0; index < payload_length; index++) frame[54 + index] = payload[index];
+    put16(frame + 50, tcp_checksum(tcp_connection.remote_ip, local_ip,
+                                   frame + 34, 20U + payload_length));
+    return (fnet_u16)frame_length;
+}
+struct fnet_http_test_capture {
+    fnet_u32 length;
+    fnet_u8 body[16];
+};
+static int fnet_http_test_sink(void *context, const http_u8 *bytes, http_u32 length) {
+    struct fnet_http_test_capture *capture = (struct fnet_http_test_capture *)context;
+    if (!capture || !bytes || length > sizeof(capture->body) - capture->length) return 0;
+    for (fnet_u32 index = 0; index < length; index++)
+        capture->body[capture->length + index] = bytes[index];
+    capture->length += length;
+    return 1;
+}
+static fnet_u8 fnet_http_tcp_adapter_self_test(void) {
+    static const fnet_u8 response[] =
+        "HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\nhello world";
+    static const fnet_u8 chunks[] = { 1, 2, 5, 9, 3, 17, 4, 11 };
+    static const fnet_u8 expected_body[] = "hello world";
+    fnet_u8 frame[FNET_FRAME_MAX], readback[32];
+    http_response_parser parser;
+    struct fnet_http_test_capture capture;
+    fnet_u32 offset = 0, chunk_index = 0;
+    http_response_init(&parser);
+    capture.length = 0;
+    if (tcp_connection.state != FNET_TCP_ESTABLISHED || tcp_connection.receive_length != 0) return 0;
+    while (offset < sizeof(response) - 1U) {
+        fnet_u16 chunk_length = chunks[chunk_index % sizeof(chunks)];
+        fnet_u32 remaining = (fnet_u32)(sizeof(response) - 1U) - offset;
+        if (chunk_length > remaining) chunk_length = (fnet_u16)remaining;
+        fnet_u16 frame_length = tcp_test_payload_segment(
+            frame, tcp_connection.receive_next, response + offset, chunk_length);
+        if (fnet_tcp_receive(frame, frame_length) != 3) return 0;
+        fnet_u16 read_length = fnet_tcp_read(readback, sizeof(readback));
+        if (read_length != chunk_length) return 0;
+        http_u32 consumed = 0;
+        int result = http_response_feed(&parser, readback, read_length, &consumed,
+                                        fnet_http_test_sink, &capture);
+        if (result == HTTP_RESPONSE_ERROR || consumed != read_length) return 0;
+        offset += chunk_length;
+        chunk_index++;
+    }
+    if (parser.state != HTTP_RESPONSE_PARSE_DONE || parser.status_code != 200 ||
+        parser.body_bytes != sizeof(expected_body) - 1U ||
+        capture.length != sizeof(expected_body) - 1U) return 0;
+    for (fnet_u32 index = 0; index < capture.length; index++)
+        if (capture.body[index] != expected_body[index]) return 0;
+    return 1;
 }
 static fnet_u32 fnet_tcp_segment(fnet_u32 destination_ip, fnet_u16 source_port,
                                  fnet_u16 destination_port, fnet_u32 sequence,
@@ -646,13 +711,13 @@ fnet_u8 fnet_self_test(void) {
         source_ip != 0x02020014 || source_port != 4000 || udp_readback[0] != 'd' ||
         udp_readback[1] != 'n' || udp_readback[2] != 's') return 0;
     if (!fnet_ipv4_route(0x08080808, &next_hop, cached_mac) || next_hop != gateway_ip) return 0;
-    if (!fnet_tcp_connect(gateway_ip, 443, 54000) || tcp_connection.send_next != 0x46444c55 ||
-        !fnet_tcp_connect(gateway_ip, 443, 54000) || tcp_connection.send_next != 0x46444c55) return 0;
+    if (!fnet_tcp_connect(gateway_ip, 80, 54000) || tcp_connection.send_next != 0x46444c55 ||
+        !fnet_tcp_connect(gateway_ip, 80, 54000) || tcp_connection.send_next != 0x46444c55) return 0;
     for (fnet_u32 index = 0; index < sizeof(tcp); index++) tcp[index] = 0;
     put16(tcp + 12, ETH_IPV4); tcp[14] = 0x45; put16(tcp + 16, 40);
     tcp[22] = 64; tcp[23] = IPV4_TCP; put32(tcp + 26, gateway_ip); put32(tcp + 30, local_ip);
     put16(tcp + 24, fnet_ipv4_checksum(tcp + 14, 20));
-    put16(tcp + 34, 443); put16(tcp + 36, 54000); put32(tcp + 38, 0x1000);
+    put16(tcp + 34, 80); put16(tcp + 36, 54000); put32(tcp + 38, 0x1000);
     put32(tcp + 42, 0x46444c55); tcp[46] = 0x50; tcp[47] = TCP_SYN | TCP_ACK;
     put16(tcp + 48, 4096); put16(tcp + 50, 0);
     put16(tcp + 50, tcp_checksum(gateway_ip, local_ip, tcp + 34, 20));
@@ -703,6 +768,7 @@ fnet_u8 fnet_self_test(void) {
     for (fnet_u32 index = 0; index < 40; index++) git_advertisement[4 + index] = 'a';
     git_advertisement[44] = ' ';
     if (!fnet_git_parse_advertisement(git_advertisement, 45, git_oid) || git_oid[0] != 'a' || git_oid[39] != 'a') return 0;
+    if (!fnet_http_tcp_adapter_self_test()) return 0;
     return fnet_arp_probe(gateway_ip) == 60;
 }
 fnet_u8 fnet_is_ready(void) { return ready; }

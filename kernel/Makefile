@@ -66,8 +66,8 @@ $(OUT)/fscan.o: fscan.c fscan.h vfs.h | $(OUT)
 $(OUT)/rtl8139.o: rtl8139.c rtl8139.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(OUT)/fnet.o: fnet.c fnet.h rtl8139.h | $(OUT)
-	$(CC) $(CFLAGS) -c -o $@ $<
+$(OUT)/fnet.o: fnet.c fnet.h http.h rtl8139.h | $(OUT)
+	$(CC) $(CFLAGS) -Os -c -o $@ $<
 
 $(OUT)/gitpack.o: gitpack.c gitpack.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -134,7 +134,7 @@ check: clean independence $(OUT)/fadal-kernel.img
 		@grep -q "disk: ATA primary-master IDENTIFY passed" $(OUT)/smoke.log
 		@grep -q "network: RTL8139 PCI NIC detected; RX/TX DMA online" $(OUT)/smoke.log
 		@grep -q "network: Ethernet II + ARP + IPv4 checksum foundation passed" $(OUT)/smoke.log
-		@grep -q "network: TCP buffered stream and Git pkt-line self-test passed" $(OUT)/smoke.log
+		@grep -q "network: TCP buffered stream, HTTP adapter, and Git pkt-line self-test passed" $(OUT)/smoke.log
 		@grep -q "network: bounded HTTP/1 response parser self-test passed" $(OUT)/smoke.log
 		@grep -q "memory: 16 MiB identity paging online" $(OUT)/smoke.log
 		@grep -q "memory: slab caches online (process, fat12_dirent)" $(OUT)/smoke.log

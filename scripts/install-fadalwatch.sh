@@ -43,9 +43,9 @@ fetch "FadalWatch-UTM-iOS.zip" "$DEST/FadalWatch-UTM-iOS.zip"
 fetch "FadalWatch-iOS-source.zip" "$DEST/FadalWatch-iOS-source.zip"
 fetch "install/fadal-kernel.img" "$DEST/fadal-kernel.img"
 
-expected_utm="b8e4945a25919245a8acdb81a85afe6ab499af9477f0865b112331c45c3b13be"
+expected_utm="30b2527e958df3a4cb07502fc4cdf8c73ce728f661e8a12793e29c7b0e3b0c66"
 expected_source="ed59a510bb3119b15e981b24a65034fceea3bb41387cc11262276d15ece773ff"
-expected_bios="49cda76f4886f2d187879961ddaaebdae5581b59b45eaaf51b0156a902e3f336"
+expected_bios="0f951b8055f2670fd20d2c48fb91c7c48fa825b0a3725f6f47e87bb1a9a5b2a3"
 
 if command -v sha256sum >/dev/null 2>&1; then
     actual_utm="$(sha256sum "$DEST/FadalWatch-UTM-iOS.zip" | awk '{print $1}')"

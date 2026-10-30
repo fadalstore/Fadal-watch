@@ -53,6 +53,15 @@ requested hostname, and pass only decrypted application bytes upward. TLS,
 certificate validation, and Git smart-HTTP integration are not implemented; do
 not send HTTP to an HTTPS endpoint or treat parser success as transport security.
 
+The Git upload-pack advertisement reader is incremental: it retains partial
+four-byte pkt-line headers and payload progress across TCP reads, accepts the
+`0000`, `0001`, and `0002` control packets, and extracts the first SHA-1 ref only
+after its complete pkt-line arrives. It rejects non-hex headers and packet
+lengths below four that are not control packets. Its self-test feeds a ref line
+across multiple chunks and checks malformed lengths. This is still only the
+advertisement boundary; it does not request or persist a packfile, decode Git
+objects, support SHA-256 object IDs, or provide TLS.
+
 ## Userspace boundary
 
 `fsh.c` is compiled as a separate fixed-address executable. The kernel places the resulting `FSH.BIN` in the FAT12 image, loads it through VFS, maps its user pages, and enters it through the ring-3 ABI. Syscall numbers and register meanings are implemented in `kernel/kernel.c`; any ABI change must update both the dispatcher and `fsh.c`.

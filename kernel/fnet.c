@@ -69,6 +69,7 @@ static fnet_u8 git_clone_state;
 static fnet_u8 git_clone_host[64];
 static fnet_u8 git_clone_path[96];
 static fnet_u8 git_clone_head_oid[40];
+static fnet_git_pktline_reader git_clone_reader;
 
 static void put16(fnet_u8 *p, fnet_u16 value) { p[0] = (fnet_u8)(value >> 8); p[1] = (fnet_u8)value; }
 static void put32(fnet_u8 *p, fnet_u32 value) {
@@ -552,14 +553,69 @@ fnet_u16 fnet_git_pktline_length(const fnet_u8 *packet, fnet_u16 length) {
     fnet_u16 packet_length = (fnet_u16)((high << 12) | (middle_high << 8) | (middle_low << 4) | low);
     return packet_length <= length ? packet_length : 0;
 }
-fnet_u8 fnet_git_parse_advertisement(const fnet_u8 *packet, fnet_u16 length, fnet_u8 *head_oid) {
-    fnet_u16 packet_length = fnet_git_pktline_length(packet, length);
-    if (!packet || !head_oid || packet_length < 45 || packet_length > length) return 0;
-    for (fnet_u32 index = 0; index < 40; index++) {
-        if (git_hex_value(packet[4 + index]) == 0xff) return 0;
-        head_oid[index] = packet[4 + index];
+void fnet_git_pktline_reader_init(fnet_git_pktline_reader *reader) {
+    if (!reader) return;
+    reader->header_bytes = 0;
+    reader->active = 0;
+    reader->failed = 0;
+    reader->first_ref_bytes = 0;
+    reader->payload_remaining = 0;
+}
+fnet_u8 fnet_git_pktline_reader_feed(fnet_git_pktline_reader *reader,
+                                    const fnet_u8 *data, fnet_u16 length,
+                                    fnet_u16 *consumed, fnet_u8 head_oid[40]) {
+    if (consumed) *consumed = 0;
+    if (!reader || (!data && length != 0) || reader->failed) return 2;
+    fnet_u16 offset = 0;
+    while (offset < length) {
+        if (!reader->active) {
+            fnet_u8 value = git_hex_value(data[offset]);
+            if (value == 0xff) { reader->failed = 1; break; }
+            reader->header[reader->header_bytes++] = data[offset++];
+            if (reader->header_bytes < 4) continue;
+            fnet_u16 packet_length = 0;
+            for (fnet_u32 index = 0; index < 4; index++)
+                packet_length = (fnet_u16)((packet_length << 4) | git_hex_value(reader->header[index]));
+            reader->header_bytes = 0;
+            if (packet_length == 0 || packet_length == 1 || packet_length == 2) continue;
+            if (packet_length < 4) { reader->failed = 1; break; }
+            reader->payload_remaining = (fnet_u16)(packet_length - 4);
+            reader->first_ref_bytes = 0;
+            reader->active = 1;
+            if (reader->payload_remaining == 0) reader->active = 0;
+            continue;
+        }
+        fnet_u16 take = reader->payload_remaining;
+        if (take > (fnet_u16)(length - offset)) take = (fnet_u16)(length - offset);
+        for (fnet_u16 index = 0; index < take; index++) {
+            if (reader->first_ref_bytes < 41)
+                reader->first_ref_line[reader->first_ref_bytes++] = data[offset + index];
+        }
+        offset = (fnet_u16)(offset + take);
+        reader->payload_remaining = (fnet_u16)(reader->payload_remaining - take);
+        if (reader->payload_remaining == 0) {
+            reader->active = 0;
+            if (reader->first_ref_bytes >= 41 && reader->first_ref_line[40] == ' ' && head_oid) {
+                fnet_u8 valid = 1;
+                for (fnet_u32 index = 0; index < 40; index++)
+                    if (git_hex_value(reader->first_ref_line[index]) == 0xff) valid = 0;
+                if (valid) {
+                    for (fnet_u32 index = 0; index < 40; index++) head_oid[index] = reader->first_ref_line[index];
+                    if (consumed) *consumed = offset;
+                    return 1;
+                }
+            }
+        }
     }
-    return packet[44] == ' ';
+    if (consumed) *consumed = offset;
+    return reader->failed ? 2 : 0;
+}
+fnet_u8 fnet_git_parse_advertisement(const fnet_u8 *packet, fnet_u16 length, fnet_u8 *head_oid) {
+    if (!packet || !head_oid) return 0;
+    fnet_git_pktline_reader reader;
+    fnet_git_pktline_reader_init(&reader);
+    fnet_u16 consumed = 0;
+    return fnet_git_pktline_reader_feed(&reader, packet, length, &consumed, head_oid) == 1;
 }
 fnet_u8 fnet_git_clone_start(fnet_u32 remote_ip, const fnet_u8 *host, const fnet_u8 *path) {
     if (!ready || !host || !path || git_clone_state != 0) return 0;
@@ -568,6 +624,7 @@ fnet_u8 fnet_git_clone_start(fnet_u32 remote_ip, const fnet_u8 *host, const fnet
     if (host_length >= sizeof(git_clone_host) || path_length >= sizeof(git_clone_path)) return 0;
     for (fnet_u32 index = 0; index <= host_length; index++) git_clone_host[index] = host[index];
     for (fnet_u32 index = 0; index <= path_length; index++) git_clone_path[index] = path[index];
+    fnet_git_pktline_reader_init(&git_clone_reader);
     if (!fnet_tcp_connect(remote_ip, 9418, 55000)) return 0;
     git_clone_state = 1;
     return 1;
@@ -587,12 +644,15 @@ fnet_u8 fnet_git_clone_poll(void) {
     if (git_clone_state == 2) {
         length = fnet_tcp_read(packet, sizeof(packet));
         if (length == 0) return 0;
-        if (!fnet_git_parse_advertisement(packet, length, git_clone_head_oid)) {
+        fnet_u16 consumed = 0;
+        fnet_u8 result = fnet_git_pktline_reader_feed(&git_clone_reader, packet, length,
+                                                       &consumed, git_clone_head_oid);
+        if (result == 2) {
             git_clone_state = 4;
             return 0;
         }
-        git_clone_state = 3;
-        return 1;
+        if (result == 1) { git_clone_state = 3; return 1; }
+        return 0;
     }
     return git_clone_state == 3;
 }
@@ -672,6 +732,8 @@ fnet_u8 fnet_self_test(void) {
     fnet_u8 header[20], reply[ARP_FRAME_LENGTH], cached_mac[6], ipv4[64], udp_readback[8];
     fnet_u8 tcp[FNET_FRAME_MAX], tcp_readback[1600];
     fnet_u8 git_request[128], git_advertisement[64], git_oid[40];
+    fnet_git_pktline_reader git_reader;
+    fnet_u16 git_consumed;
     fnet_u32 next_hop, source_ip;
     fnet_u32 tcp_base_sequence;
     fnet_u16 source_port;
@@ -768,6 +830,16 @@ fnet_u8 fnet_self_test(void) {
     for (fnet_u32 index = 0; index < 40; index++) git_advertisement[4 + index] = 'a';
     git_advertisement[44] = ' ';
     if (!fnet_git_parse_advertisement(git_advertisement, 45, git_oid) || git_oid[0] != 'a' || git_oid[39] != 'a') return 0;
+    fnet_git_pktline_reader_init(&git_reader);
+    if (fnet_git_pktline_reader_feed(&git_reader, git_advertisement, 2, &git_consumed, git_oid) != 0 || git_consumed != 2) return 0;
+    if (fnet_git_pktline_reader_feed(&git_reader, git_advertisement + 2, 7, &git_consumed, git_oid) != 0 || git_consumed != 7) return 0;
+    if (fnet_git_pktline_reader_feed(&git_reader, git_advertisement + 9, 36, &git_consumed, git_oid) != 1 ||
+        git_consumed != 36 || git_oid[0] != 'a' || git_oid[39] != 'a') return 0;
+    fnet_git_pktline_reader_init(&git_reader);
+    static const fnet_u8 git_flush_and_bad_length[] = "00000003";
+    if (fnet_git_pktline_reader_feed(&git_reader, git_flush_and_bad_length, 4, &git_consumed, git_oid) != 0 ||
+        fnet_git_pktline_reader_feed(&git_reader, git_flush_and_bad_length + 4, 4, &git_consumed, git_oid) != 2 ||
+        !git_reader.failed) return 0;
     if (!fnet_http_tcp_adapter_self_test()) return 0;
     return fnet_arp_probe(gateway_ip) == 60;
 }

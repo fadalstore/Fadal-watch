@@ -5,6 +5,16 @@ typedef unsigned char fnet_u8;
 typedef unsigned short fnet_u16;
 typedef unsigned int fnet_u32;
 
+typedef struct {
+    fnet_u8 header[4];
+    fnet_u8 header_bytes;
+    fnet_u8 active;
+    fnet_u8 failed;
+    fnet_u8 first_ref_bytes;
+    fnet_u8 first_ref_line[41];
+    fnet_u16 payload_remaining;
+} fnet_git_pktline_reader;
+
 fnet_u8 fnet_init(void);
 fnet_u8 fnet_self_test(void);
 fnet_u32 fnet_arp_probe(fnet_u32 target_ip);
@@ -29,6 +39,10 @@ fnet_u16 fnet_git_build_upload_pack_request(const fnet_u8 *path, const fnet_u8 *
                                             fnet_u8 *output, fnet_u16 capacity);
 fnet_u16 fnet_git_pktline_length(const fnet_u8 *packet, fnet_u16 length);
 fnet_u8 fnet_git_parse_advertisement(const fnet_u8 *packet, fnet_u16 length, fnet_u8 *head_oid);
+void fnet_git_pktline_reader_init(fnet_git_pktline_reader *reader);
+fnet_u8 fnet_git_pktline_reader_feed(fnet_git_pktline_reader *reader,
+                                    const fnet_u8 *data, fnet_u16 length,
+                                    fnet_u16 *consumed, fnet_u8 head_oid[40]);
 fnet_u8 fnet_git_clone_start(fnet_u32 remote_ip, const fnet_u8 *host, const fnet_u8 *path);
 fnet_u8 fnet_git_clone_poll(void);
 fnet_u8 fnet_git_clone_state(void);

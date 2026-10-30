@@ -87,6 +87,8 @@ const u8 fadal64_layout[40] = {
 #define KEY_DELETE 0x84
 #define KEY_PAGE_UP 0x85
 #define KEY_PAGE_DOWN 0x86
+#define KEY_UP 0x87
+#define KEY_DOWN 0x88
 
 typedef struct {
     u8 type;
@@ -164,6 +166,7 @@ static u32 files_browser_entries_size;
 static u32 files_browser_status;
 static char files_browser_selected[48];
 static char files_browser_preview[257];
+static u32 files_browser_cursor;
 static char browser_url[256];
 static char browser_page_text[4096];
 static char browser_status[96] = "CLICK ADDRESS, TYPE A URL, PRESS ENTER OR GO";
@@ -826,6 +829,9 @@ static void desktop_app_render(void) {
                 while (source < files_browser_entries_size && files_browser_entries[source] != '\n') source++;
                 if (source < files_browser_entries_size) source++;
                 entry[length] = '\0';
+                if (row == files_browser_cursor)
+                    fb_fill(left + 16, top + 127 + row * 22, right - 16,
+                            top + 149 + row * 22, 0x00243f6d);
                 fb_text(left + 24, top + 130 + row * 22, entry,
                         length != 0 && entry[length - 1U] == '/' ? 0x008dc5ff : 0x00d8eaff, 1);
                 row++;
@@ -850,7 +856,8 @@ static void desktop_app_render(void) {
                 if (line[0] != '\0') fb_text(left + 26, top + height - 44 + index * 14, line, 0x00d8eaff, 1);
             }
         } else {
-            fb_text(left + 24, top + height - 18, "TAP A FOLDER TO OPEN - ESC TO CLOSE", 0x0097aac8, 1);
+            fb_text(left + 24, top + height - 18,
+                    "UP/DOWN SELECT - ENTER OPEN - BACKSPACE UP - ESC CLOSE", 0x0097aac8, 1);
         }
     } else if (desktop_app == APP_SYSTEM) {
         fb_text(left + 28, top + 78, "ARCHITECTURE: X86_64", 0x00d8eaff, 1);
@@ -1628,6 +1635,7 @@ static void files_browser_refresh(void) {
     }
     files_browser_selected[0] = '\0';
     files_browser_preview[0] = '\0';
+    files_browser_cursor = 0;
 }
 
 static void files_browser_click(u32 y) {
@@ -1655,6 +1663,7 @@ static void files_browser_click(u32 y) {
     }
     if (y < top + 128 || y >= top + 458 || files_browser_status != FADAL_HOME_OK) return;
     row = (y - (top + 130)) / 22U;
+    if (row < 15U) files_browser_cursor = row;
     while (source < files_browser_entries_size && index < row) {
         if (files_browser_entries[source++] == '\n') index++;
     }
@@ -2021,6 +2030,8 @@ static u8 keyboard_ascii(u8 code) {
         switch (code) {
             case 0x4b: return KEY_LEFT;
             case 0x4d: return KEY_RIGHT;
+            case 0x48: return KEY_UP;
+            case 0x50: return KEY_DOWN;
             case 0x47: return KEY_HOME;
             case 0x4f: return KEY_END;
             case 0x53: return KEY_DELETE;
@@ -2093,6 +2104,29 @@ static int desktop_handle_keyboard(const fadal_event *event) {
                 for (u32 index = length + 1U; index > browser_url_cursor; index--)
                     browser_url[index] = browser_url[index - 1U];
                 browser_url[browser_url_cursor++] = (char)value;
+            }
+            desktop_redraw();
+        } else if (desktop_app == APP_FILES) {
+            u32 entry_count = 0;
+            u32 left;
+            u32 top;
+            u32 width;
+            u32 height;
+            for (u32 index = 0; index < files_browser_entries_size; index++)
+                if (files_browser_entries[index] == '\n') entry_count++;
+            desktop_app_bounds(&left, &top, &width, &height);
+            (void)left;
+            (void)width;
+            (void)height;
+            if (value == KEY_UP && files_browser_cursor != 0) {
+                files_browser_cursor--;
+            } else if (value == KEY_DOWN && entry_count != 0 &&
+                       files_browser_cursor + 1U < entry_count && files_browser_cursor < 14U) {
+                files_browser_cursor++;
+            } else if ((value == KEY_LEFT || value == '\b') && f_length(files_browser_path) > 10U) {
+                files_browser_click(top + 112U);
+            } else if (value == '\n' && entry_count != 0 && files_browser_cursor < 15U) {
+                files_browser_click(top + 130U + files_browser_cursor * 22U);
             }
             desktop_redraw();
         }

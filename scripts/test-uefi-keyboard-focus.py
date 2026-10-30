@@ -34,8 +34,8 @@ def send_text(process: subprocess.Popen[str], text: str, serial_log: Path) -> No
         for attempt in range(3):
             send_monitor_command(process,
                                  f"sendkey {key_names.get(character, character)}",
-                                 delay=0.25)
-            deadline = time.monotonic() + 1.0
+                                 delay=0.45)
+            deadline = time.monotonic() + 1.5
             while time.monotonic() < deadline:
                 data = serial_log.read_bytes() if serial_log.exists() else b""
                 if data[offset:].endswith(expected):
@@ -48,8 +48,8 @@ def send_text(process: subprocess.Popen[str], text: str, serial_log: Path) -> No
             recent = serial_log.read_bytes()[offset:] if serial_log.exists() else b""
             raise RuntimeError(f"QEMU did not echo command prefix {expected!r}; observed {recent[-120:]!r}")
     for attempt in range(3):
-        send_monitor_command(process, "sendkey ret", delay=0.25)
-        deadline = time.monotonic() + 1.0
+        send_monitor_command(process, "sendkey ret", delay=0.45)
+        deadline = time.monotonic() + 1.5
         while time.monotonic() < deadline:
             data = serial_log.read_bytes() if serial_log.exists() else b""
             if b"\r\n" in data[offset + len(expected):]:
@@ -396,11 +396,16 @@ def run_window_control_checks(process: subprocess.Popen[str], temp: Path,
     assert_pixel(state, 270, 125, (45, 95, 155), "Files app titlebar")
     if bytes((216, 234, 255)) not in ppm_region(state, 284, 250, 1000, 560):
         raise RuntimeError("Files app opened without rendering persistent home entries")
-    click_mouse(process, mouse, 350, 261)
+    files_root_location = ppm_region(state, 284, 190, 900, 215)
+    send_monitor_command(process, "sendkey down")
+    capture_frame(process, state)
+    if ppm_pixel(state, 500, 280) != (36, 63, 109):
+        raise RuntimeError("Files app Down key did not move its visible selection")
+    send_monitor_command(process, "sendkey ret")
     capture_frame(process, state)
     if bytes((126, 214, 167)) not in ppm_region(state, 286, 594, 550, 632):
-        raise RuntimeError("Files app did not render a preview after selecting a home file")
-    print("PASS: Start > Files lists persistent ESP entries and previews a selected file.")
+        raise RuntimeError("Files app Enter did not preview the selected home file")
+    print("PASS: Start > Files lists ESP entries and keyboard selection previews a file.")
 
     click_mouse(process, mouse, 995, 137)
     click_mouse(process, mouse, 70, 773)
@@ -437,7 +442,11 @@ def run_window_control_checks(process: subprocess.Popen[str], temp: Path,
     assert_pixel(state, 270, 125, (45, 95, 155), "Browser Downloads shortcut")
     if bytes((216, 234, 255)) not in ppm_region(state, 284, 185, 900, 215):
         raise RuntimeError("Browser Downloads shortcut did not open the persistent Downloads folder")
-    print("PASS: Browser download control reports status and Downloads opens in Files.")
+    send_monitor_command(process, "sendkey backspace")
+    capture_frame(process, state)
+    if ppm_region(state, 284, 190, 900, 215) != files_root_location:
+        raise RuntimeError("Files Backspace did not return from Downloads to /home/root")
+    print("PASS: Browser Downloads opens in Files and Backspace returns to /home/root.")
 
 
 def run_window_resize_checks(process: subprocess.Popen[str], temp: Path,
@@ -649,7 +658,7 @@ def main() -> int:
             wait_for_serial_text(serial_log, "browser: HTML-to-text self-test passed",
                                  timeout=args.timeout)
             time.sleep(0.8)
-            send_monitor_command(process, "sendkey tab")
+            send_monitor_command(process, "sendkey tab", delay=0.4)
             wait_for_titlebar_color(process, temp / "focus-state.ppm", bytes((28, 49, 84)))
             for _ in range(4):
                 send_monitor_command(process, "sendkey z")
@@ -663,7 +672,7 @@ def main() -> int:
             if not args.screenshot.is_file() or args.screenshot.stat().st_size < 1024:
                 raise RuntimeError("QEMU did not produce the requested desktop-focus screenshot")
 
-            send_monitor_command(process, "sendkey tab")
+            send_monitor_command(process, "sendkey tab", delay=0.4)
             wait_for_titlebar_color(process, temp / "focus-state.ppm", bytes((45, 95, 155)))
             send_keys(process, ("h", "e", "l", "p", "ret"))
             serial = wait_for_serial_text(serial_log, "commands: help clear pwd",

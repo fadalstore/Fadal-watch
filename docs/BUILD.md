@@ -62,9 +62,12 @@ make -C kernel/uefi payload
 rm -f kernel/out/fadal-uefi.img
 make -C kernel/uefi image \
   UEFI_KERNEL="$PWD/kernel/uefi/out/fadal-uefi.krn"
+make -C kernel/uefi test-window-controls
 ```
 
-The resulting image is `kernel/out/fadal-uefi.img`. The payload ELF now has
+The resulting image is `kernel/out/fadal-uefi.img`. The QEMU/OVMF window-controls
+test boots the desktop and exercises mouse controls, Files keyboard navigation,
+and the browser controls. The payload ELF now has
 separate page-aligned `R`, `R-X`, `R`, and `RW` load segments for metadata,
 text, rodata, and data/BSS; the previous RWX linker warning is gone. At runtime,
 the EFI loader allocates page-aligned memory and installs `R/NX`, `RX`, `R/NX`,

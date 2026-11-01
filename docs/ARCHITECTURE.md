@@ -88,8 +88,9 @@ The Start menu hosts three native apps. **Files** calls the loader-provided
 home-list and home-read services to browse the persistent `/home/root` tree,
 change into nested directories, return to the parent, and preview up to two
 lines from a selected file. Its keyboard controls move the highlighted entry
-with Up/Down, activate a folder or file with Enter, and return to the parent
-with Backspace or Left; the visible list is limited to 15 entries. **System** reports the active CPU/UEFI/GOP
+with Up/Down, jump to the first/last entry with Home/End, activate a folder or
+file with Enter, and return to the parent with Backspace or Left. The list scrolls
+through a 15-row viewport and uses a bounded 4 KiB directory buffer. **System** reports the active CPU/UEFI/GOP
 environment and whether the loader supplied FDL64 v3 protection, persistent
 home storage, and HTTP. **Fadal Browser** accepts a URL, makes a firmware UEFI
 HTTP GET, strips HTML tags into a bounded ASCII text view, and provides a
@@ -101,8 +102,8 @@ redirect handling, and modern browser features are not implemented. The
 firmware must publish UEFI HTTP for network actions; the default QEMU/OVMF setup
 does not, so UI tests verify the explicit unavailable path and do not claim a
 live Internet fetch. The QEMU/OVMF `test-window-controls` regression checks app
-launch, Files keyboard selection, preview and return-to-parent, URL keyboard
-editing, HTML-to-text self-test, and the Downloads shortcut.
+launch, Files keyboard selection, 20-entry scrolling, Home/End, preview and
+return-to-parent, URL keyboard editing, HTML-to-text self-test, and Downloads.
 
 The graphical terminal renders console output and keyboard echo into the GOP framebuffer, with a bounded 64-row by 160-character scrollback. Desktop clicks are triggered only on the left-button press edge, so a held touch does not repeat menu/window actions; unchanged PS/2 packets are ignored, and ordinary pointer motion restores and redraws only the cursor save-under pixels instead of repainting the whole GOP frame. Its single-line editor supports Left/Right, Home/End, insertion at the cursor, Backspace, and Delete; input is bounded to the visible prompt row and clipped if resizing reduces that row's capacity. PageUp/PageDown scroll the retained history, while new output follows the live tail by default. The terminal remains a small desktop shell surface rather than a complete userspace desktop environment. Do not assume that the BIOS shell and UEFI payload share memory, syscall, or filesystem code. They are separate deliverables. The loader passes a small `fadal_uefi_services` ABI from `kernel/uefi/net.h` into the payload. HTTP uses the firmware's EFI HTTP protocol or HTTP Service Binding child and writes bounded responses to the ESP. The shell maintains a bounded current directory (initially `/home/root`), displays it in the prompt, and normalizes absolute and relative paths including `.` and `..` for `pwd`, `cd`, `ls`, `cat`, and `write`. The persistent `/home/root` view is backed by `FADALHOME` on the same ESP; validated EFI callbacks support nested relative paths, directory listing, and creation of one directory at a time when its parent exists. `/etc` exposes read-only virtual files. Boot seeds the default README, motd, and profile only when absent. Files persist across guest restarts, but this is not yet a general VFS or a per-user storage boundary. Home files can be deleted at any depth, while directory removal and journaling are not implemented. The BIOS RTL8139 stack is intentionally not linked into the UEFI payload; this is a firmware-native backend with explicit capability detection.
 

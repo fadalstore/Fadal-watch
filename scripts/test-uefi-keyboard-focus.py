@@ -4,6 +4,7 @@
 import argparse
 import os
 from pathlib import Path
+import secrets
 import shutil
 import subprocess
 import sys
@@ -20,9 +21,10 @@ def send_monitor_command(process: subprocess.Popen[str], command: str,
     time.sleep(delay)
 
 
-def send_keys(process: subprocess.Popen[str], keys: tuple[str, ...]) -> None:
+def send_keys(process: subprocess.Popen[str], keys: tuple[str, ...],
+              delay: float = 0.18) -> None:
     for key in keys:
-        send_monitor_command(process, f"sendkey {key}")
+        send_monitor_command(process, f"sendkey {key}", delay=delay)
 
 
 def send_text(process: subprocess.Popen[str], text: str, serial_log: Path) -> None:
@@ -339,6 +341,36 @@ def capture_frame(process: subprocess.Popen[str], path: Path) -> None:
         raise RuntimeError(f"QEMU did not produce framebuffer capture: {path}")
 
 
+def prepare_files_scroll_fixture(image: Path, temp: Path) -> None:
+    required = ("mdir", "mmd", "mcopy")
+    missing = [tool for tool in required if shutil.which(tool) is None]
+    if missing:
+        raise RuntimeError("Files scrolling regression requires mtools: " + ", ".join(missing))
+    mtools_image = f"{image}@@1048576"
+    listing = subprocess.run(
+        ["mdir", "-i", mtools_image, "::/FADALHOME"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+    )
+    if listing.returncode != 0:
+        subprocess.run(
+            ["mmd", "-i", mtools_image, "::/FADALHOME"],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+        )
+
+    fixture_dir = temp / "files-scroll-fixtures"
+    fixture_dir.mkdir()
+    prefix = "Z" + secrets.token_hex(2).upper()
+    fixtures = []
+    for index in range(20):
+        fixture = fixture_dir / f"{prefix}{index:02d}.TXT"
+        fixture.write_text(f"SCROLL TEST ITEM {index:02d}\nSECOND LINE\n")
+        fixtures.append(str(fixture))
+    subprocess.run(
+        ["mcopy", "-o", "-i", mtools_image, *fixtures, "::/FADALHOME/"],
+        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+    )
+
+
 def assert_pixel(path: Path, x: int, y: int, expected: tuple[int, int, int],
                  state: str) -> None:
     actual = ppm_pixel(path, x, y)
@@ -427,7 +459,7 @@ def run_window_control_checks(process: subprocess.Popen[str], temp: Path,
 
     idle_status = ppm_region(state, 280, 265, 1000, 295)
     click_mouse(process, mouse, 500, 202)
-    send_keys(process, ("h", "t", "t", "p", "s", "ret"))
+    send_keys(process, ("h", "t", "t", "p", "s", "ret"), delay=0.35)
     capture_frame(process, state)
     if ppm_region(state, 280, 265, 1000, 295) == idle_status:
         raise RuntimeError("Browser URL keyboard editing did not update its visible status")
@@ -446,6 +478,36 @@ def run_window_control_checks(process: subprocess.Popen[str], temp: Path,
     capture_frame(process, state)
     if ppm_region(state, 284, 190, 900, 215) != files_root_location:
         raise RuntimeError("Files Backspace did not return from Downloads to /home/root")
+    files_first_page = ppm_region(state, 276, 260, 1004, 577)
+    for _ in range(15):
+        send_monitor_command(process, "sendkey down", delay=0.25)
+    capture_frame(process, state)
+    if ppm_region(state, 276, 260, 1004, 577) == files_first_page:
+        raise RuntimeError("Files Down did not scroll the list past the first page")
+    assert_pixel(state, 500, 566, (36, 63, 109), "Files Down selection after crossing the first page")
+    for _ in range(15):
+        send_monitor_command(process, "sendkey up", delay=0.25)
+    capture_frame(process, state)
+    if ppm_region(state, 276, 260, 1004, 577) != files_first_page:
+        raise RuntimeError("Files Up did not scroll back to the first page")
+    print("PASS: repeated Down/Up scroll across the 15-row boundary in both directions.")
+    send_monitor_command(process, "sendkey end", delay=0.35)
+    capture_frame(process, state)
+    if ppm_region(state, 276, 260, 1004, 577) == files_first_page:
+        raise RuntimeError("Files End did not scroll the entry list past the first 15 rows")
+    assert_pixel(state, 500, 566, (36, 63, 109), "Files End selection on the last visible row")
+    send_monitor_command(process, "sendkey up")
+    capture_frame(process, state)
+    assert_pixel(state, 500, 544, (36, 63, 109), "Files Up selection near the list tail")
+    send_monitor_command(process, "sendkey ret")
+    capture_frame(process, state)
+    if bytes((126, 214, 167)) not in ppm_region(state, 286, 594, 550, 632):
+        raise RuntimeError("Files Enter did not open the selected entry after scrolling")
+    send_monitor_command(process, "sendkey home")
+    capture_frame(process, state)
+    if ppm_region(state, 276, 260, 1004, 577) != files_first_page:
+        raise RuntimeError("Files Home did not restore the first page of entries")
+    print("PASS: Files scrolls beyond 15 entries; End/Up reach the tail and Home restores the first page.")
     print("PASS: Browser Downloads opens in Files and Backspace returns to /home/root.")
 
 
@@ -623,6 +685,10 @@ def main() -> int:
         args.tail_screenshot.unlink(missing_ok=True)
     with tempfile.TemporaryDirectory(prefix="fadal-focus-") as temporary:
         temp = Path(temporary)
+        test_image = temp / "fadal-uefi-test.img"
+        shutil.copyfile(args.image, test_image)
+        if args.window_controls:
+            prepare_files_scroll_fixture(test_image, temp)
         serial_log = temp / "serial.log"
         debug_log = temp / "debugcon.log"
         vars_copy = temp / "OVMF_VARS.fd"
@@ -631,7 +697,7 @@ def main() -> int:
             args.qemu, "-machine", "q35", "-m", "512M",
             "-drive", f"if=pflash,format=raw,readonly=on,file={args.ovmf_code}",
             "-drive", f"if=pflash,format=raw,file={vars_copy}",
-            "-drive", f"format=raw,file={args.image}",
+            "-drive", f"format=raw,file={test_image}",
             "-display", "none", "-monitor", "stdio",
             "-serial", f"file:{serial_log}",
             "-debugcon", f"file:{debug_log}",
@@ -674,7 +740,7 @@ def main() -> int:
 
             send_monitor_command(process, "sendkey tab", delay=0.4)
             wait_for_titlebar_color(process, temp / "focus-state.ppm", bytes((45, 95, 155)))
-            send_keys(process, ("h", "e", "l", "p", "ret"))
+            send_text(process, "help", serial_log)
             serial = wait_for_serial_text(serial_log, "commands: help clear pwd",
                                           timeout=args.timeout)
             if "commands: help clear pwd" not in serial:

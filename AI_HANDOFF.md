@@ -77,10 +77,12 @@ folder-hoosaadyo kana soo noqon karaa parent-ka, wuxuuna soo bandhigaa labada sa
 ee ugu horreeya faylka ASCII-ga la doortay; preview-gu waa akhris-keliya.
 Files-ku hadda waxa kale oo uu taageeraa keyboard navigation: Up/Down waxay
 dhaqaajiyaan highlight-ka safafka muuqda, Enter wuxuu furaa folder ama preview-gareeyaa
-fayl, Backspace/Left-na waxay ku noqdaan parent-ka. Liisku hadda wuxuu sawiraa ilaa
-15 gelin. `test-window-controls` wuxuu xaqiijiyaa in Down uu beddelo highlight-ka,
-Enter uu soo bandhigo preview-ga faylka, Backspace-na uu ka soo celiyo Downloads
-ilaa `/home/root`.
+fayl, Home/End waxay u boodaan bilowga/dhammaadka, Backspace/Left-na waxay ku noqdaan
+parent-ka. Liisku wuxuu leeyahay 15-row viewport oo ku rogmada bounded 4 KiB
+directory buffer; marka service-ku dhaafo xadka waxa la muujiyaa fariin cad.
+`test-window-controls` wuxuu ku daraa 20 fixture files oo ku jira nuqul image ku-meelgaar
+ah, wuxuuna xaqiijiyaa in End/Up gaadhaan tail-ka, Enter furo item-ka, Home-na soo celiyo
+bogga koowaad. Waxa kale oo uu tijaabiyaa Backspace Downloads ilaa `/home/root`.
 **System** waxa uu furaa panel muujinaya x86_64, UEFI/GOP, ilaalinta xusuusta FDL64
 v3, helitaanka persistent home, iyo UEFI HTTP. Escape ama badhanka close ayaa
 xira panel kasta; taskbar-ku wuxuu dib u soo celiyaa terminal-ka. Start-ka waxa

@@ -161,12 +161,13 @@ static u32 current_uid = USER_ROOT;
 static const char current_user[] = "root";
 static char shell_current_directory[SHELL_PATH_MAX] = "/home/root";
 static char files_browser_path[SHELL_PATH_MAX] = "/home/root";
-static char files_browser_entries[512];
+static char files_browser_entries[4096];
 static u32 files_browser_entries_size;
 static u32 files_browser_status;
 static char files_browser_selected[48];
 static char files_browser_preview[257];
 static u32 files_browser_cursor;
+static u32 files_browser_scroll;
 static char browser_url[256];
 static char browser_page_text[4096];
 static char browser_status[96] = "CLICK ADDRESS, TYPE A URL, PRESS ENTER OR GO";
@@ -811,14 +812,23 @@ static void desktop_app_render(void) {
     if (desktop_app == APP_FILES) {
         u32 source = 0;
         u32 row = 0;
+        u32 skipped = 0;
         fb_text(left + 24, top + 58, "LOCATION", 0x007ed6a7, 1);
         fb_text(left + 24, top + 76, files_browser_path, 0x00d8eaff, 1);
         fb_text(left + 24, top + 104, "[UP]", 0x008dc5ff, 1);
         if (files_browser_status != FADAL_HOME_OK) {
-            fb_text(left + 24, top + 140, "HOME STORAGE UNAVAILABLE", 0x00ffaaaa, 1);
+            fb_text(left + 24, top + 140,
+                    files_browser_status == FADAL_HOME_TOO_LARGE ?
+                    "DIRECTORY LIST TOO LARGE" : "HOME STORAGE UNAVAILABLE",
+                    0x00ffaaaa, 1);
         } else if (files_browser_entries_size == 0) {
             fb_text(left + 24, top + 140, "THIS DIRECTORY IS EMPTY", 0x00d8eaff, 1);
         } else {
+            while (source < files_browser_entries_size && skipped < files_browser_scroll) {
+                while (source < files_browser_entries_size && files_browser_entries[source] != '\n') source++;
+                if (source < files_browser_entries_size) source++;
+                skipped++;
+            }
             while (source < files_browser_entries_size && row < 15) {
                 char entry[48];
                 u32 length = 0;
@@ -829,7 +839,7 @@ static void desktop_app_render(void) {
                 while (source < files_browser_entries_size && files_browser_entries[source] != '\n') source++;
                 if (source < files_browser_entries_size) source++;
                 entry[length] = '\0';
-                if (row == files_browser_cursor)
+                if (files_browser_scroll + row == files_browser_cursor)
                     fb_fill(left + 16, top + 127 + row * 22, right - 16,
                             top + 149 + row * 22, 0x00243f6d);
                 fb_text(left + 24, top + 130 + row * 22, entry,
@@ -857,7 +867,8 @@ static void desktop_app_render(void) {
             }
         } else {
             fb_text(left + 24, top + height - 18,
-                    "UP/DOWN SELECT - ENTER OPEN - BACKSPACE UP - ESC CLOSE", 0x0097aac8, 1);
+                    "UP/DOWN SCROLL - HOME/END JUMP - ENTER OPEN - BACKSPACE UP - ESC CLOSE",
+                    0x0097aac8, 1);
         }
     } else if (desktop_app == APP_SYSTEM) {
         fb_text(left + 28, top + 78, "ARCHITECTURE: X86_64", 0x00d8eaff, 1);
@@ -1636,6 +1647,7 @@ static void files_browser_refresh(void) {
     files_browser_selected[0] = '\0';
     files_browser_preview[0] = '\0';
     files_browser_cursor = 0;
+    files_browser_scroll = 0;
 }
 
 static void files_browser_click(u32 y) {
@@ -1661,9 +1673,11 @@ static void files_browser_click(u32 y) {
         }
         return;
     }
-    if (y < top + 128 || y >= top + 458 || files_browser_status != FADAL_HOME_OK) return;
+    if (y < top + 130 || y >= top + 458 || files_browser_status != FADAL_HOME_OK) return;
     row = (y - (top + 130)) / 22U;
-    if (row < 15U) files_browser_cursor = row;
+    if (row >= 15U) return;
+    row += files_browser_scroll;
+    files_browser_cursor = row;
     while (source < files_browser_entries_size && index < row) {
         if (files_browser_entries[source++] == '\n') index++;
     }
@@ -2114,19 +2128,34 @@ static int desktop_handle_keyboard(const fadal_event *event) {
             u32 height;
             for (u32 index = 0; index < files_browser_entries_size; index++)
                 if (files_browser_entries[index] == '\n') entry_count++;
+            if (files_browser_entries_size != 0 &&
+                files_browser_entries[files_browser_entries_size - 1U] != '\n') entry_count++;
             desktop_app_bounds(&left, &top, &width, &height);
             (void)left;
             (void)width;
             (void)height;
             if (value == KEY_UP && files_browser_cursor != 0) {
                 files_browser_cursor--;
+                if (files_browser_cursor < files_browser_scroll)
+                    files_browser_scroll = files_browser_cursor;
             } else if (value == KEY_DOWN && entry_count != 0 &&
-                       files_browser_cursor + 1U < entry_count && files_browser_cursor < 14U) {
+                       files_browser_cursor + 1U < entry_count) {
                 files_browser_cursor++;
+                if (files_browser_cursor >= files_browser_scroll + 15U)
+                    files_browser_scroll = files_browser_cursor - 14U;
+            } else if (value == KEY_HOME) {
+                files_browser_cursor = 0;
+                files_browser_scroll = 0;
+            } else if (value == KEY_END && entry_count != 0) {
+                files_browser_cursor = entry_count - 1U;
+                files_browser_scroll = entry_count > 15U ? entry_count - 15U : 0;
             } else if ((value == KEY_LEFT || value == '\b') && f_length(files_browser_path) > 10U) {
                 files_browser_click(top + 112U);
-            } else if (value == '\n' && entry_count != 0 && files_browser_cursor < 15U) {
-                files_browser_click(top + 130U + files_browser_cursor * 22U);
+            } else if (value == '\n' && entry_count != 0 &&
+                       files_browser_cursor >= files_browser_scroll &&
+                       files_browser_cursor < files_browser_scroll + 15U) {
+                files_browser_click(top + 130U +
+                                    (files_browser_cursor - files_browser_scroll) * 22U);
             }
             desktop_redraw();
         }

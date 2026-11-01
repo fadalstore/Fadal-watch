@@ -66,8 +66,10 @@ make -C kernel/uefi test-window-controls
 ```
 
 The resulting image is `kernel/out/fadal-uefi.img`. The QEMU/OVMF window-controls
-test boots the desktop and exercises mouse controls, Files keyboard navigation,
-and the browser controls. The payload ELF now has
+test boots the desktop and exercises mouse controls, Files keyboard navigation
+with a 20-entry fixture (including scrolling beyond the first 15 rows), and the
+browser controls. Test fixtures are injected into a temporary copy of the image.
+The payload ELF now has
 separate page-aligned `R`, `R-X`, `R`, and `RW` load segments for metadata,
 text, rodata, and data/BSS; the previous RWX linker warning is gone. At runtime,
 the EFI loader allocates page-aligned memory and installs `R/NX`, `RX`, `R/NX`,

@@ -43,7 +43,7 @@ fetch "FadalWatch-UTM-iOS.zip" "$DEST/FadalWatch-UTM-iOS.zip"
 fetch "FadalWatch-iOS-source.zip" "$DEST/FadalWatch-iOS-source.zip"
 fetch "install/fadal-kernel.img" "$DEST/fadal-kernel.img"
 
-expected_utm="2f826516efca7d770bce96354cf2cf04c96e271c17fb778c08acaf450864fe12"
+expected_utm="47e472d34ce8906105e93064f97e0a525f77c1c6d9ea4f99aa5dae342bd55eb8"
 expected_source="ed59a510bb3119b15e981b24a65034fceea3bb41387cc11262276d15ece773ff"
 expected_bios="4b8cdedd7420303e53bf2d3970275ad88c891f0523cde614b4c31ce470f9b6b3"
 

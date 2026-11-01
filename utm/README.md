@@ -18,9 +18,10 @@ The Start menu's **Files** entry opens a basic read-only browser for the
 persistent `/home/root` tree. It displays ESP-backed entries, lets you open
 nested folders and go up to the parent, and previews the first two lines of a
 selected file. Use Up/Down to move the highlighted entry, Enter to open a folder
-or preview a file, and Backspace or Left to go up to the parent. The list shows
-up to 15 entries at a time. Use the terminal's `write` and `rm` commands to
-change files.
+or preview a file, Home/End to jump to the first/last entry, and Backspace or
+Left to go up to the parent. The list scrolls in a 15-row viewport over a bounded
+4 KiB directory listing. Use the terminal's `write` and `rm` commands to change
+files.
 **System** opens a status panel showing the x86_64/UEFI/GOP runtime, FDL64 v3
 memory-protection mode, and whether the firmware exposes persistent storage and
 HTTP. Close either panel with Escape or its titlebar close button; the taskbar

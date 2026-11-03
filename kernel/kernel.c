@@ -97,7 +97,9 @@ typedef unsigned int u32;
 
 static volatile u16 *const vga = (volatile u16 *)0xb8000;
 static u32 cursor;
-static u8 shift_pressed;
+static u8 left_shift_pressed;
+static u8 right_shift_pressed;
+static u8 caps_lock_enabled;
 static volatile char tty_buffer[TTY_BUFFER_SIZE];
 static volatile u32 tty_read_index;
 static volatile u32 tty_write_index;
@@ -1698,6 +1700,40 @@ static char keyboard_ascii(u8 scancode) {
     }
 }
 
+static char keyboard_shifted_symbol(char value) {
+    switch (value) {
+        case '1': return '!'; case '2': return '@'; case '3': return '#';
+        case '4': return '$'; case '5': return '%'; case '6': return '^';
+        case '7': return '&'; case '8': return '*'; case '9': return '(';
+        case '0': return ')'; case '-': return '_'; case '=': return '+';
+        case '[': return '{'; case ']': return '}'; case ';': return ':';
+        case '\'': return '"'; case '`': return '~'; case '\\': return '|';
+        case ',': return '<'; case '.': return '>'; case '/': return '?';
+        default: return value;
+    }
+}
+
+static char keyboard_translate(u8 scancode, u8 shift, u8 caps_lock) {
+    char value = keyboard_ascii(scancode);
+    if (value >= 'a' && value <= 'z') {
+        if ((shift != 0) != (caps_lock != 0)) value = (char)(value - 'a' + 'A');
+    } else if (shift) {
+        value = keyboard_shifted_symbol(value);
+    }
+    return value;
+}
+
+static u8 keyboard_translation_self_test(void) {
+    return keyboard_translate(0x10, 0, 0) == 'q' &&
+           keyboard_translate(0x10, 1, 0) == 'Q' &&
+           keyboard_translate(0x10, 0, 1) == 'Q' &&
+           keyboard_translate(0x10, 1, 1) == 'q' &&
+           keyboard_translate(0x02, 1, 0) == '!' &&
+           keyboard_translate(0x0c, 1, 0) == '_' &&
+           keyboard_translate(0x1a, 1, 0) == '{' &&
+           keyboard_translate(0x35, 1, 0) == '?';
+}
+
 static void tty_enqueue(char value) {
     spin_lock(&tty_lock);
     if (tty_count >= TTY_BUFFER_SIZE) {
@@ -1731,12 +1767,24 @@ static u32 tty_read_available(u8 *output, u32 capacity) {
 }
 
 static void keyboard_handle(u8 scancode) {
-    if (scancode == 0x2a || scancode == 0x36) {
-        shift_pressed = 1;
+    if (scancode == 0x2a) {
+        left_shift_pressed = 1;
         return;
     }
-    if (scancode == 0xaa || scancode == 0xb6) {
-        shift_pressed = 0;
+    if (scancode == 0x36) {
+        right_shift_pressed = 1;
+        return;
+    }
+    if (scancode == 0xaa) {
+        left_shift_pressed = 0;
+        return;
+    }
+    if (scancode == 0xb6) {
+        right_shift_pressed = 0;
+        return;
+    }
+    if (scancode == 0x3a) {
+        caps_lock_enabled ^= 1U;
         return;
     }
     if ((scancode & 0x80) != 0) {
@@ -1757,12 +1805,11 @@ static void keyboard_handle(u8 scancode) {
         return;
     }
 
-    char value = keyboard_ascii(scancode);
+    char value = keyboard_translate(scancode,
+                                    left_shift_pressed || right_shift_pressed,
+                                    caps_lock_enabled);
     if (value == '\0') {
         return;
-    }
-    if (shift_pressed && value >= 'a' && value <= 'z') {
-        value = (char)(value - 'a' + 'A');
     }
     tty_enqueue(value);
     if (tty_echo_enabled) {
@@ -2475,6 +2522,9 @@ void kernel_main(void) {
     kernel_write("timer: PIT IRQ0 online at 100 Hz\n");
     kernel_write("syscalls: int 0x80 ABI gate online\n");
     kernel_write("userspace: ring-3 test process armed\n");
+    kernel_write(keyboard_translation_self_test() ?
+        "keyboard: Shift, Caps Lock, and US punctuation map passed\n" :
+        "keyboard: Shift/Caps Lock translation self-test failed\n");
     kernel_write("keyboard: PS/2 IRQ1 interactive shell online\n");
     kernel_write("shell: FSH disk executable selected\n");
     shell_init();

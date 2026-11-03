@@ -314,8 +314,10 @@ available; virtual address expansion and demand-zero paging remain future
 memory-management milestones.
 
 The TTY input boundary is driven by the kernel's PS/2 IRQ1 handler and supports
-scancode-to-ASCII translation, Shift letters, Backspace, Enter, and a bounded
-ring buffer. Syscall `read` is now nonblocking: it copies a bounded chunk into
+US-layout scancode translation, independent left/right Shift state, Caps Lock,
+Shifted digits and punctuation, Backspace, Enter, and a bounded ring buffer.
+The BIOS smoke trace checks the modifier and shifted-symbol mapping. Syscall
+`read` is now nonblocking: it copies a bounded chunk into
 the validated ring-3 buffer when input exists and returns `0xffffffff` as the
 EAGAIN result when the queue is empty. `FSH.BIN` is a separate ring-3 disk
 executable loaded by the kernel, not a parser linked into `kernel.c`; it

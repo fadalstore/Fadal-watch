@@ -64,6 +64,11 @@ PS/2 AUX bytes are separated from keyboard bytes. Shell keystrokes are ignored
 unless the terminal owns focus; UART input remains an explicit path back to the
 terminal.
 
+The BIOS PS/2 TTY now tracks left/right Shift independently, supports Caps Lock
+with standard Shift XOR Caps letter behavior, and maps US shifted digits and
+punctuation. `keyboard_translation_self_test` covers the modifier combinations
+and representative symbols; the BIOS boot smoke test requires its pass trace.
+
 The UTM pointer-jitter fix makes desktop clicks edge-triggered: a held left
 button or touchscreen contact acts once, while drag/resize continues until
 release. Unchanged PS/2 mouse packets are discarded, and ordinary pointer motion

@@ -176,8 +176,9 @@ check: clean independence $(OUT)/fadal-kernel.img
 	@grep -q "syscall: sleep dispatch; timer wake scheduled" $(OUT)/smoke.log
 	@grep -q "syscall: mmap dispatch; user page mapped" $(OUT)/smoke.log
 	@grep -q "syscall: getring dispatch; ring-3 confirmed" $(OUT)/smoke.log
-	@grep -q "syscall: getdevice dispatch; keyboard and TTY status returned" $(OUT)/smoke.log
-	@grep -q "syscall: setpriority dispatch; scheduler priority updated" $(OUT)/smoke.log
+			@grep -q "syscall: getdevice dispatch; keyboard and TTY status returned" $(OUT)/smoke.log
+		@grep -q "keyboard: Shift, Caps Lock, and US punctuation map passed" $(OUT)/smoke.log
+		@grep -q "syscall: setpriority dispatch; scheduler priority updated" $(OUT)/smoke.log
 	@grep -q "syscall: netloop dispatch; loopback packet delivered" $(OUT)/smoke.log
 	@grep -q "smp: CPUID topology detected" $(OUT)/smoke.log
 	@grep -q "syscall: getcpus dispatch; SMP topology reported" $(OUT)/smoke.log

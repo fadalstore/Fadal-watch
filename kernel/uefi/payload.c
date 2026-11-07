@@ -152,9 +152,14 @@ static u32 terminal_column;
 static u32 terminal_view_offset;
 static u32 terminal_input_start;
 static u32 terminal_input_limit;
+static u32 terminal_input_view_columns;
+static u32 terminal_input_view_start;
 static u32 terminal_input_length;
+static u32 terminal_input_rendered_length;
 static u32 terminal_input_cursor;
 static u8 terminal_input_active;
+static char terminal_input_buffer[LINE_MAX];
+static void terminal_edit_redraw(const char *line, u32 length, u32 cursor);
 static const char *desktop_status = "SYSTEM READY";
 static fadal_uefi_services *desktop_services;
 static u32 current_uid = USER_ROOT;
@@ -342,7 +347,8 @@ static void terminal_render(void) {
     }
     if (terminal_input_active != 0 && terminal_view_offset == 0 && visible != 0 &&
         input_focus == FOCUS_TERMINAL && start_open == 0) {
-        u32 cursor_column = terminal_input_start + terminal_input_cursor;
+        u32 cursor_column = terminal_input_start + terminal_input_cursor -
+                            terminal_input_view_start;
         if (cursor_column < terminal_view_columns()) {
             u32 cursor_x = left + cursor_column * 6;
             u32 cursor_y = top + (visible - 1U) * 9;
@@ -412,28 +418,26 @@ static void terminal_putc(char value) {
 static void terminal_reflow(u32 columns, u32 old_rows, u32 old_offset, u32 old_count) {
     u32 source_count = terminal_lines_used;
     u32 source_first = (terminal_line_head + TERMINAL_ROWS + 1U - source_count) % TERMINAL_ROWS;
+    u32 history_count = source_count;
     u32 old_visible = old_count < old_rows ? old_count : old_rows;
     u32 source_anchor = 0;
     u32 anchor_output = 0;
-    u32 output_lines = 1;
+    u32 output_lines = 0;
     u32 index;
+    u8 preserve_input = terminal_input_active != 0 && source_count != 0;
     u8 preserve_scroll = old_offset != 0;
     if (columns == 0) return;
+    if (preserve_input != 0) history_count--;
     if (preserve_scroll != 0) {
         if (old_offset > old_count - old_visible) old_offset = old_count - old_visible;
         source_anchor = old_count - old_visible - old_offset;
     }
-    if (terminal_input_active != 0) {
-        u32 input_limit = columns > terminal_input_start + 1U ?
-                          columns - terminal_input_start - 1U : 0;
-        if (input_limit >= LINE_MAX) input_limit = LINE_MAX - 1U;
-        terminal_input_limit = input_limit;
-        if (terminal_input_length > input_limit) {
-            terminal_input_length = input_limit;
-            if (terminal_input_cursor > input_limit) terminal_input_cursor = input_limit;
-            terminal_lines[terminal_line_head][terminal_input_start + input_limit] = '\0';
-            terminal_column = terminal_input_start + input_limit;
-        }
+    if (preserve_input != 0) {
+        u32 view_columns = columns > terminal_input_start + 1U ?
+                           columns - terminal_input_start - 1U : 0;
+        terminal_input_limit = LINE_MAX - 1U;
+        terminal_input_view_columns = view_columns < LINE_MAX - 1U ?
+                                     view_columns : LINE_MAX - 1U;
     }
     for (index = 0; index < source_count; index++) {
         u32 source_line = (source_first + index) % TERMINAL_ROWS;
@@ -450,12 +454,16 @@ static void terminal_reflow(u32 columns, u32 old_rows, u32 old_offset, u32 old_c
             terminal_lines[index][character] = '\0';
         }
     }
-    terminal_line_head = 0;
-    terminal_lines_used = 1;
+    terminal_line_head = TERMINAL_ROWS - 1U;
+    terminal_lines_used = 0;
     terminal_column = 0;
     terminal_view_offset = 0;
-    for (index = 0; index < source_count; index++) {
+    for (index = 0; index < history_count; index++) {
         u32 character;
+        if (index == 0) {
+            terminal_begin_line();
+            output_lines++;
+        }
         if (preserve_scroll != 0 && index == source_anchor) {
             anchor_output = output_lines - 1U;
         }
@@ -471,11 +479,29 @@ static void terminal_reflow(u32 columns, u32 old_rows, u32 old_offset, u32 old_c
             terminal_lines[terminal_line_head][terminal_column + 1U] = '\0';
             terminal_column++;
         }
-        if (terminal_reflow_source_soft_break[index] == 0 && index + 1U < source_count) {
+        if (terminal_reflow_source_soft_break[index] == 0 &&
+            index + 1U < history_count) {
             terminal_line_soft_break[terminal_line_head] = 0;
             terminal_begin_line();
             output_lines++;
         }
+    }
+    if (terminal_lines_used == 0 && preserve_input == 0) {
+        terminal_begin_line();
+        output_lines = 1;
+    }
+    if (preserve_input != 0) {
+        u32 prompt_column;
+        if (terminal_lines_used != 0) terminal_line_soft_break[terminal_line_head] = 0;
+        terminal_begin_line();
+        output_lines++;
+        for (prompt_column = 0;
+             prompt_column < terminal_input_start && prompt_column < TERMINAL_COLUMNS - 1U;
+             prompt_column++) {
+            terminal_lines[terminal_line_head][prompt_column] =
+                terminal_reflow_source[history_count][prompt_column];
+        }
+        terminal_column = terminal_input_start;
     }
     if (preserve_scroll != 0) {
         u32 retained = terminal_lines_used;
@@ -486,6 +512,10 @@ static void terminal_reflow(u32 columns, u32 old_rows, u32 old_offset, u32 old_c
         if (visible != 0 && mapped_anchor < retained - visible) {
             terminal_view_offset = retained - visible - mapped_anchor;
         }
+    }
+    if (preserve_input != 0) {
+        terminal_edit_redraw(terminal_input_buffer, terminal_input_length,
+                             terminal_input_cursor);
     }
 }
 
@@ -1157,9 +1187,12 @@ static void terminal_resize_update_input_limit(void) {
     u32 columns;
     if (terminal_input_active == 0) return;
     columns = terminal_view_columns();
-    if (columns <= terminal_input_start + 1U) terminal_input_limit = 0;
-    else terminal_input_limit = columns - terminal_input_start - 1U;
-    if (terminal_input_limit >= LINE_MAX) terminal_input_limit = LINE_MAX - 1U;
+    terminal_input_limit = LINE_MAX - 1U;
+    if (columns <= terminal_input_start + 1U) terminal_input_view_columns = 0;
+    else terminal_input_view_columns = columns - terminal_input_start - 1U;
+    if (terminal_input_view_columns >= LINE_MAX) {
+        terminal_input_view_columns = LINE_MAX - 1U;
+    }
 }
 
 static void terminal_resize_apply(void) {
@@ -1235,17 +1268,30 @@ static void terminal_scroll(int direction) {
 
 static void terminal_edit_redraw(const char *line, u32 length, u32 cursor) {
     u32 index;
+    u32 visible_end;
     if (desktop_mode == 0) return;
-    for (index = 0; index < terminal_input_length; index++) {
+    if (length >= LINE_MAX) length = LINE_MAX - 1U;
+    if (cursor > length) cursor = length;
+    for (index = 0; index < terminal_input_rendered_length; index++) {
         terminal_lines[terminal_line_head][terminal_input_start + index] = '\0';
     }
-    for (index = 0; index < length; index++) {
-        terminal_lines[terminal_line_head][terminal_input_start + index] = line[index];
+    if (cursor < terminal_input_view_start) terminal_input_view_start = cursor;
+    if (cursor - terminal_input_view_start > terminal_input_view_columns) {
+        terminal_input_view_start = cursor - terminal_input_view_columns;
     }
-    terminal_lines[terminal_line_head][terminal_input_start + length] = '\0';
+    if (length <= terminal_input_view_columns) terminal_input_view_start = 0;
+    visible_end = terminal_input_view_start + terminal_input_view_columns;
+    if (visible_end > length) visible_end = length;
+    for (index = terminal_input_view_start; index < visible_end; index++) {
+        terminal_lines[terminal_line_head][terminal_input_start +
+            index - terminal_input_view_start] = line[index];
+    }
+    terminal_input_rendered_length = visible_end - terminal_input_view_start;
+    terminal_lines[terminal_line_head][terminal_input_start +
+        terminal_input_rendered_length] = '\0';
     terminal_input_length = length;
     terminal_input_cursor = cursor;
-    terminal_column = terminal_input_start + cursor;
+    terminal_column = terminal_input_start + cursor - terminal_input_view_start;
     desktop_redraw();
 }
 
@@ -2332,7 +2378,7 @@ static void run_command(char *line) {
 __attribute__((section(".text.entry"), used, noreturn))
 void fadal64_entry(fadal_framebuffer *incoming_framebuffer, fadal_uefi_services *services) {
     static const char debug_banner[] = "FADALOS_CONSOLE_ENTRY\n";
-    char line[LINE_MAX];
+    char *line = terminal_input_buffer;
     u32 length;
     u32 cursor;
     u32 index;
@@ -2371,14 +2417,20 @@ void fadal64_entry(fadal_framebuffer *incoming_framebuffer, fadal_uefi_services 
         line[0] = '\0';
         terminal_input_start = terminal_column;
         terminal_input_limit = LINE_MAX - 1;
+        terminal_input_view_start = 0;
+        terminal_input_rendered_length = 0;
+        terminal_input_view_columns = 0;
         terminal_input_length = 0;
         terminal_input_cursor = 0;
         terminal_input_active = desktop_mode;
         if (desktop_mode != 0) {
             u32 columns = terminal_view_columns();
-            if (columns <= terminal_input_start + 1U) terminal_input_limit = 0;
-            else terminal_input_limit = columns - terminal_input_start - 1U;
-            if (terminal_input_limit >= LINE_MAX) terminal_input_limit = LINE_MAX - 1U;
+            if (columns > terminal_input_start + 1U) {
+                terminal_input_view_columns = columns - terminal_input_start - 1U;
+            }
+            if (terminal_input_view_columns >= LINE_MAX) {
+                terminal_input_view_columns = LINE_MAX - 1U;
+            }
             terminal_column = terminal_input_start;
             desktop_redraw();
         }
@@ -2397,9 +2449,11 @@ void fadal64_entry(fadal_framebuffer *incoming_framebuffer, fadal_uefi_services 
             if (value == '\r' || value == '\n') {
                 line[length] = '\0';
                 if (desktop_mode != 0) {
+                    terminal_edit_redraw(line, length, length);
                     terminal_input_active = 0;
                     terminal_view_offset = 0;
-                    terminal_column = terminal_input_start + length;
+                    terminal_column = terminal_input_start + length -
+                                      terminal_input_view_start;
                     desktop_redraw();
                 }
                 console_write("\r\n");

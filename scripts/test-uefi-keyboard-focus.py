@@ -27,7 +27,8 @@ def send_keys(process: subprocess.Popen[str], keys: tuple[str, ...],
         send_monitor_command(process, f"sendkey {key}", delay=delay)
 
 
-def send_text(process: subprocess.Popen[str], text: str, serial_log: Path) -> None:
+def send_text(process: subprocess.Popen[str], text: str, serial_log: Path,
+              submit: bool = True, delay: float = 0.45) -> None:
     key_names = {" ": "spc", ".": "dot", "/": "slash", "-": "minus"}
     offset = serial_log.stat().st_size if serial_log.exists() else 0
     expected = bytearray()
@@ -36,7 +37,7 @@ def send_text(process: subprocess.Popen[str], text: str, serial_log: Path) -> No
         for attempt in range(3):
             send_monitor_command(process,
                                  f"sendkey {key_names.get(character, character)}",
-                                 delay=0.45)
+                                 delay=delay)
             deadline = time.monotonic() + 1.5
             while time.monotonic() < deadline:
                 data = serial_log.read_bytes() if serial_log.exists() else b""
@@ -49,8 +50,10 @@ def send_text(process: subprocess.Popen[str], text: str, serial_log: Path) -> No
         else:
             recent = serial_log.read_bytes()[offset:] if serial_log.exists() else b""
             raise RuntimeError(f"QEMU did not echo command prefix {expected!r}; observed {recent[-120:]!r}")
+    if not submit:
+        return
     for attempt in range(3):
-        send_monitor_command(process, "sendkey ret", delay=0.45)
+        send_monitor_command(process, "sendkey ret", delay=delay)
         deadline = time.monotonic() + 1.5
         while time.monotonic() < deadline:
             data = serial_log.read_bytes() if serial_log.exists() else b""
@@ -515,17 +518,17 @@ def run_window_resize_checks(process: subprocess.Popen[str], temp: Path,
                               screenshot: Path) -> None:
     mouse = [640, 400]
     state = temp / "window-resize-state.ppm"
+    serial_log = temp / "serial.log"
     wide = screenshot.with_name("window-reflow-wide.ppm")
     narrow = screenshot.with_name("window-reflow-narrow.ppm")
     workspace = (28, 47, 82)
     terminal = (10, 16, 30)
 
-    send_keys(process, ("h", "e", "l", "p", "ret"))
-    time.sleep(0.5)
-    serial = (temp / "serial.log").read_text(errors="replace")
+    send_text(process, "help", serial_log)
+    serial = wait_for_serial_text(serial_log, "commands: help clear pwd", count=2)
     if serial.count("commands: help clear pwd") < 2:
         raise RuntimeError("could not seed a long terminal line for the reflow regression")
-    send_keys(process, ("h", "e", "l"))
+    send_text(process, "hel", serial_log, submit=False)
     move_mouse_to(process, mouse, 1226, 400)
     capture_frame(process, wide)
     wide_region = ppm_region(wide, 292, 154, 1208, 660)
@@ -539,17 +542,48 @@ def run_window_resize_checks(process: subprocess.Popen[str], temp: Path,
         restored_region = ppm_region(state, 292, 154, 1208, 660)
         if restored_region != wide_region:
             mismatch = next(index for index, (actual, expected) in
-                            enumerate(zip(restored_region, wide_region)) if actual != expected)
+                               enumerate(zip(restored_region, wide_region)) if actual != expected)
             pixel = mismatch // 3
             location = (292 + pixel % 916, 154 + pixel // 916)
             raise RuntimeError(f"terminal text was not restored after resize at {location}; "
                                f"captures: {wide}, {narrow}, {state}")
-    send_keys(process, ("p", "ret"))
-    time.sleep(0.5)
-    serial = (temp / "serial.log").read_text(errors="replace")
+    send_text(process, "p", serial_log)
+    serial = wait_for_serial_text(serial_log, "commands: help clear pwd", count=3)
     if serial.count("commands: help clear pwd") < 3:
         raise RuntimeError("the active command editor did not survive repeated resize cycles")
     print("PASS: long output reflows and the active command editor survives repeated resize cycles.")
+
+    send_text(process, "x" * 45, serial_log, submit=False, delay=0.18)
+    editor_wide = screenshot.with_name("window-reflow-editor-wide.ppm")
+    editor_narrow = screenshot.with_name("window-reflow-editor-narrow.ppm")
+    editor_restored = screenshot.with_name("window-reflow-editor-restored.ppm")
+    move_mouse_to(process, mouse, 60, 80)
+    capture_frame(process, editor_wide)
+    editor_region = ppm_region(editor_wide, 292, 154, 1208, 660)
+    drag_mouse(process, mouse, 1226, 400, 640, 400)
+    move_mouse_to(process, mouse, 60, 80)
+    capture_frame(process, editor_narrow)
+    # The payload clamps the right edge to x=690 (window left 270 + 420 minimum).
+    drag_mouse(process, mouse, 688, 400, 1226, 400)
+    move_mouse_to(process, mouse, 60, 80)
+    capture_frame(process, editor_restored)
+    restored_editor_region = ppm_region(editor_restored, 292, 154, 1208, 660)
+    if restored_editor_region != editor_region:
+        mismatch = next(index for index, (actual, expected) in
+                        enumerate(zip(restored_editor_region, editor_region))
+                        if actual != expected)
+        pixel = mismatch // 3
+        location = (292 + pixel % 916, 154 + pixel // 916)
+        raise RuntimeError("long active command was lost or changed after narrow/wide resize; "
+                           f"first difference at {location}; captures: {editor_wide}, "
+                           f"{editor_narrow}, {editor_restored}")
+    serial = serial_log.read_text(errors="replace")
+    missing_command_count = serial.count("command not found")
+    prompt_count = serial.count("fadal:/")
+    send_text(process, "", serial_log)
+    wait_for_serial_text(serial_log, "command not found", count=missing_command_count + 1)
+    wait_for_shell_prompt(serial_log, prompt_count + 1)
+    print("PASS: the full active command is preserved and horizontally scrolled across minimum-width resize.")
 
     drag_mouse(process, mouse, 800, 686, 800, 358)
     for _ in range(5):
@@ -751,28 +785,35 @@ def main() -> int:
             if args.persistent_home:
                 run_persistent_home_checks(process, serial_log, debug_log, args.timeout)
             if args.terminal_input:
-                send_keys(process, ("h", "e", "p", "left", "l", "ret"))
-                time.sleep(0.6)
-                serial = serial_log.read_text(errors="replace") if serial_log.exists() else ""
-                if serial.count("commands: help clear pwd") < 2:
-                    raise RuntimeError("left-arrow insertion did not execute the reconstructed help command")
+                help_count = serial_log.read_text(errors="replace").count("commands: help clear pwd")
+                prompt_count = serial_log.read_text(errors="replace").count("fadal:/")
+                send_keys(process, ("h", "e", "p", "left", "l", "ret"), delay=0.45)
+                serial = wait_for_serial_text(serial_log, "commands: help clear pwd",
+                                              count=help_count + 1, timeout=args.timeout)
+                help_count += 1
+                prompt_count += 1
+                serial = wait_for_shell_prompt(serial_log, prompt_count, args.timeout)
 
                 send_keys(process, ("h", "e", "p", "l", "home", "right", "right",
-                                    "delete", "end", "p", "ret"))
-                time.sleep(0.6)
-                serial = serial_log.read_text(errors="replace") if serial_log.exists() else ""
-                if serial.count("commands: help clear pwd") < 3:
-                    raise RuntimeError("Home/Right/End/Delete editing did not execute the reconstructed help command; "
-                                       "recent output: " + serial[-1200:])
+                                    "delete", "end", "p", "ret"), delay=0.45)
+                serial = wait_for_serial_text(serial_log, "commands: help clear pwd",
+                                              count=help_count + 1, timeout=args.timeout)
+                help_count += 1
+                prompt_count += 1
+                serial = wait_for_shell_prompt(serial_log, prompt_count, args.timeout)
 
-                send_keys(process, ("h", "e", "l", "p", "left", "backspace", "l", "ret"))
-                time.sleep(0.6)
-                serial = serial_log.read_text(errors="replace") if serial_log.exists() else ""
-                if serial.count("commands: help clear pwd") < 4:
-                    raise RuntimeError("mid-line Backspace editing did not execute the reconstructed help command")
+                send_keys(process, ("h", "e", "l", "p", "left", "backspace", "l", "ret"),
+                          delay=0.45)
+                serial = wait_for_serial_text(serial_log, "commands: help clear pwd",
+                                              count=help_count + 1, timeout=args.timeout)
+                help_count += 1
+                prompt_count += 1
+                wait_for_shell_prompt(serial_log, prompt_count, args.timeout)
 
                 for _ in range(30):
-                    send_keys(process, ("l", "s", "ret"))
+                    send_text(process, "ls", serial_log, delay=0.18)
+                    prompt_count += 1
+                    wait_for_shell_prompt(serial_log, prompt_count, args.timeout)
                 send_monitor_command(process, "sendkey pgup", delay=0.45)
                 send_monitor_command(process, f"screendump {args.scroll_screenshot}", delay=0.35)
                 send_monitor_command(process, "sendkey pgdn", delay=0.45)

@@ -193,12 +193,16 @@ make -C kernel/uefi test-window-resize
 The QEMU/OVMF test checks repeated narrow/wide cycles with long output, confirms
 that the active command editor survives those cycles, and checks that a PageUp
 scrollback anchor remains stable and PageDown returns to live output. It also
-checks inward/outward drags on all four edges, a bottom-right corner resize,
-minimum window dimensions, and restoration of the original bounds. Single-edge
-resizing keeps the opposite edge anchored; resizing is clamped to the framebuffer
-work area. Text reflows between soft wraps while preserving explicit newlines;
-the editor remains bounded to the visible prompt row. The final geometry capture
-is `kernel/uefi/out/window-resize.ppm`.
+types a 45-character command, shrinks the terminal to its minimum width, restores
+the original width, and compares the terminal framebuffer region before submitting
+the command. The editor keeps its full 95-character bound and horizontally
+scrolls the visible prompt slice around the cursor instead of truncating input.
+The test also checks inward/outward drags on all four edges, a bottom-right corner
+resize, minimum window dimensions, and restoration of the original bounds.
+Single-edge resizing keeps the opposite edge anchored; resizing is clamped to the
+framebuffer work area. Text reflows between soft wraps while preserving explicit
+newlines. The final geometry capture is
+`kernel/uefi/out/window-resize.ppm`.
 
 Run the persistent-home regression with:
 

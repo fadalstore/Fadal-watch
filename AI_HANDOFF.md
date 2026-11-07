@@ -105,9 +105,10 @@ toos ah lagu tijaabiyay QEMU.
 
 The UEFI terminal interaction milestone is implemented: Left/Right, Home/End,
 insertion at the cursor, Backspace, and Delete edit the current command; PageUp
-and PageDown page through the bounded 64-line scrollback. The editor limits the
-line to the visible prompt row, and the terminal returns to the live tail when a
-new prompt begins.
+and PageDown page through the bounded 64-line scrollback. The editor accepts up
+to 95 characters in fixed storage and horizontally scrolls the visible prompt
+slice to keep the cursor in view, independent of window width. The terminal
+returns to the live tail when a new prompt begins.
 
 Verified commands are `scripts/validate-repo.sh --uefi`,
 `make -C kernel/uefi test-page-protection`,
@@ -133,13 +134,23 @@ edges and corners. Opposite edges stay anchored for single-edge drags; the
 window enforces minimum dimensions and framebuffer work-area bounds. Scrollback
 records whether each boundary is an explicit newline or a soft wrap, then
 reflows retained text to the new width while preserving the user's visible
-scrollback anchor. The active command editor is clipped to the new row capacity.
-The QEMU/OVMF regression verifies repeated shrink/expand cycles, restoration of
-long output, command editing during resize, PageUp/PageDown behavior across
-reflow, edge/corner drags, minimum dimensions, and restored original bounds. Its
-final geometry capture is `kernel/uefi/out/window-resize.ppm`. Keep the BIOS
+scrollback anchor. The active command remains bounded to 95 characters
+independent of window width; the visible prompt slice scrolls horizontally
+around the cursor instead of discarding hidden input. The QEMU/OVMF regression
+types a 45-character command, shrinks to minimum width, restores the original
+width, and compares the terminal framebuffer region before submitting it. It also verifies
+repeated shrink/expand cycles, restoration of long output, command editing during
+resize, PageUp/PageDown behavior across reflow, edge/corner drags, minimum
+dimensions, and restored original bounds. Its final geometry capture is
+`kernel/uefi/out/window-resize.ppm`. Keep the BIOS
 shell and UEFI desktop as separate deliverables. Always boot-test loader or
 compositor changes under QEMU/UTM and inspect the framebuffer.
+
+Next candidate: add bounded terminal text selection and an in-guest copy buffer.
+Design the pointer/keyboard interaction and clipping rules first; do not depend
+on host clipboard integration or introduce unbounded allocation. Cover press,
+drag, release, focus changes, and resize under QEMU/OVMF before treating it as a
+feature milestone.
 
 The persistent-home view is backed by the ESP's `FADALHOME` directory through
 validated loader callbacks. `ls`, `cat PATH`, `write PATH TEXT`, `mkdir PATH`,

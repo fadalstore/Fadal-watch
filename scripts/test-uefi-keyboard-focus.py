@@ -338,6 +338,61 @@ def drag_mouse(process: subprocess.Popen[str], current: list[int],
     send_monitor_command(process, "mouse_button 0", delay=0.3)
 
 
+def run_terminal_selection_checks(process: subprocess.Popen[str], serial_log: Path,
+                                  screenshot: Path, timeout: float) -> None:
+    serial = serial_log.read_text(errors="replace")
+    prompt_count = serial.count("fadal:/")
+    help_count = serial.count("commands: help clear pwd")
+    send_text(process, "clear", serial_log)
+    prompt_count += 1
+    wait_for_shell_prompt(serial_log, prompt_count, timeout)
+    send_text(process, "help", serial_log)
+    wait_for_serial_text(serial_log, "commands: help clear pwd", help_count + 1, timeout)
+    help_count += 1
+    prompt_count += 1
+    wait_for_shell_prompt(serial_log, prompt_count, timeout)
+
+    mouse = [640, 400]
+    # In the cleared 1280x800 desktop, row 1 contains "commands: help ...".
+    drag_mouse(process, mouse, 355, 167, 373, 167)
+    capture_frame(process, screenshot)
+    selected_color = (61, 90, 128)
+    assert_pixel(screenshot, 357, 163, selected_color, "selected terminal text")
+    send_monitor_command(process, "sendkey ctrl-c", delay=0.4)
+
+    focus_capture = screenshot.with_name("terminal-selection-focus-clear.ppm")
+    click_mouse(process, mouse, 80, 300)
+    capture_frame(process, focus_capture)
+    if ppm_pixel(focus_capture, 357, 163) == selected_color:
+        raise RuntimeError("terminal selection highlight remained after focus left the terminal")
+    send_monitor_command(process, "sendkey tab", delay=0.45)
+
+    drag_mouse(process, mouse, 355, 167, 373, 167)
+    drag_mouse(process, mouse, 1226, 400, 1180, 400)
+    drag_mouse(process, mouse, 1180, 400, 1226, 400)
+    resize_capture = screenshot.with_name("terminal-selection-resize-clear.ppm")
+    capture_frame(process, resize_capture)
+    if ppm_pixel(resize_capture, 357, 163) == selected_color:
+        raise RuntimeError("terminal selection highlight remained after resize")
+
+    paste_offset = serial_log.stat().st_size if serial_log.exists() else 0
+    send_monitor_command(process, "sendkey ctrl-v", delay=0.45)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        recent = serial_log.read_bytes()[paste_offset:] if serial_log.exists() else b""
+        if recent.endswith(b"help"):
+            break
+        time.sleep(0.05)
+    else:
+        raise RuntimeError("Ctrl+V did not paste the copied word from FadalOS's guest buffer")
+    send_monitor_command(process, "sendkey ret", delay=0.45)
+    wait_for_serial_text(serial_log, "commands: help clear pwd", help_count + 1, timeout)
+    wait_for_shell_prompt(serial_log, prompt_count + 1, timeout)
+    print("PASS: mouse drag selects terminal text and paints the selection highlight.")
+    print("PASS: Ctrl+C/Ctrl+V use the bounded guest copy buffer; focus loss and resize clear the highlight.")
+    print(f"Text-selection capture: {screenshot.resolve()}")
+
+
 def capture_frame(process: subprocess.Popen[str], path: Path) -> None:
     send_monitor_command(process, f"screendump {path}", delay=0.3)
     if not path.is_file() or path.stat().st_size < 1024:
@@ -685,6 +740,8 @@ def main() -> int:
                         default=root / "kernel/uefi/out/keyboard-focus.ppm")
     parser.add_argument("--terminal-input", action="store_true",
                         help="also test cursor editing and PageUp/PageDown scrollback")
+    parser.add_argument("--terminal-selection", action="store_true",
+                        help="test mouse selection and the in-guest copy/paste buffer")
     parser.add_argument("--window-controls", action="store_true",
                         help="also test terminal minimize/maximize/restore/close with the PS/2 mouse")
     parser.add_argument("--window-resize", action="store_true",
@@ -699,6 +756,8 @@ def main() -> int:
                         default=root / "kernel/uefi/out/terminal-scrollback.ppm")
     parser.add_argument("--tail-screenshot", type=Path,
                         default=root / "kernel/uefi/out/terminal-tail.ppm")
+    parser.add_argument("--selection-screenshot", type=Path,
+                        default=root / "kernel/uefi/out/terminal-selection.ppm")
     parser.add_argument("--timeout", type=float, default=20.0)
     args = parser.parse_args()
 
@@ -717,6 +776,9 @@ def main() -> int:
         args.tail_screenshot.parent.mkdir(parents=True, exist_ok=True)
         args.scroll_screenshot.unlink(missing_ok=True)
         args.tail_screenshot.unlink(missing_ok=True)
+    if args.terminal_selection:
+        args.selection_screenshot.parent.mkdir(parents=True, exist_ok=True)
+        args.selection_screenshot.unlink(missing_ok=True)
     with tempfile.TemporaryDirectory(prefix="fadal-focus-") as temporary:
         temp = Path(temporary)
         test_image = temp / "fadal-uefi-test.img"
@@ -826,6 +888,11 @@ def main() -> int:
                 print("PASS: PageUp/PageDown changed and restored the terminal scrollback view.")
                 print(f"Scrollback capture: {args.scroll_screenshot.resolve()}")
                 print(f"Tail capture: {args.tail_screenshot.resolve()}")
+            if args.terminal_selection:
+                args.selection_screenshot.parent.mkdir(parents=True, exist_ok=True)
+                args.selection_screenshot.unlink(missing_ok=True)
+                run_terminal_selection_checks(process, serial_log,
+                                              args.selection_screenshot, args.timeout)
             if args.window_controls:
                 args.window_screenshot.parent.mkdir(parents=True, exist_ok=True)
                 args.window_screenshot.unlink(missing_ok=True)

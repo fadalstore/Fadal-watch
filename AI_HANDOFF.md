@@ -114,6 +114,7 @@ Verified commands are `scripts/validate-repo.sh --uefi`,
 `make -C kernel/uefi test-page-protection`,
 `make -C kernel/uefi test-keyboard-focus`,
 `make -C kernel/uefi test-terminal-input`,
+`make -C kernel/uefi test-terminal-selection`,
 `make -C kernel/uefi test-window-controls`,
 `make -C kernel/uefi test-window-resize`, and
 `make -C kernel/uefi test-persistent-home`. The focus regression boots the
@@ -122,8 +123,9 @@ shell, then returns focus and executes `help`. The terminal-input regression
 reconstructs commands through cursor editing and verifies that PageUp/PageDown
 change and restore the framebuffer view. Inspect
 `kernel/uefi/out/keyboard-focus.ppm`,
-`kernel/uefi/out/terminal-scrollback.ppm`, and
-`kernel/uefi/out/terminal-tail.ppm`, and
+`kernel/uefi/out/terminal-scrollback.ppm`,
+`kernel/uefi/out/terminal-tail.ppm`,
+`kernel/uefi/out/terminal-selection.ppm`, and
 `kernel/uefi/out/window-controls.ppm`. The window regression drives the PS/2
 mouse and verifies maximize/restore geometry, minimize/taskbar restore, close,
 and reopening the retained terminal session from Start. The isolated protection test must report
@@ -146,11 +148,21 @@ dimensions, and restored original bounds. Its final geometry capture is
 shell and UEFI desktop as separate deliverables. Always boot-test loader or
 compositor changes under QEMU/UTM and inspect the framebuffer.
 
-Next candidate: add bounded terminal text selection and an in-guest copy buffer.
-Design the pointer/keyboard interaction and clipping rules first; do not depend
-on host clipboard integration or introduce unbounded allocation. Cover press,
-drag, release, focus changes, and resize under QEMU/OVMF before treating it as a
-feature milestone.
+Terminal text selection and guest-local copy/paste are implemented. Left-button
+drag selects visible row/column cells, `Ctrl+C` copies into a fixed 4 KiB buffer,
+and `Ctrl+V` inserts printable text at the active command cursor, converting
+line breaks to spaces and respecting the 95-character command bound. Selection
+highlight is cancelled on focus loss, output, scrollback movement, and resize;
+the guest clipboard remains independent of any host clipboard. The standalone
+QEMU/OVMF regression verifies the highlight, copy/paste of `help`, focus/resize
+cancellation, and retains `kernel/uefi/out/terminal-selection.ppm`. Both the
+standalone selection regression and the broader terminal-input regression passed
+in the current validation run.
+
+Next milestone: add a small bounded terminal command history navigated with
+Up/Down. Keep it guest-local and freestanding, preserve the active editor when
+cycling through history, and add deterministic QEMU coverage for wraparound,
+empty commands, and editing a recalled command.
 
 The persistent-home view is backed by the ESP's `FADALHOME` directory through
 validated loader callbacks. `ls`, `cat PATH`, `write PATH TEXT`, `mkdir PATH`,

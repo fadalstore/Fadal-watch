@@ -74,7 +74,7 @@ OBJCOPY_FLAGS := \
 	--target=efi-app-x86_64
 
 .PHONY: all check check-toolchain payload image page-protection-efi \
-	test-page-protection test-keyboard-focus test-terminal-input \
+	test-page-protection test-keyboard-focus test-terminal-input test-terminal-selection \
 	test-window-controls test-window-resize test-persistent-home clean help
 
 all: $(BOOT_EFI)
@@ -178,6 +178,16 @@ test-terminal-input: check payload
 		--scroll-screenshot "$(abspath $(TERMINAL_SCROLL_SCREEN))" \
 			--tail-screenshot "$(abspath $(TERMINAL_TAIL_SCREEN))"
 
+test-terminal-selection: check payload
+	@rm -f "$(FOCUS_TEST_IMAGE)"
+	UEFI_IMAGE="$(abspath $(FOCUS_TEST_IMAGE))" \
+		$(MAKE) image UEFI_KERNEL="$(abspath $(PAYLOAD_BIN))"
+	python3 "$(FOCUS_TEST_SCRIPT)" --image "$(abspath $(FOCUS_TEST_IMAGE))" \
+		--qemu "$(QEMU)" --ovmf-code "$(OVMF_CODE)" \
+		--ovmf-vars "$(OVMF_VARS)" --terminal-selection \
+		--screenshot "$(abspath $(FOCUS_TEST_SCREEN))" \
+		--selection-screenshot "$(abspath $(OUT)/terminal-selection.ppm)"
+
 test-window-controls: check payload
 	@rm -f "$(FOCUS_TEST_IMAGE)"
 	UEFI_IMAGE="$(abspath $(FOCUS_TEST_IMAGE))" \
@@ -248,6 +258,7 @@ help:
 	@echo "make test-page-protection  run test under QEMU/OVMF + isa-debug-exit"
 	@echo "make test-keyboard-focus  test UEFI keyboard focus routing in QEMU/OVMF"
 	@echo "make test-terminal-input  test line editing and scrollback in QEMU/OVMF"
+	@echo "make test-terminal-selection test mouse text selection and guest copy/paste"
 	@echo "make test-window-controls test terminal window controls with QEMU/OVMF mouse"
 	@echo "make test-window-resize   test terminal edge/corner resize with QEMU/OVMF mouse"
 	@echo "make test-persistent-home test ESP-backed home files across a QEMU/OVMF reboot"

@@ -155,6 +155,22 @@ The captures are `kernel/uefi/out/terminal-scrollback.ppm` and
 visible prompt row; the terminal follows new output by default, and the paging
 keys move through the retained 64-line history.
 
+Run the terminal-selection and guest clipboard regression with:
+
+```sh
+make -C kernel/uefi test-terminal-selection
+```
+
+It drags across the visible `help` output, verifies the selection highlight in a
+framebuffer pixel, copies with `Ctrl+C`, and pastes/executes the copied command
+with `Ctrl+V`. It also checks that focus loss and resize remove the visible
+selection while leaving the bounded guest clipboard usable. Selection covers
+visible terminal cells only; the fixed 4 KiB copy buffer is separate from the
+host clipboard, and pasted line breaks become spaces. The capture is
+`kernel/uefi/out/terminal-selection.ppm`. The broader `test-terminal-input`
+regression remains focused on cursor editing and scrollback; run the dedicated
+selection target separately for this coverage.
+
 Run the terminal window-controls regression with:
 
 ```sh

@@ -399,6 +399,75 @@ def capture_frame(process: subprocess.Popen[str], path: Path) -> None:
         raise RuntimeError(f"QEMU did not produce framebuffer capture: {path}")
 
 
+def run_terminal_history_checks(process: subprocess.Popen[str], serial_log: Path,
+                                screenshot: Path, timeout: float) -> None:
+    def count(text: str) -> int:
+        return serial_log.read_text(errors="replace").count(text)
+
+    prompt_count = count("fadal:/")
+    send_monitor_command(process, "sendkey ret", delay=0.4)
+    prompt_count += 1
+    wait_for_shell_prompt(serial_log, prompt_count, timeout)
+
+    help_count = count("commands: help clear pwd")
+    send_monitor_command(process, "sendkey up", delay=0.35)
+    send_monitor_command(process, "sendkey ret", delay=0.4)
+    wait_for_serial_text(serial_log, "commands: help clear pwd", help_count + 1, timeout)
+    prompt_count += 1
+    wait_for_shell_prompt(serial_log, prompt_count, timeout)
+    print("PASS: an empty Enter did not become a history entry; Up recalled the last command.")
+
+    home_count = count("/home/root\n")
+    send_text(process, "pwd", serial_log, submit=False)
+    send_monitor_command(process, "sendkey up", delay=0.35)
+    send_monitor_command(process, "sendkey down", delay=0.35)
+    send_monitor_command(process, "sendkey ret", delay=0.4)
+    wait_for_serial_text(serial_log, "/home/root\n", home_count + 1, timeout)
+    prompt_count += 1
+    wait_for_shell_prompt(serial_log, prompt_count, timeout)
+    print("PASS: Down restored the unsent draft after browsing command history.")
+
+    root_count = count("\nroot\n")
+    send_monitor_command(process, "sendkey up", delay=0.35)
+    send_monitor_command(process, "sendkey home", delay=0.35)
+    for _ in range(3):
+        send_monitor_command(process, "sendkey delete", delay=0.35)
+    send_text(process, "whoami", serial_log)
+    wait_for_serial_text(serial_log, "\nroot\n", root_count + 1, timeout)
+    prompt_count += 1
+    wait_for_shell_prompt(serial_log, prompt_count, timeout)
+    print("PASS: a recalled command remained editable and executed after replacement.")
+
+    sequence = (
+        ("cd /etc", "directory changed"),
+        ("whoami", "\nroot\n"),
+        ("pwd", "/etc\n"),
+        ("uname", "FadalOS fadal64 0.1.0 UEFI x86_64 console"),
+        ("cd /home/root", "directory changed"),
+        ("pwd", "/home/root\n"),
+        ("whoami", "\nroot\n"),
+        ("uname", "FadalOS fadal64 0.1.0 UEFI x86_64 console"),
+        ("pwd", "/home/root\n"),
+    )
+    for command, result in sequence:
+        result_count = count(result)
+        send_text(process, command, serial_log)
+        wait_for_serial_text(serial_log, result, result_count + 1, timeout)
+        prompt_count += 1
+        wait_for_shell_prompt(serial_log, prompt_count, timeout)
+
+    for _ in range(9):
+        send_monitor_command(process, "sendkey up", delay=0.3)
+    capture_frame(process, screenshot)
+    oldest_count = count("\nroot\n")
+    send_monitor_command(process, "sendkey ret", delay=0.4)
+    wait_for_serial_text(serial_log, "\nroot\n", oldest_count + 1, timeout)
+    prompt_count += 1
+    wait_for_shell_prompt(serial_log, prompt_count, timeout)
+    print("PASS: history wraps at eight retained commands and clamps at the oldest entry.")
+    print(f"Terminal-history capture: {screenshot.resolve()}")
+
+
 def prepare_files_scroll_fixture(image: Path, temp: Path) -> None:
     required = ("mdir", "mmd", "mcopy")
     missing = [tool for tool in required if shutil.which(tool) is None]
@@ -742,6 +811,8 @@ def main() -> int:
                         help="also test cursor editing and PageUp/PageDown scrollback")
     parser.add_argument("--terminal-selection", action="store_true",
                         help="test mouse selection and the in-guest copy/paste buffer")
+    parser.add_argument("--terminal-history", action="store_true",
+                        help="test bounded Up/Down command history and editor draft restoration")
     parser.add_argument("--window-controls", action="store_true",
                         help="also test terminal minimize/maximize/restore/close with the PS/2 mouse")
     parser.add_argument("--window-resize", action="store_true",
@@ -758,6 +829,8 @@ def main() -> int:
                         default=root / "kernel/uefi/out/terminal-tail.ppm")
     parser.add_argument("--selection-screenshot", type=Path,
                         default=root / "kernel/uefi/out/terminal-selection.ppm")
+    parser.add_argument("--history-screenshot", type=Path,
+                        default=root / "kernel/uefi/out/terminal-history.ppm")
     parser.add_argument("--timeout", type=float, default=20.0)
     args = parser.parse_args()
 
@@ -779,6 +852,9 @@ def main() -> int:
     if args.terminal_selection:
         args.selection_screenshot.parent.mkdir(parents=True, exist_ok=True)
         args.selection_screenshot.unlink(missing_ok=True)
+    if args.terminal_history:
+        args.history_screenshot.parent.mkdir(parents=True, exist_ok=True)
+        args.history_screenshot.unlink(missing_ok=True)
     with tempfile.TemporaryDirectory(prefix="fadal-focus-") as temporary:
         temp = Path(temporary)
         test_image = temp / "fadal-uefi-test.img"
@@ -893,6 +969,11 @@ def main() -> int:
                 args.selection_screenshot.unlink(missing_ok=True)
                 run_terminal_selection_checks(process, serial_log,
                                               args.selection_screenshot, args.timeout)
+            if args.terminal_history:
+                args.history_screenshot.parent.mkdir(parents=True, exist_ok=True)
+                args.history_screenshot.unlink(missing_ok=True)
+                run_terminal_history_checks(process, serial_log,
+                                            args.history_screenshot, args.timeout)
             if args.window_controls:
                 args.window_screenshot.parent.mkdir(parents=True, exist_ok=True)
                 args.window_screenshot.unlink(missing_ok=True)

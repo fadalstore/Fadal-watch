@@ -53,6 +53,7 @@ const u8 fadal64_layout[40] = {
 #define LINE_MAX 96
 #define SHELL_PATH_MAX 128
 #define EVENT_QUEUE_SIZE 32
+#define COMMAND_HISTORY_COUNT 8
 #define TERMINAL_ROWS 64
 #define TERMINAL_COLUMNS 160
 #define TERMINAL_SELECTION_MAX 4096
@@ -162,6 +163,12 @@ static u32 terminal_input_rendered_length;
 static u32 terminal_input_cursor;
 static u8 terminal_input_active;
 static char terminal_input_buffer[LINE_MAX];
+static char terminal_command_history[COMMAND_HISTORY_COUNT][LINE_MAX];
+static char terminal_history_draft[LINE_MAX];
+static u32 terminal_history_next;
+static u32 terminal_history_used;
+static u32 terminal_history_navigation;
+static u32 terminal_history_draft_length;
 static u8 terminal_selection_valid;
 static u8 terminal_selection_dragging;
 static u32 terminal_selection_anchor_row;
@@ -2531,6 +2538,35 @@ static void run_command(char *line) {
     }
 }
 
+static void terminal_history_store(const char *line, u32 length) {
+    u32 index;
+    u32 slot;
+    if (length == 0) return;
+    if (length >= LINE_MAX) length = LINE_MAX - 1U;
+    slot = terminal_history_next;
+    for (index = 0; index < length; index++)
+        terminal_command_history[slot][index] = line[index];
+    terminal_command_history[slot][length] = '\0';
+    terminal_history_next = (slot + 1U) % COMMAND_HISTORY_COUNT;
+    if (terminal_history_used < COMMAND_HISTORY_COUNT) terminal_history_used++;
+    terminal_history_navigation = 0;
+}
+
+static void terminal_history_load(u32 offset, char *line, u32 *length, u32 *cursor) {
+    u32 slot;
+    u32 index;
+    if (offset == 0 || offset > terminal_history_used) return;
+    slot = (terminal_history_next + COMMAND_HISTORY_COUNT - offset) %
+           COMMAND_HISTORY_COUNT;
+    for (index = 0; index < LINE_MAX - 1U &&
+         terminal_command_history[slot][index] != '\0'; index++) {
+        line[index] = terminal_command_history[slot][index];
+    }
+    line[index] = '\0';
+    *length = index;
+    *cursor = index;
+}
+
 __attribute__((section(".text.entry"), used, noreturn))
 void fadal64_entry(fadal_framebuffer *incoming_framebuffer, fadal_uefi_services *services) {
     static const char debug_banner[] = "FADALOS_CONSOLE_ENTRY\n";
@@ -2571,6 +2607,8 @@ void fadal64_entry(fadal_framebuffer *incoming_framebuffer, fadal_uefi_services 
         length = 0;
         cursor = 0;
         line[0] = '\0';
+        terminal_history_navigation = 0;
+        terminal_history_draft_length = 0;
         terminal_input_start = terminal_column;
         terminal_input_limit = LINE_MAX - 1;
         terminal_input_view_start = 0;
@@ -2613,6 +2651,7 @@ void fadal64_entry(fadal_framebuffer *incoming_framebuffer, fadal_uefi_services 
                     desktop_redraw();
                 }
                 console_write("\r\n");
+                terminal_history_store(line, length);
                 run_command(line);
                 if (value == '\r') suppress_lf = 1;
                 break;
@@ -2651,6 +2690,36 @@ void fadal64_entry(fadal_framebuffer *incoming_framebuffer, fadal_uefi_services 
                     length++;
                     line[length] = '\0';
                     serial_putc(paste_character);
+                }
+                terminal_edit_redraw(line, length, cursor);
+                continue;
+            }
+            if (value == KEY_UP) {
+                if (terminal_history_used == 0) continue;
+                if (terminal_history_navigation == 0) {
+                    for (index = 0; index <= length; index++)
+                        terminal_history_draft[index] = line[index];
+                    terminal_history_draft_length = length;
+                }
+                if (terminal_history_navigation < terminal_history_used)
+                    terminal_history_navigation++;
+                terminal_history_load(terminal_history_navigation, line,
+                                      &length, &cursor);
+                terminal_edit_redraw(line, length, cursor);
+                continue;
+            }
+            if (value == KEY_DOWN) {
+                if (terminal_history_navigation == 0) continue;
+                if (terminal_history_navigation > 1U) {
+                    terminal_history_navigation--;
+                    terminal_history_load(terminal_history_navigation, line,
+                                          &length, &cursor);
+                } else {
+                    terminal_history_navigation = 0;
+                    length = terminal_history_draft_length;
+                    for (index = 0; index <= length; index++)
+                        line[index] = terminal_history_draft[index];
+                    cursor = length;
                 }
                 terminal_edit_redraw(line, length, cursor);
                 continue;

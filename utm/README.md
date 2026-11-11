@@ -34,8 +34,11 @@ help clear pwd ls cd cat write whoami id uname fscan user drivers net download r
 ```
 
 The console accepts input from both UTM's **Terminal** serial window and the
-emulated PS/2 keyboard. The payload handles Shift, Backspace, and Enter,
-waits for UART transmit readiness, filters scan-code break events, and treats
+emulated PS/2 keyboard. In the graphical terminal, Up/Down recall the last eight
+non-empty submitted commands; Down restores the unsent line saved before history
+navigation. The history is kept in guest memory and clears on reboot. The
+payload handles Shift, Backspace, and Enter, waits for UART transmit readiness,
+filters scan-code break events, and treats
 CRLF from mobile terminals as one Enter key. This prevents repeated empty
 prompts and garbled key sequences when using UTM SE.
 

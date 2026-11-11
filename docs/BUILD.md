@@ -171,6 +171,19 @@ host clipboard, and pasted line breaks become spaces. The capture is
 regression remains focused on cursor editing and scrollback; run the dedicated
 selection target separately for this coverage.
 
+Run the terminal command-history regression with:
+
+```sh
+make -C kernel/uefi test-terminal-history
+```
+
+The QEMU/OVMF test verifies that empty submissions are not saved, Up recalls the
+last non-empty command, Down restores an unsent draft, and recalled commands can
+be edited before execution. It submits nine distinct commands and confirms the
+fixed eight-entry history wraps and clamps at the oldest retained command. The
+history is bounded guest memory and is not persistent across reboot. The final
+framebuffer is saved to `kernel/uefi/out/terminal-history.ppm`.
+
 Run the terminal window-controls regression with:
 
 ```sh

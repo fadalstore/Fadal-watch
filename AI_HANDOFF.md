@@ -110,11 +110,12 @@ to 95 characters in fixed storage and horizontally scrolls the visible prompt
 slice to keep the cursor in view, independent of window width. The terminal
 returns to the live tail when a new prompt begins.
 
-Verified commands are `scripts/validate-repo.sh --uefi`,
+The established regression commands are `scripts/validate-repo.sh --uefi`,
 `make -C kernel/uefi test-page-protection`,
 `make -C kernel/uefi test-keyboard-focus`,
 `make -C kernel/uefi test-terminal-input`,
 `make -C kernel/uefi test-terminal-selection`,
+`make -C kernel/uefi test-terminal-history`,
 `make -C kernel/uefi test-window-controls`,
 `make -C kernel/uefi test-window-resize`, and
 `make -C kernel/uefi test-persistent-home`. The focus regression boots the
@@ -125,7 +126,8 @@ change and restore the framebuffer view. Inspect
 `kernel/uefi/out/keyboard-focus.ppm`,
 `kernel/uefi/out/terminal-scrollback.ppm`,
 `kernel/uefi/out/terminal-tail.ppm`,
-`kernel/uefi/out/terminal-selection.ppm`, and
+`kernel/uefi/out/terminal-selection.ppm`,
+`kernel/uefi/out/terminal-history.ppm`, and
 `kernel/uefi/out/window-controls.ppm`. The window regression drives the PS/2
 mouse and verifies maximize/restore geometry, minimize/taskbar restore, close,
 and reopening the retained terminal session from Start. The isolated protection test must report
@@ -159,10 +161,29 @@ cancellation, and retains `kernel/uefi/out/terminal-selection.ppm`. Both the
 standalone selection regression and the broader terminal-input regression passed
 in the current validation run.
 
-Next milestone: add a small bounded terminal command history navigated with
-Up/Down. Keep it guest-local and freestanding, preserve the active editor when
-cycling through history, and add deterministic QEMU coverage for wraparound,
-empty commands, and editing a recalled command.
+The UEFI terminal command history is implemented as an eight-entry fixed ring of
+non-empty submitted commands. Up walks newest to oldest, Down walks forward and
+restores the draft captured before the first recall, and recalled commands remain
+editable. Empty submissions are not added; history is volatile guest memory and
+does not survive reboot. `make -C kernel/uefi test-terminal-history` passed under
+QEMU/OVMF and checks empty submission, recall, draft restore, recalled-command
+editing, and wraparound after nine distinct commands. Inspect
+`kernel/uefi/out/terminal-history.ppm`.
+
+Latest full validation passed `scripts/validate-repo.sh --uefi`; keyboard focus,
+terminal input, selection, history, window resize/reflow, and NX/read-only page
+protection QEMU checks also passed. The window-controls regression reached its
+Files/Browser checks but failed two reruns at different Files navigation
+assertions (Backspace from Downloads and Up to the first page), so that target is
+currently flaky and is not claimed as a pass for this revision. The
+persistent-home guest serial checks passed through reboot, but the Make target's
+final host-side `mcopy` check did not find `PERSIST` in its source image; resolve
+that artifact flow before claiming the full wrapper target passes.
+
+Next candidate: add a bounded, read-only `history` shell command that prints the
+retained entries in oldest-to-newest order, then test ordering and truncation at
+the ring capacity. Keep persistence out of scope until storage permissions and
+privacy semantics are explicitly designed.
 
 The persistent-home view is backed by the ESP's `FADALHOME` directory through
 validated loader callbacks. `ls`, `cat PATH`, `write PATH TEXT`, `mkdir PATH`,

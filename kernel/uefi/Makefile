@@ -188,6 +188,16 @@ test-terminal-selection: check payload
 		--screenshot "$(abspath $(FOCUS_TEST_SCREEN))" \
 		--selection-screenshot "$(abspath $(OUT)/terminal-selection.ppm)"
 
+test-terminal-history: check payload
+	@rm -f "$(FOCUS_TEST_IMAGE)"
+	UEFI_IMAGE="$(abspath $(FOCUS_TEST_IMAGE))" \
+		$(MAKE) image UEFI_KERNEL="$(abspath $(PAYLOAD_BIN))"
+	python3 "$(FOCUS_TEST_SCRIPT)" --image "$(abspath $(FOCUS_TEST_IMAGE))" \
+		--qemu "$(QEMU)" --ovmf-code "$(OVMF_CODE)" \
+		--ovmf-vars "$(OVMF_VARS)" --terminal-history \
+		--screenshot "$(abspath $(FOCUS_TEST_SCREEN))" \
+		--history-screenshot "$(abspath $(OUT)/terminal-history.ppm)"
+
 test-window-controls: check payload
 	@rm -f "$(FOCUS_TEST_IMAGE)"
 	UEFI_IMAGE="$(abspath $(FOCUS_TEST_IMAGE))" \

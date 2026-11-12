@@ -167,8 +167,10 @@ restores the draft captured before the first recall, and recalled commands remai
 editable. Empty submissions are not added; history is volatile guest memory and
 does not survive reboot. `make -C kernel/uefi test-terminal-history` passed under
 QEMU/OVMF and checks empty submission, recall, draft restore, recalled-command
-editing, and wraparound after nine distinct commands. Inspect
-`kernel/uefi/out/terminal-history.ppm`.
+editing, and wraparound after nine distinct commands. The `history` builtin
+lists the retained eight entries oldest-to-newest, including its own invocation
+as the newest normal submission. The regression compares the exact ordered list.
+Inspect `kernel/uefi/out/terminal-history.ppm`.
 
 Latest full validation passed `scripts/validate-repo.sh --uefi`; keyboard focus,
 terminal input, selection, history, window resize/reflow, and NX/read-only page
@@ -180,10 +182,13 @@ persistent-home guest serial checks passed through reboot, but the Make target's
 final host-side `mcopy` check did not find `PERSIST` in its source image; resolve
 that artifact flow before claiming the full wrapper target passes.
 
-Next candidate: add a bounded, read-only `history` shell command that prints the
-retained entries in oldest-to-newest order, then test ordering and truncation at
-the ring capacity. Keep persistence out of scope until storage permissions and
-privacy semantics are explicitly designed.
+Phase 2 is now formally planned in `docs/PHASE2_PLAN.md`. P2.1 (the bounded UEFI
+`history` builtin) is complete. The next milestone is P2.2: diagnose and fix the
+existing `test-window-controls` Files-navigation flakiness and the
+`test-persistent-home` host-side image-extraction mismatch without weakening
+assertions. After those regression gates are reliable, write the P2.3 BIOS
+runtime architecture decision. Keep persistent command history out of scope until
+storage permissions and privacy semantics are explicitly designed.
 
 The persistent-home view is backed by the ESP's `FADALHOME` directory through
 validated loader callbacks. `ls`, `cat PATH`, `write PATH TEXT`, `mkdir PATH`,

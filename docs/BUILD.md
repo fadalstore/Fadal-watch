@@ -180,8 +180,10 @@ make -C kernel/uefi test-terminal-history
 The QEMU/OVMF test verifies that empty submissions are not saved, Up recalls the
 last non-empty command, Down restores an unsent draft, and recalled commands can
 be edited before execution. It submits nine distinct commands and confirms the
-fixed eight-entry history wraps and clamps at the oldest retained command. The
-history is bounded guest memory and is not persistent across reboot. The final
+fixed eight-entry history wraps and clamps at the oldest retained command. It
+then runs the `history` built-in and compares the exact eight listed commands in
+oldest-to-newest order, including the submitted `history` command. The history
+is bounded guest memory and is not persistent across reboot. The final
 framebuffer is saved to `kernel/uefi/out/terminal-history.ppm`.
 
 Run the terminal window-controls regression with:

@@ -2455,10 +2455,30 @@ static void print_uid(void) {
     else console_write("1000");
 }
 
+static void terminal_history_print(void) {
+    u32 index;
+    u32 slot;
+    if (terminal_history_used == 0) {
+        console_write("history: empty\r\n");
+        return;
+    }
+    console_write("Command history (oldest first):\r\n");
+    slot = (terminal_history_next + COMMAND_HISTORY_COUNT - terminal_history_used) %
+           COMMAND_HISTORY_COUNT;
+    for (index = 0; index < terminal_history_used; index++) {
+        console_write("  ");
+        console_write(terminal_command_history[slot]);
+        console_write("\r\n");
+        slot = (slot + 1U) % COMMAND_HISTORY_COUNT;
+    }
+}
+
 static void run_command(char *line) {
     if (line[0] == '\0') return;
     if (f_streq(line, "help")) {
-        console_write("commands: help clear pwd ls cd cat write mkdir rm whoami id uname fscan user drivers net download restart reboot shutdown poweroff exit\r\n");
+        console_write("commands: help clear pwd ls cd cat write mkdir rm whoami id uname fscan user drivers net download restart reboot shutdown poweroff exit history\r\n");
+    } else if (f_streq(line, "history")) {
+        terminal_history_print();
     } else if (f_streq(line, "clear")) {
         console_clear();
     } else if (f_streq(line, "pwd")) {

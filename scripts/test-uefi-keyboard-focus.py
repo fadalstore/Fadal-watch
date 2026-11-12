@@ -404,6 +404,9 @@ def run_terminal_history_checks(process: subprocess.Popen[str], serial_log: Path
     def count(text: str) -> int:
         return serial_log.read_text(errors="replace").count(text)
 
+    if "poweroff exit history" not in serial_log.read_text(errors="replace"):
+        raise RuntimeError("help does not list the history command")
+
     prompt_count = count("fadal:/")
     send_monitor_command(process, "sendkey ret", delay=0.4)
     prompt_count += 1
@@ -458,13 +461,28 @@ def run_terminal_history_checks(process: subprocess.Popen[str], serial_log: Path
 
     for _ in range(9):
         send_monitor_command(process, "sendkey up", delay=0.3)
-    capture_frame(process, screenshot)
     oldest_count = count("\nroot\n")
     send_monitor_command(process, "sendkey ret", delay=0.4)
     wait_for_serial_text(serial_log, "\nroot\n", oldest_count + 1, timeout)
     prompt_count += 1
     wait_for_shell_prompt(serial_log, prompt_count, timeout)
     print("PASS: history wraps at eight retained commands and clamps at the oldest entry.")
+
+    marker = "Command history (oldest first):"
+    marker_count = count(marker)
+    send_text(process, "history", serial_log)
+    serial = wait_for_serial_text(serial_log, marker, marker_count + 1, timeout)
+    prompt_count += 1
+    serial = wait_for_shell_prompt(serial_log, prompt_count, timeout)
+    output = serial.rsplit(marker, 1)[1].split("fadal:/home/root#", 1)[0]
+    actual = [line[2:] for line in output.replace("\r", "").splitlines()
+              if line.startswith("  ")]
+    expected = ["uname", "cd /home/root", "pwd", "whoami",
+                "uname", "pwd", "whoami", "history"]
+    if actual != expected:
+        raise RuntimeError(f"history output is not the expected oldest-to-newest ring: {actual!r}")
+    capture_frame(process, screenshot)
+    print("PASS: history lists exactly eight retained commands oldest-to-newest.")
     print(f"Terminal-history capture: {screenshot.resolve()}")
 
 

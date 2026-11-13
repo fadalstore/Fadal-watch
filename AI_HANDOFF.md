@@ -172,23 +172,28 @@ lists the retained eight entries oldest-to-newest, including its own invocation
 as the newest normal submission. The regression compares the exact ordered list.
 Inspect `kernel/uefi/out/terminal-history.ppm`.
 
-Latest full validation passed `scripts/validate-repo.sh --uefi`; keyboard focus,
-terminal input, selection, history, window resize/reflow, and NX/read-only page
-protection QEMU checks also passed. The window-controls regression reached its
-Files/Browser checks but failed two reruns at different Files navigation
-assertions (Backspace from Downloads and Up to the first page), so that target is
-currently flaky and is not claimed as a pass for this revision. The
-persistent-home guest serial checks passed through reboot, but the Make target's
-final host-side `mcopy` check did not find `PERSIST` in its source image; resolve
-that artifact flow before claiming the full wrapper target passes.
+Latest validation passed `scripts/validate-repo.sh --uefi` after the final
+test-harness and documentation edits; the freestanding BIOS build/smoke test,
+UEFI build, and page-protection EFI build checks passed. P2.2 is complete. The
+window-controls regression synchronizes against
+the Files titlebar and exact selected-row pixel, so an incomplete framebuffer
+redraw cannot be mistaken for a navigation event. Its HMP key helper permits at
+most three deliveries and accepts a step only after the expected selection and
+window state are visible; recovered retries are reported. Three consecutive
+post-fix QEMU/OVMF runs passed, with one run logging two recovered `Down`
+injections. The persistent-home test now boots directly from the same image that
+Make checks with `mcopy`; two complete QEMU/OVMF runs passed the guest reboot
+assertions and host-side exact `PERSIST` byte comparison, deleted-file checks,
+and nested-directory checks.
 
-Phase 2 is now formally planned in `docs/PHASE2_PLAN.md`. P2.1 (the bounded UEFI
-`history` builtin) is complete. The next milestone is P2.2: diagnose and fix the
-existing `test-window-controls` Files-navigation flakiness and the
-`test-persistent-home` host-side image-extraction mismatch without weakening
-assertions. After those regression gates are reliable, write the P2.3 BIOS
-runtime architecture decision. Keep persistent command history out of scope until
-storage permissions and privacy semantics are explicitly designed.
+Phase 2 is tracked in `docs/PHASE2_PLAN.md`. P2.1 (the bounded UEFI `history`
+builtin), P2.2 (test-suite reliability), and P2.3 (BIOS runtime architecture
+decision) are complete. [ADR 0001](docs/adr/0001-bios-runtime-architecture.md)
+keeps the existing i386 BIOS runtime and defers a separate x86-64 BIOS path. P2.4
+is next: test a bounded 16-to-64 MiB non-PAE identity-map and E820 allocator
+extension under QEMU, preserving the current disk image, syscall 1–34 ABI, and
+smoke trace. Keep persistent command history out of scope until storage
+permissions and privacy semantics are explicitly designed.
 
 The persistent-home view is backed by the ESP's `FADALHOME` directory through
 validated loader callbacks. `ls`, `cat PATH`, `write PATH TEXT`, `mkdir PATH`,

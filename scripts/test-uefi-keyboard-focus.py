@@ -523,10 +523,43 @@ def assert_pixel(path: Path, x: int, y: int, expected: tuple[int, int, int],
         raise RuntimeError(f"{state}: pixel {(x, y)} was {actual}, expected {expected}")
 
 
+def wait_for_region_state(process: subprocess.Popen[str], path: Path,
+                          bounds: tuple[int, int, int, int], expected: bytes,
+                          state: str, timeout: float = 4.0) -> bytes:
+    deadline = time.monotonic() + timeout
+    actual = b""
+    while time.monotonic() < deadline:
+        capture_frame(process, path)
+        actual = ppm_region(path, *bounds)
+        if actual == expected:
+            return actual
+    raise RuntimeError(f"{state}: framebuffer region did not reach the expected state")
+
+
+def send_navigation_key(process: subprocess.Popen[str], path: Path,
+                        bounds: tuple[int, int, int, int], previous: bytes,
+                        key: str, state: str, selection: tuple[int, int],
+                        attempts: int = 3, timeout: float = 1.0) -> bytes:
+    for attempt in range(attempts):
+        send_monitor_command(process, f"sendkey {key}", delay=0.25)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            capture_frame(process, path)
+            actual = ppm_region(path, *bounds)
+            if (actual != previous and
+                    ppm_pixel(path, 270, 125) == (45, 95, 155) and
+                    ppm_pixel(path, *selection) == (36, 63, 109)):
+                if attempt != 0:
+                    print(f"NOTE: QEMU HMP {key} delivery recovered on attempt {attempt + 1}.")
+                return actual
+    raise RuntimeError(f"{state}: framebuffer did not show the expected selection after "
+                       f"{attempts} QEMU HMP key deliveries")
+
+
 def run_window_control_checks(process: subprocess.Popen[str], temp: Path,
                               screenshot: Path) -> None:
     mouse = [640, 400]
-    state = temp / "window-state.ppm"
+    state = screenshot.with_name("window-controls-state.ppm")
 
     # The initial OVMF GOP is 1280x800; these positions target the titlebar controls.
     click_mouse(process, mouse, 1181, 115)
@@ -619,39 +652,60 @@ def run_window_control_checks(process: subprocess.Popen[str], temp: Path,
     assert_pixel(state, 270, 125, (45, 95, 155), "Browser Downloads shortcut")
     if bytes((216, 234, 255)) not in ppm_region(state, 284, 185, 900, 215):
         raise RuntimeError("Browser Downloads shortcut did not open the persistent Downloads folder")
-    send_monitor_command(process, "sendkey backspace")
-    capture_frame(process, state)
-    if ppm_region(state, 284, 190, 900, 215) != files_root_location:
-        raise RuntimeError("Files Backspace did not return from Downloads to /home/root")
-    files_first_page = ppm_region(state, 276, 260, 1004, 577)
-    for _ in range(15):
-        send_monitor_command(process, "sendkey down", delay=0.25)
-    capture_frame(process, state)
-    if ppm_region(state, 276, 260, 1004, 577) == files_first_page:
+    shutil.copyfile(state, screenshot.with_name("window-controls-downloads.ppm"))
+    # HMP key delivery is asynchronous; poll visible guest state rather than
+    # assuming one fixed delay is sufficient for every UEFI input cycle.
+    path_region = (284, 190, 900, 215)
+    send_navigation_key(process, state, path_region, ppm_region(state, *path_region),
+                        "backspace", "Files Backspace to /home/root",
+                        selection=(500, 263))
+    wait_for_region_state(process, state, path_region, files_root_location,
+                          "Files Backspace to /home/root")
+    shutil.copyfile(state, screenshot.with_name("window-controls-backspace.ppm"))
+    list_region = (276, 260, 1004, 577)
+    files_first_page = ppm_region(state, *list_region)
+    for cursor in range(1, 16):
+        previous = ppm_region(state, *list_region)
+        visible_row = min(cursor, 14)
+        files_page = send_navigation_key(
+            process, state, list_region, previous, "down",
+            f"Files Down navigation to cursor {cursor}",
+            selection=(500, 263 + visible_row * 22))
+        if cursor == 1:
+            shutil.copyfile(state, screenshot.with_name("window-controls-down-1.ppm"))
+        assert_pixel(state, 500, 263 + visible_row * 22, (36, 63, 109),
+                     f"Files Down selection at cursor {cursor}")
+    if files_page == files_first_page:
         raise RuntimeError("Files Down did not scroll the list past the first page")
-    assert_pixel(state, 500, 566, (36, 63, 109), "Files Down selection after crossing the first page")
-    for _ in range(15):
-        send_monitor_command(process, "sendkey up", delay=0.25)
-    capture_frame(process, state)
-    if ppm_region(state, 276, 260, 1004, 577) != files_first_page:
+    for cursor in range(14, -1, -1):
+        previous = ppm_region(state, *list_region)
+        visible_row = max(0, cursor - 1)
+        files_page = send_navigation_key(
+            process, state, list_region, previous, "up",
+            f"Files Up navigation to cursor {cursor}",
+            selection=(500, 263 + visible_row * 22))
+        assert_pixel(state, 500, 263 + visible_row * 22, (36, 63, 109),
+                     f"Files Up selection at cursor {cursor}")
+    if files_page != files_first_page:
         raise RuntimeError("Files Up did not scroll back to the first page")
     print("PASS: repeated Down/Up scroll across the 15-row boundary in both directions.")
-    send_monitor_command(process, "sendkey end", delay=0.35)
-    capture_frame(process, state)
+    previous = ppm_region(state, *list_region)
+    send_navigation_key(process, state, list_region, previous, "end",
+                        "Files End to the final page", selection=(500, 566))
     if ppm_region(state, 276, 260, 1004, 577) == files_first_page:
         raise RuntimeError("Files End did not scroll the entry list past the first 15 rows")
     assert_pixel(state, 500, 566, (36, 63, 109), "Files End selection on the last visible row")
-    send_monitor_command(process, "sendkey up")
-    capture_frame(process, state)
+    previous = ppm_region(state, *list_region)
+    send_navigation_key(process, state, list_region, previous, "up",
+                        "Files Up one row from the list tail", selection=(500, 544))
     assert_pixel(state, 500, 544, (36, 63, 109), "Files Up selection near the list tail")
     send_monitor_command(process, "sendkey ret")
     capture_frame(process, state)
     if bytes((126, 214, 167)) not in ppm_region(state, 286, 594, 550, 632):
         raise RuntimeError("Files Enter did not open the selected entry after scrolling")
-    send_monitor_command(process, "sendkey home")
-    capture_frame(process, state)
-    if ppm_region(state, 276, 260, 1004, 577) != files_first_page:
-        raise RuntimeError("Files Home did not restore the first page of entries")
+    send_monitor_command(process, "sendkey home", delay=0.25)
+    wait_for_region_state(process, state, list_region, files_first_page,
+                          "Files Home to the first page")
     print("PASS: Files scrolls beyond 15 entries; End/Up reach the tail and Home restores the first page.")
     print("PASS: Browser Downloads opens in Files and Backspace returns to /home/root.")
 
@@ -875,8 +929,11 @@ def main() -> int:
         args.history_screenshot.unlink(missing_ok=True)
     with tempfile.TemporaryDirectory(prefix="fadal-focus-") as temporary:
         temp = Path(temporary)
-        test_image = temp / "fadal-uefi-test.img"
-        shutil.copyfile(args.image, test_image)
+        # Persistence checks must leave guest writes in the exact image that
+        # Make inspects afterward. Other test modes retain an isolated copy.
+        test_image = args.image if args.persistent_home else temp / "fadal-uefi-test.img"
+        if not args.persistent_home:
+            shutil.copyfile(args.image, test_image)
         if args.window_controls:
             prepare_files_scroll_fixture(test_image, temp)
         serial_log = temp / "serial.log"

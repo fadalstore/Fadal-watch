@@ -22,7 +22,7 @@ CFLAGS := -m32 -ffreestanding -fno-pie -fno-stack-protector -fno-builtin \
 	-Wall -Wextra -Werror -O2 -nostdinc
 LDFLAGS := -m elf_i386 -T linker.ld -nostdlib
 
-.PHONY: all clean check independence run run-vga install uefi-image phase1b-objects
+.PHONY: all clean check test-memory-window independence run run-vga install uefi-image phase1b-objects
 
 all: $(OUT)/fadal-kernel.img
 
@@ -207,6 +207,35 @@ check: clean independence $(OUT)/fadal-kernel.img
 		@grep -q "syscall: exec dispatch; process created" $(OUT)/smoke.log
 	@dd if=$(OUT)/fadal-kernel.img bs=512 skip=$(FAT12_DATA_LBA) count=1 status=none | grep -a -q "FADAL FAT12 write"
 	@echo "Fadal Kernel boot smoke test passed"
+	@$(MAKE) --no-print-directory test-memory-window QEMU="$(QEMU)"
+
+test-memory-window: $(OUT)/fadal-kernel.img
+	@command -v $(QEMU) >/dev/null || \
+		(echo "$(QEMU) is required for the memory-window test" >&2; exit 1)
+	@set -e; for memory in 16M 32M 64M; do \
+		log="$(OUT)/memory-window-$$memory.log"; \
+		rm -f "$$log"; \
+		set +e; timeout 5s $(QEMU) -accel tcg -m "$$memory" -boot c \
+			-drive format=raw,file=$(OUT)/fadal-kernel.img \
+			-netdev user,id=fadalnet -device rtl8139,netdev=fadalnet \
+			-serial file:"$$log" -display none -no-reboot -no-shutdown \
+			>/dev/null 2>&1; status=$$?; set -e; \
+		if [ "$$status" -ne 124 ]; then \
+			echo "QEMU memory-window boot at $$memory exited with status $$status" >&2; exit 1; \
+		fi; \
+		grep -q "memory: 64 MiB identity map cap online" "$$log"; \
+		grep -q "memory: BIOS E820 map accepted" "$$log"; \
+		if [ "$$memory" = "16M" ]; then \
+			grep -q "memory: high-page window unavailable; allocator stayed E820-bounded" "$$log"; \
+			if grep -q "memory: high-page allocation, touch, free, and reuse passed" "$$log"; then \
+				echo "unexpected high-page allocation at $$memory" >&2; exit 1; \
+			fi; \
+		else \
+			grep -q "memory: high-page allocation, touch, free, and reuse passed" "$$log"; \
+			grep -q "memory: E820, reserved-low, and out-of-window bounds passed" "$$log"; \
+		fi; \
+		echo "Fadal 64 MiB memory-window QEMU test passed at $$memory"; \
+	done
 
 install: check
 	mkdir -p "$(INSTALL_DIR)"

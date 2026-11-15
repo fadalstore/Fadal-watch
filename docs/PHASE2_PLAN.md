@@ -1,6 +1,6 @@
 # FadalOS Phase 2 — Work Plan
 
-**Status:** P2.1, P2.2, and P2.3 complete; P2.4 is next
+**Status:** P2.1–P2.5 complete; Phase 2 candidate packaged and verified
 **Baseline:** Phase 1 UTM release at commit `1d50d1d`
 **Purpose:** define a staged, boot-testable path from the Phase 1 freestanding kernel and UEFI desktop prototype toward a more reliable, inspectable FadalOS runtime.
 
@@ -33,20 +33,26 @@ Before choosing a large kernel feature, write a short architecture decision reco
 
 **Decision:** [ADR 0001](adr/0001-bios-runtime-architecture.md) keeps the existing 32-bit BIOS runtime and compatibility contracts, defers a separate x86-64 BIOS runtime, and authorizes only a 16-to-64 MiB non-PAE identity-map/allocator proof for P2.4. The ADR records the memory, interrupt/syscall, process, SMP, boot-compatibility, and maintenance tradeoffs plus exact QEMU acceptance checks. No BIOS syscall number or smoke trace changed as a side effect of the decision.
 
-### P2.4 — First selected kernel-runtime milestone
+### P2.4 — First selected kernel-runtime milestone *(complete)*
 
-Implement only the first bounded item authorized by P2.3: extend the existing 32-bit non-PAE identity map and E820-backed allocator window from 16 MiB to at most 64 MiB. Keep the BIOS disk image, syscall 1–34 ABI, and current smoke trace intact. Require QEMU TCG boots with 32 MiB and 64 MiB RAM plus a serial trace proving an eligible page above 16 MiB can be allocated/touched/freed/reused and that out-of-window or reserved pages are rejected. Keep PAE, x86-64 BIOS entry, AP startup, and broad driver expansion out of scope.
+P2.4 extends the existing 32-bit non-PAE identity map and E820-backed allocator window from 16 MiB to at most 64 MiB. The no-E820 fallback remains bounded at 16 MiB. User code/stack/heap page tables remain private; identical supervisor-only tables above the first 8 MiB are shared to reduce per-process table storage while preserving the full identity map. The BIOS image layout, syscall 1–34 ABI, and legacy smoke trace are unchanged.
 
-### P2.5 — Phase 2 release checkpoint
+**Verified:** `make -C kernel check` passes the original serial smoke contract and runs `test-memory-window` under QEMU TCG at 16 MiB (negative control: no high-page allocation; allocator remains E820-bounded), 32 MiB, and 64 MiB. The 32/64 MiB runs allocate a usable E820 page above 16 MiB, write/read a full-page pattern, free/reuse the same page, and verify low-reserved, E820-unusable when present, and out-of-window bounds. The complete BIOS check also confirms process address-space isolation, private user-page mapping, ring-3 syscall dispatch, and timer context switching remain intact.
 
-After the first selected kernel-runtime milestone, run the full validator and the relevant QEMU/OVMF boot matrix, update both the user-facing build instructions and AI handoff, inspect release hashes, and publish a separate versioned Phase 2 artifact only if it boots and matches the documented configuration. Keep the Phase 1 UTM ZIP frozen and keep BIOS and UEFI images separate unless the architecture decision authorizes otherwise.
+### P2.5 — Phase 2 release checkpoint *(complete)*
+
+**Verified:** `scripts/validate-repo.sh --uefi` and the complete UEFI QEMU/OVMF regression matrix passed. The separate `FadalOS-Phase2-UTM-iOS.zip` contains the current UEFI image and the P2.4 BIOS image in distinct UTM profiles. Each staged profile booted under its documented QEMU/OVMF configuration; ZIP integrity and per-image/archive SHA-256 checks passed. The Phase 1 UTM ZIP aliases and their manifest/installer inputs were not changed. See [Phase 2 release record](PHASE2_RELEASE.md) for checksums, test evidence, and known limits.
+
+**Release constraint:** the BIOS payload uses 57,273 of its fixed 57,344-byte (112-sector) loader budget, leaving 71 bytes. Do not add BIOS runtime features until a separately tested change increases that capacity or reduces payload size. BIOS and UEFI remain separate runtimes and artifacts.
 
 ## Immediate work queue
 
 1. P2.1 is complete: the UEFI `history` output and exact-order QEMU regression are in place.
 2. P2.2 is complete: the window-controls test is state-synchronized and retry-bounded, and persistent-home guest/host checks use the same disk image.
 3. P2.3 is complete: ADR 0001 keeps the i386 BIOS runtime and defers a separate x86-64 BIOS path.
-4. P2.4 is next: implement only the 16-to-64 MiB non-PAE memory-window proof selected by the ADR, preserving the BIOS ABI and smoke-test contract.
+4. P2.4 is complete: 16/32/64 MiB QEMU controls validate the bounded non-PAE memory window.
+5. P2.5 is complete: the Phase 2 artifact is separate, boot-verified, checksummed, and documented; Phase 1 archives remain frozen.
+6. Next proposed milestone: P2.6 should safely increase BIOS loader capacity with an explicit image-size ceiling and QEMU over-limit negative control before further BIOS kernel growth.
 
 ## Out of scope for this plan
 

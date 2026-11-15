@@ -299,19 +299,22 @@ When running with a VGA display, the console accepts keyboard input after the
 own IRQ1 handler; no Linux, Ubuntu, or external userspace is involved in the
 boot or input path.
 
-The current memory milestone maps physical addresses 0 through 16 MiB and
-reserves the lower 1 MiB for firmware/kernel structures. Four page tables
-cover the expanded identity-mapped range. The boot sector asks
-the BIOS for E820 entries, and only pages reported as usable are released to
-Fadal's allocator. If the BIOS does not provide a map, the kernel uses a
-conservative 16 MiB fallback and reports that state on the console. This remains
-intentionally bounded until an x86_64 paging layer is added.
+The BIOS kernel maps physical addresses 0 through 64 MiB with sixteen 4 KiB
+page tables and reserves the lower 1 MiB for firmware/kernel structures. The
+boot sector asks the BIOS for E820 entries, and only type-1 usable pages within
+the mapped window are released to Fadal's allocator. If E820 is unavailable,
+the allocator deliberately retains its conservative 16 MiB limit. The kernel
+emits a distinct memory-window self-test trace; `make -C kernel check` boots
+QEMU at 16 MiB (negative control), 32 MiB, and 64 MiB and checks high-page
+allocation/touch/free/reuse when firmware reports usable RAM above 16 MiB.
 
-The kernel heap is currently bounded by the identity-mapped 16 MiB window and
-allocates whole contiguous pages. It is suitable for kernel metadata and early
-filesystem buffers. Slab allocation for process and FAT12 metadata is now
-available; virtual address expansion and demand-zero paging remain future
-memory-management milestones.
+The kernel heap allocates whole contiguous pages within the mapped and
+E820-usable range. It is suitable for kernel metadata and early filesystem
+buffers. Slab allocation for process and FAT12 metadata is available. User
+code, stack, and heap mappings remain private; supervisor-only mappings above
+the first 8 MiB are shared across process page directories. PAE, virtual-address
+expansion, demand-zero paging, and support beyond the 64 MiB BIOS window remain
+future memory-management milestones.
 
 The TTY input boundary is driven by the kernel's PS/2 IRQ1 handler and supports
 US-layout scancode translation, independent left/right Shift state, Caps Lock,
@@ -359,6 +362,7 @@ desktop applications, and a compositing process are the next GUI milestones.
 Fadal Kernel is independent from Linux and Ubuntu. Alpine Linux can later be
 used as a development/build environment, but it is not part of the boot path.
 Fadal is intended to grow into its own runtime, not boot or embed another
-operating system. The next architecture decision is whether to move the
-protected-mode foundation to x86_64 long mode or keep it as a 32-bit
-compatibility stage while adding paging and a 64-bit execution layer.
+operating system. [ADR 0001](../docs/adr/0001-bios-runtime-architecture.md)
+keeps the supported BIOS runtime in 32-bit protected mode for this phase and
+defers a separate x86-64 BIOS boot path. Linux and Ubuntu remain development
+infrastructure only; they are not guest runtime dependencies.

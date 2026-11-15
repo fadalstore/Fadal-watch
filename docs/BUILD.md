@@ -35,12 +35,21 @@ make -C kernel run
 make -C kernel run-vga
 ```
 
-The image is written to `kernel/out/fadal-kernel.img`. `check` must remain the required pre-push test because it verifies the serial boot trace, FAT12 persistence, VFS, scheduler, syscalls, network path, and independence guard. The networking self-test validates SYN/SYN-ACK sequence numbers and repeat-SYN behavior, rejects a truncated IP/TCP frame, then injects even- and odd-sized synthetic TCP segments across multiple reads to verify checksum handling, duplicate/out-of-order rejection, receive-window backpressure, and ring-buffer wrap. It also streams a fragmented synthetic HTTP response through the TCP receive ring and parser adapter, checking the decoded body; the Makefile asserts the combined serial pass line.
+The image is written to `kernel/out/fadal-kernel.img`. `check` must remain the required pre-push test because it verifies the serial boot trace, FAT12 persistence, VFS, scheduler, syscalls, network path, and independence guard. It also boots the BIOS image with 16 MiB, 32 MiB, and 64 MiB QEMU RAM configurations to check the bounded E820 memory window; the 16 MiB boot is a negative control, while the larger boots verify an eligible page above 16 MiB can be allocated, touched, freed, and reused. The networking self-test validates SYN/SYN-ACK sequence numbers and repeat-SYN behavior, rejects a truncated IP/TCP frame, then injects even- and odd-sized synthetic TCP segments across multiple reads to verify checksum handling, duplicate/out-of-order rejection, receive-window backpressure, and ring-buffer wrap. It also streams a fragmented synthetic HTTP response through the TCP receive ring and parser adapter, checking the decoded body; the Makefile asserts the combined serial pass line.
 
 The BIOS boot trace also includes a keyboard translation self-test for
 independent Shift/Caps Lock behavior and representative US shifted punctuation.
 
-After `make -C kernel check`, run `scripts/package-utm.sh` to copy the verified BIOS image into `artifacts/`, `install/`, and the separate `FadalWatch-BIOS.utm` profile, rebuild both UTM ZIP aliases with the existing UEFI desktop preserved, and refresh the installer and artifact checksums. The BIOS profile is SeaBIOS/`pc` and must remain separate from the UEFI ESP image; never overwrite `Data/fadal-uefi.img` with the BIOS disk.
+`scripts/package-utm.sh` is the legacy Phase 1 packager: it updates the Phase 1 BIOS profile, both Phase 1 ZIP aliases, the installer hashes, and `artifacts/SHA256SUMS`. Do not use it when the Phase 1 release is frozen. For the separate Phase 2 package, build and test both images, then run:
+
+```sh
+make -C kernel/uefi clean check payload
+UEFI_KERNEL="$PWD/kernel/uefi/out/fadal-uefi.krn" make -C kernel/uefi image
+scripts/package-phase2-utm.sh
+sha256sum -c FadalOS-Phase2-UTM-iOS.zip.sha256
+```
+
+The Phase 2 packager stages fresh profile copies, keeps the BIOS SeaBIOS/`pc` image separate from the UEFI ESP image, writes per-image and archive checksums, and does not alter either Phase 1 archive, installer hash, or manifest. Its default BIOS profile has 128 MiB guest RAM; the BIOS allocator maps at most 64 MiB and remains capped at 16 MiB if E820 is unavailable. Do not overwrite `Data/fadal-uefi.img` with the BIOS disk.
 
 The same boot check runs the independent HTTP/1 response parser tests even if no
 NIC is available. They cover fixed-length and close-delimited bodies, chunked

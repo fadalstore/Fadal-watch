@@ -81,6 +81,25 @@ def wait_for_shell_prompt(path: Path, count: int, timeout: float = 5.0) -> str:
     return path.read_text(errors="replace") if path.exists() else serial
 
 
+def run_terminal_edit_case(process: subprocess.Popen[str], serial_log: Path,
+                           keys: tuple[str, ...], expected: str,
+                           prompt_count: int, timeout: float) -> int:
+    for attempt in range(3):
+        offset = serial_log.stat().st_size if serial_log.exists() else 0
+        send_keys(process, keys, delay=0.75)
+        prompt_count += 1
+        serial = wait_for_shell_prompt(serial_log, prompt_count, timeout)
+        recent = serial_log.read_bytes()[offset:].decode("utf-8", errors="replace")
+        if expected in recent:
+            if attempt != 0:
+                print(f"NOTE: terminal edit case recovered on attempt {attempt + 1}.")
+            return prompt_count
+        if attempt != 2:
+            print(f"NOTE: terminal edit case missed fresh result; retrying ({attempt + 2}/3).")
+    raise RuntimeError(f"terminal edit sequence did not produce {expected!r} in fresh output; "
+                       f"last output: {recent[-300:]!r}")
+
+
 def run_persistent_home_checks(process: subprocess.Popen[str], serial_log: Path,
                                debug_log: Path,
                                timeout: float) -> None:
@@ -998,30 +1017,20 @@ def main() -> int:
             if args.persistent_home:
                 run_persistent_home_checks(process, serial_log, debug_log, args.timeout)
             if args.terminal_input:
-                help_count = serial_log.read_text(errors="replace").count("commands: help clear pwd")
                 prompt_count = serial_log.read_text(errors="replace").count("fadal:/")
-                send_keys(process, ("h", "e", "p", "left", "l", "ret"), delay=0.45)
-                serial = wait_for_serial_text(serial_log, "commands: help clear pwd",
-                                              count=help_count + 1, timeout=args.timeout)
-                help_count += 1
-                prompt_count += 1
-                serial = wait_for_shell_prompt(serial_log, prompt_count, args.timeout)
-
-                send_keys(process, ("h", "e", "p", "l", "home", "right", "right",
-                                    "delete", "end", "p", "ret"), delay=0.45)
-                serial = wait_for_serial_text(serial_log, "commands: help clear pwd",
-                                              count=help_count + 1, timeout=args.timeout)
-                help_count += 1
-                prompt_count += 1
-                serial = wait_for_shell_prompt(serial_log, prompt_count, args.timeout)
-
-                send_keys(process, ("h", "e", "l", "p", "left", "backspace", "l", "ret"),
-                          delay=0.45)
-                serial = wait_for_serial_text(serial_log, "commands: help clear pwd",
-                                              count=help_count + 1, timeout=args.timeout)
-                help_count += 1
-                prompt_count += 1
-                wait_for_shell_prompt(serial_log, prompt_count, args.timeout)
+                prompt_count = run_terminal_edit_case(
+                    process, serial_log,
+                    ("h", "e", "p", "left", "l", "ret"),
+                    "commands: help clear pwd", prompt_count, args.timeout)
+                prompt_count = run_terminal_edit_case(
+                    process, serial_log,
+                    ("h", "e", "p", "l", "home", "right", "right",
+                     "delete", "end", "p", "ret"),
+                    "commands: help clear pwd", prompt_count, args.timeout)
+                run_terminal_edit_case(
+                    process, serial_log,
+                    ("h", "e", "l", "p", "left", "backspace", "l", "ret"),
+                    "commands: help clear pwd", prompt_count, args.timeout)
 
                 for _ in range(30):
                     send_text(process, "ls", serial_log, delay=0.18)

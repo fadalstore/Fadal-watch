@@ -172,28 +172,42 @@ lists the retained eight entries oldest-to-newest, including its own invocation
 as the newest normal submission. The regression compares the exact ordered list.
 Inspect `kernel/uefi/out/terminal-history.ppm`.
 
-Latest validation passed `scripts/validate-repo.sh --uefi` after the final
-test-harness and documentation edits; the freestanding BIOS build/smoke test,
-UEFI build, and page-protection EFI build checks passed. P2.2 is complete. The
-window-controls regression synchronizes against
-the Files titlebar and exact selected-row pixel, so an incomplete framebuffer
-redraw cannot be mistaken for a navigation event. Its HMP key helper permits at
-most three deliveries and accepts a step only after the expected selection and
-window state are visible; recovered retries are reported. Three consecutive
-post-fix QEMU/OVMF runs passed, with one run logging two recovered `Down`
-injections. The persistent-home test now boots directly from the same image that
-Make checks with `mcopy`; two complete QEMU/OVMF runs passed the guest reboot
-assertions and host-side exact `PERSIST` byte comparison, deleted-file checks,
-and nested-directory checks.
+The Phase 2 release gate passed `scripts/validate-repo.sh --uefi` and the full
+UEFI QEMU/OVMF matrix: page protection, focus, terminal editing/scrollback,
+selection/guest clipboard, eight-entry history, window controls and Files
+navigation, edge/corner resizing and reflow, and persistent-home guest reboot
+plus raw-ESP host checks. The terminal-input regression now checks for the
+expected result in fresh serial output after each editing sequence and allows
+at most three attempts; no command-editing assertions were removed. The
+window-controls key helper remains bounded and waits for visible titlebar and
+selection state; the final suite reported one recovered QEMU HMP `Down` event.
+The persistent-home guest and host checks use the exact same image.
 
 Phase 2 is tracked in `docs/PHASE2_PLAN.md`. P2.1 (the bounded UEFI `history`
-builtin), P2.2 (test-suite reliability), and P2.3 (BIOS runtime architecture
-decision) are complete. [ADR 0001](docs/adr/0001-bios-runtime-architecture.md)
-keeps the existing i386 BIOS runtime and defers a separate x86-64 BIOS path. P2.4
-is next: test a bounded 16-to-64 MiB non-PAE identity-map and E820 allocator
-extension under QEMU, preserving the current disk image, syscall 1–34 ABI, and
-smoke trace. Keep persistent command history out of scope until storage
-permissions and privacy semantics are explicitly designed.
+builtin), P2.2 (test-suite reliability), P2.3 (BIOS runtime architecture
+decision), P2.4 (bounded BIOS memory-window proof), and P2.5 (release checkpoint)
+are complete. [ADR 0001](docs/adr/0001-bios-runtime-architecture.md) keeps the
+existing i386 BIOS runtime and defers a separate x86-64 BIOS path. The BIOS
+identity map is 64 MiB, backed only by E820 type-1 pages; when E820 is
+unavailable, allocator access stays capped at 16 MiB. User mappings remain
+private while identical supervisor-only tables above the first 8 MiB are
+shared. `make -C kernel check` passes the original ABI/smoke suite and QEMU TCG
+16 MiB negative control plus 32/64 MiB high-page allocation, pattern-touch,
+release, reuse, and boundary checks. Syscall 1–34, BIOS image layout, and legacy
+smoke traces are unchanged.
+
+The separate [Phase 2 UTM package](FadalOS-Phase2-UTM-iOS.zip) has SHA-256
+`7856305f788f26ce93a4d407696615c9b51919224eb5ed7b15b2c8bbdc1365f5`; the UEFI
+and BIOS disk hashes are recorded in that archive and in
+`docs/PHASE2_RELEASE.md`. Both staged images booted in their documented QEMU
+configurations. The Phase 1 UTM ZIP aliases remain unchanged at SHA-256
+`bd1b433309cce3671f9a206f56629db8d7db8268a0167a378696db705c362fab`. The
+BIOS payload is 57,273/57,344 bytes, leaving only 71 bytes in the fixed 112-sector
+loader budget. **Next:** P2.6 should increase BIOS loader capacity safely with
+an explicit maximum image-size contract and QEMU over-limit negative-control
+test before further BIOS kernel growth. Persistent command history remains out
+of scope until storage permissions and privacy semantics are explicitly
+designed.
 
 The persistent-home view is backed by the ESP's `FADALHOME` directory through
 validated loader callbacks. `ls`, `cat PATH`, `write PATH TEXT`, `mkdir PATH`,

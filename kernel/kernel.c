@@ -32,9 +32,12 @@ typedef unsigned int u32;
 #define PAGE_KERNEL_FLAGS (PAGE_PRESENT | PAGE_WRITE)
 #define PAGE_USER_RO_FLAGS (PAGE_PRESENT | PAGE_USER)
 #define PAGE_USER_RW_FLAGS (PAGE_PRESENT | PAGE_WRITE | PAGE_USER)
-#define IDENTITY_MAP_BYTES (16 * 1024 * 1024)
+#define IDENTITY_MAP_BYTES (64 * 1024 * 1024)
+#define FALLBACK_MEMORY_BYTES (16 * 1024 * 1024)
 #define PHYSICAL_PAGE_COUNT (IDENTITY_MAP_BYTES / PAGE_SIZE)
+#define FALLBACK_PAGE_COUNT (FALLBACK_MEMORY_BYTES / PAGE_SIZE)
 #define PAGE_TABLE_COUNT (IDENTITY_MAP_BYTES / (PAGE_SIZE * 1024))
+#define PRIVATE_PAGE_TABLE_COUNT 2
 #define FIRST_USABLE_PAGE (0x100000 / PAGE_SIZE)
 #define E820_MAP_ADDRESS 0x5000
 #define E820_COUNT_ADDRESS 0x4ffc
@@ -172,6 +175,7 @@ static u32 scheduler_ready_pid;
 static u32 page_directory[1024] __attribute__((aligned(PAGE_SIZE)));
 static u32 page_tables[PAGE_TABLE_COUNT][1024] __attribute__((aligned(PAGE_SIZE)));
 static u8 page_state[PHYSICAL_PAGE_COUNT];
+static u32 memory_page_limit;
 static u32 free_page_count;
 static u32 managed_page_count;
 static u32 memory_map_count;
@@ -319,7 +323,7 @@ static struct tss_entry tss;
 static struct process *process_table[MAX_PROCESSES];
 static u32 process_page_directories[MAX_PROCESSES][1024]
     __attribute__((aligned(PAGE_SIZE)));
-static u32 process_page_tables[MAX_PROCESSES][PAGE_TABLE_COUNT * 1024]
+static u32 process_page_tables[MAX_PROCESSES][PRIVATE_PAGE_TABLE_COUNT * 1024]
     __attribute__((aligned(PAGE_SIZE)));
 static struct address_space process_address_spaces[MAX_PROCESSES];
 static u32 next_pid = 1;
@@ -489,12 +493,17 @@ static struct address_space *address_space_create(u32 slot, u32 stack_physical,
         space->page_directory[index] = 0;
     }
     for (u32 table = 0; table < PAGE_TABLE_COUNT; table++) {
-        u32 *source = page_tables[table];
-        u32 *target = space->page_tables + table * 1024;
-        for (u32 index = 0; index < 1024; index++) {
-            target[index] = source[index];
+        if (table < PRIVATE_PAGE_TABLE_COUNT) {
+            u32 *source = page_tables[table];
+            u32 *target = space->page_tables + table * 1024;
+            for (u32 index = 0; index < 1024; index++) {
+                target[index] = source[index];
+            }
+            space->page_directory[table] = (u32)target | PAGE_KERNEL_FLAGS;
+        } else {
+            /* These mappings are supervisor-only and identical in every space. */
+            space->page_directory[table] = page_directory[table];
         }
-        space->page_directory[table] = (u32)target | PAGE_KERNEL_FLAGS;
     }
     u32 stack_page = (user_stack_top - PAGE_SIZE) / PAGE_SIZE;
     if (stack_page != USER_STACK_PAGE && stack_page != USER_STACK_2_PAGE) {
@@ -568,6 +577,7 @@ static void memory_init(void) {
         memory_map_count = E820_MAX_ENTRIES;
     }
     memory_map_valid = memory_map_count > 0;
+    memory_page_limit = memory_map_valid ? PHYSICAL_PAGE_COUNT : FALLBACK_PAGE_COUNT;
 
     for (u32 page = 0; page < PHYSICAL_PAGE_COUNT; page++) {
         page_state[page] = 1;
@@ -575,7 +585,7 @@ static void memory_init(void) {
 
     free_page_count = 0;
     managed_page_count = 0;
-    for (u32 page = FIRST_USABLE_PAGE; page < PHYSICAL_PAGE_COUNT; page++) {
+    for (u32 page = FIRST_USABLE_PAGE; page < memory_page_limit; page++) {
         if (!memory_map_valid || memory_map_covers_page(page)) {
             page_state[page] = 0;
             free_page_count++;
@@ -586,7 +596,7 @@ static void memory_init(void) {
 
 static void reserve_page(u32 address) {
     u32 page = address / PAGE_SIZE;
-    if (page < PHYSICAL_PAGE_COUNT && page_state[page] == 0) {
+    if (page < memory_page_limit && page_state[page] == 0) {
         page_state[page] = 1;
         free_page_count--;
     }
@@ -1101,8 +1111,17 @@ static void enter_user_mode(void) {
     }
 }
 
-static void *page_alloc(void) {
-    for (u32 page = FIRST_USABLE_PAGE; page < PHYSICAL_PAGE_COUNT; page++) {
+static void *page_alloc_range(u32 first_page, u32 end_page) {
+    if (first_page < FIRST_USABLE_PAGE) {
+        first_page = FIRST_USABLE_PAGE;
+    }
+    if (end_page > memory_page_limit) {
+        end_page = memory_page_limit;
+    }
+    if (first_page >= end_page) {
+        return (void *)0;
+    }
+    for (u32 page = first_page; page < end_page; page++) {
         if (page_state[page] == 0) {
             page_state[page] = 1;
             free_page_count--;
@@ -1117,6 +1136,10 @@ static void *page_alloc(void) {
     return (void *)0;
 }
 
+static void *page_alloc(void) {
+    return page_alloc_range(FIRST_USABLE_PAGE, memory_page_limit);
+}
+
 static void page_free(void *address) {
     u32 physical_address = (u32)address;
     if ((physical_address % PAGE_SIZE) != 0 ||
@@ -1126,10 +1149,94 @@ static void page_free(void *address) {
     }
 
     u32 page = physical_address / PAGE_SIZE;
+    if (page >= memory_page_limit ||
+        (memory_map_valid && !memory_map_covers_page(page))) {
+        return;
+    }
     if (page_state[page] != 0) {
         page_state[page] = 0;
         free_page_count++;
     }
+}
+
+static u8 memory_window_self_test(void) {
+    u32 first_high_page = (16 * 1024 * 1024) / PAGE_SIZE;
+    if (!memory_map_valid || first_high_page >= memory_page_limit) {
+        return 2;
+    }
+    u8 high_memory_reported = 0;
+    for (u32 candidate = first_high_page; candidate < memory_page_limit; candidate++) {
+        if (memory_map_covers_page(candidate)) {
+            high_memory_reported = 1;
+            break;
+        }
+    }
+    if (!high_memory_reported) {
+        return 2;
+    }
+
+    void *allocation = page_alloc_range(first_high_page, memory_page_limit);
+    if (allocation == (void *)0) {
+        return 0;
+    }
+    u32 physical = (u32)allocation;
+    u32 page = physical / PAGE_SIZE;
+    if (physical < 16 * 1024 * 1024 || physical >= IDENTITY_MAP_BYTES ||
+        !memory_map_covers_page(page)) {
+        page_free(allocation);
+        return 0;
+    }
+
+    volatile u32 *words = (volatile u32 *)allocation;
+    for (u32 index = 0; index < PAGE_SIZE / sizeof(u32); index++) {
+        words[index] = 0xa5a55a5a ^ (index * 0x10203);
+    }
+    for (u32 index = 0; index < PAGE_SIZE / sizeof(u32); index++) {
+        if (words[index] != (0xa5a55a5a ^ (index * 0x10203))) {
+            page_free(allocation);
+            return 0;
+        }
+    }
+
+    u32 unusable_page = PHYSICAL_PAGE_COUNT;
+    for (u32 candidate = first_high_page; candidate < memory_page_limit; candidate++) {
+        if (!memory_map_covers_page(candidate)) {
+            unusable_page = candidate;
+            break;
+        }
+    }
+    page_free(allocation);
+    if (unusable_page < memory_page_limit) {
+        void *reserved = page_alloc_range(unusable_page, unusable_page + 1);
+        if (page_state[unusable_page] == 0 || reserved != (void *)0) {
+            if (reserved != (void *)0) {
+                page_free(reserved);
+            }
+            return 0;
+        }
+    }
+    if (page_state[FIRST_USABLE_PAGE - 1] == 0 ||
+        page_alloc_range(0, FIRST_USABLE_PAGE) != (void *)0 ||
+        page_alloc_range(PHYSICAL_PAGE_COUNT, PHYSICAL_PAGE_COUNT + 1) != (void *)0) {
+        return 0;
+    }
+
+    u32 free_before_out_of_window = free_page_count;
+    page_free((void *)((FIRST_USABLE_PAGE - 1) * PAGE_SIZE));
+    page_free((void *)IDENTITY_MAP_BYTES);
+    if (free_page_count != free_before_out_of_window) {
+        return 0;
+    }
+
+    void *reused = page_alloc_range(first_high_page, memory_page_limit);
+    if (reused != allocation) {
+        if (reused != (void *)0) {
+            page_free(reused);
+        }
+        return 0;
+    }
+    page_free(reused);
+    return 1;
 }
 
 static void heap_init(void) {
@@ -1147,7 +1254,7 @@ void *kmalloc(u32 bytes) {
         return (void *)0;
     }
     u32 pages = (bytes + PAGE_SIZE - 1) / PAGE_SIZE;
-    for (u32 first = FIRST_USABLE_PAGE; first + pages <= PHYSICAL_PAGE_COUNT; first++) {
+    for (u32 first = FIRST_USABLE_PAGE; first + pages <= memory_page_limit; first++) {
         u8 available = 1;
         for (u32 offset = 0; offset < pages; offset++) {
             if (page_state[first + offset] != 0) {
@@ -2471,6 +2578,7 @@ void kernel_main(void) {
         }
     }
     kernel_write("memory: 16 MiB identity paging online\n");
+    kernel_write("memory: 64 MiB identity map cap online\n");
     if (memory_map_valid) {
         kernel_write("memory: BIOS E820 map accepted\n");
     } else {
@@ -2482,6 +2590,15 @@ void kernel_main(void) {
         kernel_write("memory: page allocation self-test passed\n");
     } else {
         kernel_write("memory: page allocation self-test failed\n");
+    }
+    u8 memory_window_status = memory_window_self_test();
+    if (memory_window_status == 1) {
+        kernel_write("memory: high-page allocation, touch, free, and reuse passed\n");
+        kernel_write("memory: E820, reserved-low, and out-of-window bounds passed\n");
+    } else if (memory_window_status == 2) {
+        kernel_write("memory: high-page window unavailable; allocator stayed E820-bounded\n");
+    } else {
+        kernel_write("memory: 64 MiB window self-test failed\n");
     }
     pic_init();
     timer_init();

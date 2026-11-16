@@ -6,11 +6,11 @@ QEMU ?= qemu-system-i386
 UEFI_IMAGE_TOOL ?= ../tools/create-uefi-image.sh
 
 OUT := out
-BOOT_SECTORS := 112
-FAT12_LBA := 113
+KERNEL_MAX_SECTORS := 120
+FAT12_LBA := $(shell expr $(KERNEL_MAX_SECTORS) + 1)
 FAT12_SECTORS := 64
-FAT12_DATA_LBA := 117
-KERNEL_BYTES := $(shell expr $(BOOT_SECTORS) \* 512)
+FAT12_DATA_LBA := $(shell expr $(FAT12_LBA) + 4)
+KERNEL_MAX_BYTES := $(shell expr $(KERNEL_MAX_SECTORS) \* 512)
 UEFI_IMAGE ?= $(OUT)/fadal-uefi.img
 UEFI_BOOTLOADER ?= $(OUT)/BOOTX64.EFI
 UEFI_KERNEL ?= $(OUT)/fadal-uefi.krn
@@ -18,19 +18,23 @@ INSTALL_DIR ?= ../install
 
 CFLAGS := -m32 -ffreestanding -fno-pie -fno-stack-protector -fno-builtin \
 	-mno-sse -mno-sse2 -mno-mmx -msoft-float -fno-tree-vectorize \
-	-fno-asynchronous-unwind-tables -fno-unwind-tables \
+	-fno-asynchronous-unwind-tables -fno-unwind-tables -DFAT12_DISK_LBA=$(FAT12_LBA) \
 	-Wall -Wextra -Werror -O2 -nostdinc
 LDFLAGS := -m elf_i386 -T linker.ld -nostdlib
 
-.PHONY: all clean check test-memory-window independence run run-vga install uefi-image phase1b-objects
+.PHONY: all clean check test-memory-window test-kernel-size test-loader-limit independence run run-vga install uefi-image phase1b-objects
 
 all: $(OUT)/fadal-kernel.img
 
 $(OUT):
 	mkdir -p $(OUT)
 
-$(OUT)/boot.o: boot.S | $(OUT)
-	$(AS) --32 -o $@ $<
+$(OUT)/boot.o: boot.S $(OUT)/kernel.bin | $(OUT)
+	@bytes=$$(stat -c%s $(OUT)/kernel.bin); \
+	sectors=$$(( (bytes + 511) / 512 )); \
+	$(AS) --32 --defsym MAX_KERNEL_SECTORS=$(KERNEL_MAX_SECTORS) \
+		--defsym KERNEL_SECTORS=$$sectors -o $@ $<; \
+	echo "BIOS boot sector embeds $$sectors kernel sectors (maximum $(KERNEL_MAX_SECTORS))"
 
 $(OUT)/kernel.o: kernel.c fat12.h ata.h ramdisk.h slab.h vfs.h rtl8139.h fnet.h gitpack.h http.h identity.h auth.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -103,8 +107,7 @@ phase1b-objects: $(OUT)/blockdev.o $(OUT)/fadalfs.o
 
 $(OUT)/kernel.bin: $(OUT)/kernel.elf
 	$(OBJCOPY) -O binary $< $@
-	@test "$$(stat -c%s $@)" -le "$(KERNEL_BYTES)" || \
-		(echo "kernel is larger than $(KERNEL_BYTES) bytes" >&2; exit 1)
+	../scripts/check-bios-kernel-size.sh $@ $(KERNEL_MAX_BYTES)
 
 $(OUT)/boot.bin: $(OUT)/boot.o
 	$(OBJCOPY) -O binary --only-section=.text $< $@
@@ -112,7 +115,7 @@ $(OUT)/boot.bin: $(OUT)/boot.o
 		(echo "boot sector must be exactly 512 bytes" >&2; exit 1)
 
 $(OUT)/fadal-kernel.img: $(OUT)/boot.bin $(OUT)/kernel.bin
-	dd if=/dev/zero of=$@ bs=512 count=$$((1 + $(BOOT_SECTORS) + $(FAT12_SECTORS))) status=none
+	dd if=/dev/zero of=$@ bs=512 count=$$((1 + $(KERNEL_MAX_SECTORS) + $(FAT12_SECTORS))) status=none
 	dd if=$(OUT)/boot.bin of=$@ conv=notrunc status=none
 	dd if=$(OUT)/kernel.bin of=$@ bs=512 seek=1 conv=notrunc status=none
 
@@ -207,7 +210,23 @@ check: clean independence $(OUT)/fadal-kernel.img
 		@grep -q "syscall: exec dispatch; process created" $(OUT)/smoke.log
 	@dd if=$(OUT)/fadal-kernel.img bs=512 skip=$(FAT12_DATA_LBA) count=1 status=none | grep -a -q "FADAL FAT12 write"
 	@echo "Fadal Kernel boot smoke test passed"
+	@$(MAKE) --no-print-directory test-kernel-size
+	@$(MAKE) --no-print-directory test-loader-limit QEMU="$(QEMU)"
 	@$(MAKE) --no-print-directory test-memory-window QEMU="$(QEMU)"
+
+test-kernel-size:
+	@set -eu; tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+		truncate -s $(KERNEL_MAX_BYTES) "$$tmp/at-limit.bin"; \
+		../scripts/check-bios-kernel-size.sh "$$tmp/at-limit.bin" $(KERNEL_MAX_BYTES); \
+		truncate -s $$(( $(KERNEL_MAX_BYTES) + 1 )) "$$tmp/over-limit.bin"; \
+		if ../scripts/check-bios-kernel-size.sh "$$tmp/over-limit.bin" $(KERNEL_MAX_BYTES) >"$$tmp/reject.log" 2>&1; then \
+			echo "over-limit kernel image unexpectedly passed the size guard" >&2; exit 1; \
+		fi; \
+		grep -q "maximum is $(KERNEL_MAX_BYTES) bytes" "$$tmp/reject.log"; \
+		echo "PASS: BIOS kernel size guard accepts the exact ceiling and rejects one byte over."
+
+test-loader-limit: $(OUT)/fadal-kernel.img $(OUT)/boot.o
+	@../scripts/test-bios-loader-limit.sh $(OUT)/fadal-kernel.img $(OUT)/boot.o $(KERNEL_MAX_SECTORS) "$(QEMU)"
 
 test-memory-window: $(OUT)/fadal-kernel.img
 	@command -v $(QEMU) >/dev/null || \

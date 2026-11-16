@@ -29,4 +29,15 @@ The Phase 1 archives were not modified; both retain SHA-256 `bd1b433309cce3671f9
 
 ## Compatibility note and next step
 
-The BIOS kernel payload is 57,273 bytes within its fixed 57,344-byte (112-sector) loader budget, leaving only 71 bytes. The image boots and passes the recorded checks, but future BIOS growth must stop until loader headroom is increased or the payload is reduced through a separately tested change. The next proposed milestone is a bounded BIOS loader-capacity improvement with an explicit image-size ceiling and QEMU negative-control coverage. No new BIOS syscall, UEFI/BIOS unification, or Linux runtime dependency was introduced here.
+The BIOS kernel payload is 57,273 bytes within its fixed 57,344-byte (112-sector) loader budget, leaving only 71 bytes. The image boots and passes the recorded checks, but future BIOS growth must stop until loader headroom is increased or the payload is reduced through a separately tested change. At the time of this P2.5 checkpoint, the next proposed milestone was a bounded BIOS loader-capacity improvement. No new BIOS syscall, UEFI/BIOS unification, or Linux runtime dependency was introduced here.
+
+## P2.6 source-build follow-up — 2026-11-16
+
+P2.6 completed the bounded loader-capacity work: current BIOS builds reserve at most 120 sectors (61,440 bytes), embed the rounded-up actual sector count, and reject zero or 121 before INT 13h. The raw-disk FAT12 volume now starts at LBA 121 for newly built images. The BIOS test suite passed its exact-size/one-byte-over checks, maximum 120-sector QEMU boot, 121-sector rejection control, existing BIOS smoke test, and 16/32/64 MiB memory matrix. The P2.5 ZIP above and both Phase 1 UTM archives remain unchanged with their recorded checksums and older 112-sector/LBA-113 disk layout.
+
+The separately versioned [P2.6 UTM package](../FadalOS-Phase2.6-UTM-iOS.zip) is 163,033 bytes and has SHA-256 `220d3f185298878a4fc05a076a383dc18f31020ef0f4f098e2b6b429660e3825`; its sidecar is [`FadalOS-Phase2.6-UTM-iOS.zip.sha256`](../FadalOS-Phase2.6-UTM-iOS.zip.sha256). Internal image hashes are:
+
+- UEFI ESP: `537cee4bb9dbb7ee16993d92e83873b75a2c77245b57833ace047c3c8ffd86da`
+- BIOS disk: `37e10c0376881d389df6364c435271d0adbcdfb01ada3160656d3f6e210aa77f`
+
+The package passed `unzip -t`, external archive checksum verification, and its internal per-image hashes. Both images extracted from the ZIP were boot-tested: the BIOS profile under QEMU `pc` with 128 MiB RAM reached `FADAL KERNEL ONLINE` and passed the 64 MiB allocator trace; the UEFI ESP under OVMF passed the keyboard-focus regression. The full UEFI QEMU/OVMF matrix passed, including page protection, terminal input/selection/history, window controls/resizing, and persistent-home checks. The original Phase 1 ZIP aliases still have SHA-256 `bd1b433309cce3671f9a206f56629db8d7db8268a0167a378696db705c362fab`; the P2.5 ZIP retains SHA-256 `7856305f788f26ce93a4d407696615c9b51919224eb5ed7b15b2c8bbdc1365f5`.

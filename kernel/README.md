@@ -33,8 +33,8 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
 14. The first FAT12 layer formats a 64-sector in-memory volume, mirrors both
     FAT copies, allocates 12-bit clusters, creates 8.3 root entries, and
     writes `KERNEL.TXT` plus the standalone `FSH.BIN` executable during boot.
-    The ATA PIO LBA28 driver persists that volume at LBA 113 in the raw disk
-    image and reads it back to verify the FAT12 directory and file bytes.
+    The ATA PIO LBA28 driver persists that volume at LBA 121 in the Phase 2.6
+    raw disk image and reads it back to verify the FAT12 directory and file bytes.
 15. The memory manager provides a page-backed kernel heap with contiguous
     `kmalloc`/`kfree` allocations, zeroed pages, reuse after release, and an
     allocation table for up to 32 live blocks. Boot validates a two-page
@@ -232,8 +232,13 @@ ATA hardware, and QEMU are execution targets, not another operating-system
 kernel embedded in Fadal.
 
 `make run` boots `kernel/out/fadal-kernel.img` in QEMU, sends serial output to
-the terminal, and stops after the smoke-test timeout. The image uses a fixed
-112-sector kernel budget for the first boot stage.
+the terminal, and stops after the smoke-test timeout. The first stage reserves
+LBAs 1–120 for the kernel and allows at most 61,440 binary bytes; its embedded
+sector count is the actual file size rounded up to 512-byte sectors. The BIOS
+disk read is still legacy INT 13h CHS. The FAT12 volume begins at LBA 121. The
+BIOS test target boots with the maximum 120-sector load count and rejects a 121-sector count
+before entering the kernel. Phase 1 UTM images retain their original 112-sector
+layout; this newer layout applies to images built from the current Makefile.
 
 Use `make -C kernel run-vga` for the interactive shell: it opens the QEMU VGA
 window, where keyboard scancodes are delivered to the PS/2 IRQ1 driver. The

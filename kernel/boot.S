@@ -2,7 +2,6 @@
 .section .text
 .global _start
 
-.equ KERNEL_SECTORS, 112
 .equ BOOT_BASE, 0x7c00
 
 _start:
@@ -18,12 +17,20 @@ _start:
     # The map lives below 64 KiB so the first identity map can inspect it.
     call detect_memory
 
-    # Read the fixed kernel budget from sector 2 into physical address 0x10000.
+    # The build embeds the rounded-up kernel sector count in the boot sector.
+    # Reject a corrupt/out-of-contract count before issuing a BIOS disk read.
+    movb kernel_sector_count, %al
+    testb %al, %al
+    jz loader_limit_error
+    cmpb $MAX_KERNEL_SECTORS, %al
+    ja loader_limit_error
+
+    # Read the kernel from sector 2 into physical address 0x10000.
     movw $0x1000, %ax
     movw %ax, %es
     xorw %bx, %bx
     movb $0x02, %ah
-    movb $KERNEL_SECTORS, %al
+    movb kernel_sector_count, %al
     movb $0x00, %ch
     movb $0x02, %cl
     movb $0x00, %dh
@@ -36,6 +43,12 @@ _start:
     orl $0x1, %eax
     movl %eax, %cr0
     ljmp $0x08, $(protected_mode + BOOT_BASE)
+
+loader_limit_error:
+    # Port 0xe9 is a QEMU debugcon-only trace for the negative-control test.
+    movw $0x00e9, %dx
+    movb $'L', %al
+    outb %al, %dx
 
 disk_error:
     cli
@@ -99,6 +112,9 @@ gdt_descriptor:
 
 boot_drive:
     .byte 0
+
+kernel_sector_count:
+    .byte KERNEL_SECTORS
 
 .org 510
 .word 0xaa55

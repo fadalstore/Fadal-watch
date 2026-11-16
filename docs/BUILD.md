@@ -35,7 +35,7 @@ make -C kernel run
 make -C kernel run-vga
 ```
 
-The image is written to `kernel/out/fadal-kernel.img`. `check` must remain the required pre-push test because it verifies the serial boot trace, FAT12 persistence, VFS, scheduler, syscalls, network path, and independence guard. It also boots the BIOS image with 16 MiB, 32 MiB, and 64 MiB QEMU RAM configurations to check the bounded E820 memory window; the 16 MiB boot is a negative control, while the larger boots verify an eligible page above 16 MiB can be allocated, touched, freed, and reused. The networking self-test validates SYN/SYN-ACK sequence numbers and repeat-SYN behavior, rejects a truncated IP/TCP frame, then injects even- and odd-sized synthetic TCP segments across multiple reads to verify checksum handling, duplicate/out-of-order rejection, receive-window backpressure, and ring-buffer wrap. It also streams a fragmented synthetic HTTP response through the TCP receive ring and parser adapter, checking the decoded body; the Makefile asserts the combined serial pass line.
+The image is written to `kernel/out/fadal-kernel.img`. The BIOS loader reserves at most 120 kernel sectors (61,440 bytes) and embeds the actual rounded-up sector count in the boot sector; it halts before disk I/O if that byte is zero or exceeds 120. The kernel binary is checked against the same byte ceiling before packaging. The raw-disk layout keeps the boot sector at LBA 0, reserves LBAs 1–120 for the kernel, and places the FAT12 volume at LBA 121 (data begins at LBA 125). `check` must remain the required pre-push test because it verifies the serial boot trace, FAT12 persistence, VFS, scheduler, syscalls, network path, and independence guard. It also tests the exact byte ceiling and one-byte-over rejection, boots QEMU at the maximum 120-sector load count over the reserved kernel window, verifies a 121-sector count is rejected before kernel entry, and runs the 16/32/64 MiB memory-window matrix. The 16 MiB boot is a negative control, while the larger boots verify an eligible page above 16 MiB can be allocated, touched, freed, and reused. The networking self-test validates SYN/SYN-ACK sequence numbers and repeat-SYN behavior, rejects a truncated IP/TCP frame, then injects even- and odd-sized synthetic TCP segments across multiple reads to verify checksum handling, duplicate/out-of-order rejection, receive-window backpressure, and ring-buffer wrap. It also streams a fragmented synthetic HTTP response through the TCP receive ring and parser adapter, checking the decoded body; the Makefile asserts the combined serial pass line.
 
 The BIOS boot trace also includes a keyboard translation self-test for
 independent Shift/Caps Lock behavior and representative US shifted punctuation.
@@ -46,10 +46,10 @@ independent Shift/Caps Lock behavior and representative US shifted punctuation.
 make -C kernel/uefi clean check payload
 UEFI_KERNEL="$PWD/kernel/uefi/out/fadal-uefi.krn" make -C kernel/uefi image
 scripts/package-phase2-utm.sh
-sha256sum -c FadalOS-Phase2-UTM-iOS.zip.sha256
+sha256sum -c FadalOS-Phase2.6-UTM-iOS.zip.sha256
 ```
 
-The Phase 2 packager stages fresh profile copies, keeps the BIOS SeaBIOS/`pc` image separate from the UEFI ESP image, writes per-image and archive checksums, and does not alter either Phase 1 archive, installer hash, or manifest. Its default BIOS profile has 128 MiB guest RAM; the BIOS allocator maps at most 64 MiB and remains capped at 16 MiB if E820 is unavailable. Do not overwrite `Data/fadal-uefi.img` with the BIOS disk.
+The Phase 2.6 packager stages fresh profile copies, keeps the BIOS SeaBIOS/`pc` image separate from the UEFI ESP image, writes per-image and archive checksums, and outputs the separately versioned `FadalOS-Phase2.6-UTM-iOS.zip`. It does not overwrite the P2.5 ZIP or alter either Phase 1 archive, installer hash, or manifest. Its default BIOS profile has 128 MiB guest RAM; the BIOS allocator maps at most 64 MiB and remains capped at 16 MiB if E820 is unavailable. The current BIOS image reserves up to 120 kernel sectors and moves its FAT12 volume to LBA 121. Do not overwrite `Data/fadal-uefi.img` with the BIOS disk.
 
 The same boot check runs the independent HTTP/1 response parser tests even if no
 NIC is available. They cover fixed-length and close-delimited bodies, chunked

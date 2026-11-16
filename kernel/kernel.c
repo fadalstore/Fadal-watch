@@ -23,7 +23,6 @@ typedef unsigned int u32;
 #define TIMER_VECTOR 0x20
 #define KEYBOARD_VECTOR 0x21
 #define SYSCALL_VECTOR 0x80
-#define FAT12_DISK_LBA 113
 #define TIMER_FREQUENCY 100
 #define PAGE_SIZE 4096
 #define PAGE_PRESENT 0x001

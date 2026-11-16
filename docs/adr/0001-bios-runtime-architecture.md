@@ -13,7 +13,7 @@ Authorize P2.4 to extend the existing 32-bit physical-memory window: grow the id
 
 ## Context and current contracts
 
-The BIOS boot sector starts in 16-bit real mode, gathers up to 32 E820 entries in low memory, reads a fixed 112-sector kernel with legacy INT 13h CHS into `0x10000`, installs a flat GDT, enters 32-bit protected mode, and calls the kernel at that address. The stack is fixed at `0x90000`. The disk layout places the boot sector at LBA 0, the kernel in LBAs 1–112, and the FAT volume at LBA 113. The 512-byte sector and `0xAA55` signature are compatibility requirements. See `kernel/boot.S`, `kernel/linker.ld`, and `kernel/Makefile`.
+The Phase 1/P2.5 BIOS image used a fixed 112-sector kernel with legacy INT 13h CHS into `0x10000`; the original disk placed the FAT volume at LBA 113. P2.6 keeps the 16-bit real-mode entry, CHS I/O, `0x10000` load address, flat GDT, 32-bit protected-mode entry, and `0x90000` stack, but the current build reserves up to 120 sectors (61,440 bytes) and moves the FAT volume to LBA 121. The boot sector stores the actual rounded-up kernel sector count and halts before disk I/O if that count is zero or exceeds 120. The 512-byte sector and `0xAA55` signature remain compatibility requirements; frozen Phase 1 images are unchanged. See `kernel/boot.S`, `kernel/linker.ld`, and `kernel/Makefile`.
 
 The kernel now creates a 64 MiB identity map from sixteen page tables, reserves the first 1 MiB, and offers only E820-reported usable pages inside the mapped range to its 32-bit physical/identity-pointer allocator. If E820 is unavailable, allocator access remains capped at the previous 16 MiB. The E820 consumer still stores at most 32 records and ignores ranges whose upper base or length words are nonzero. User-visible mappings live in the first two (8 MiB) page-table region; identical supervisor-only tables above it are shared between process directories. The current P2.4 ceiling is therefore 64 MiB, not a general solution for memory above 4 GiB. See `kernel/kernel.c` (`IDENTITY_MAP_BYTES`, `memory_page_limit`, paging initialization, E820 filtering, and page allocation).
 
@@ -46,16 +46,23 @@ Implementation and verification are complete. The `make -C kernel check` target 
 
 The proof ends at bounded memory discovery, mapping, and allocator behavior. It does not claim support for RAM beyond 64 MiB or 4 GiB, arbitrary E820 map layouts, PAE, long mode, AP startup, or a general virtual-memory manager. If the 64 MiB cap proves insufficient or a 32-bit mapping model is no longer the right foundation, reopen this ADR before starting an x86-64 BIOS path.
 
+## P2.6 loader-capacity proof
+
+P2.6 increases the reserved kernel load window from 112 to 120 sectors while keeping the read destination at `0x10000`; 120 sectors occupy 61,440 bytes, within the existing 64 KiB segment window. The boot sector embeds the image's actual rounded-up sector count and checks it before issuing INT 13h. The Makefile derives the C kernel's FAT12 LBA from the same ceiling, placing the volume at LBA 121, after reserved kernel LBAs 1–120. Phase 1 ZIP/profile contents remain frozen and keep their older image layout.
+
+The BIOS `check` target accepts a size exactly at 61,440 bytes and rejects a one-byte-over file. Its QEMU positive control sets the boot-sector count to 120 and confirms the reserved load window reaches `FADAL KERNEL ONLINE`; its negative control changes the count to 121 and requires the boot-sector `L` debugcon marker with no kernel-entry serial trace. The original BIOS smoke contract and 16/32/64 MiB allocator tests also pass. This is a fixed, bounded loader window, not a general filesystem kernel loader; it does not change the syscall ABI or UEFI image.
+
 ## Consequences
 
 - Existing BIOS users retain the same boot image format, 32-bit entry, disk layout, interrupt conventions, syscalls, and smoke-test contract.
 - P2.4 verified one independently testable resource limit without changing the BIOS ABI or adding a second kernel runtime.
+- P2.6 verified the 120-sector BIOS loader ceiling, actual sector-count guard, and relocated FAT12 disk offset; earlier Phase 1 image artifacts remain unchanged.
 - UEFI and BIOS remain separate freestanding boot paths; Linux/Ubuntu and other host tools remain build/test infrastructure only, never FadalOS runtime dependencies.
 - The project accepts the 32-bit ceiling and lack of BIOS-kernel NX for this phase. A future x86-64 BIOS decision will require a separate migration plan, not a silent compatibility change.
 
 ## References in this repository
 
-- `kernel/boot.S` — BIOS E820 collection, CHS load, and protected-mode entry.
+- `kernel/boot.S` — BIOS E820 collection, bounded CHS load, and protected-mode entry.
 - `kernel/kernel.c` — paging, E820 filtering, physical allocator, interrupt/syscall frames, process address spaces, scheduler, and SMP scaffolding.
 - `kernel/interrupts.S` — 32-bit interrupt and syscall entry/return stubs.
 - `kernel/fsh.c` — userspace syscall numbers and calling convention.

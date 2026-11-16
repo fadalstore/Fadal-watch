@@ -185,29 +185,40 @@ The persistent-home guest and host checks use the exact same image.
 
 Phase 2 is tracked in `docs/PHASE2_PLAN.md`. P2.1 (the bounded UEFI `history`
 builtin), P2.2 (test-suite reliability), P2.3 (BIOS runtime architecture
-decision), P2.4 (bounded BIOS memory-window proof), and P2.5 (release checkpoint)
-are complete. [ADR 0001](docs/adr/0001-bios-runtime-architecture.md) keeps the
-existing i386 BIOS runtime and defers a separate x86-64 BIOS path. The BIOS
-identity map is 64 MiB, backed only by E820 type-1 pages; when E820 is
+decision), P2.4 (bounded BIOS memory-window proof), P2.5 (release checkpoint),
+and P2.6 (bounded BIOS loader capacity) are complete. [ADR 0001](docs/adr/0001-bios-runtime-architecture.md)
+keeps the existing i386 BIOS runtime and defers a separate x86-64 BIOS path.
+The BIOS identity map is 64 MiB, backed only by E820 type-1 pages; when E820 is
 unavailable, allocator access stays capped at 16 MiB. User mappings remain
 private while identical supervisor-only tables above the first 8 MiB are
-shared. `make -C kernel check` passes the original ABI/smoke suite and QEMU TCG
-16 MiB negative control plus 32/64 MiB high-page allocation, pattern-touch,
-release, reuse, and boundary checks. Syscall 1–34, BIOS image layout, and legacy
-smoke traces are unchanged.
+shared. The current BIOS loader reserves up to 120 sectors (61,440 bytes),
+stores the actual rounded-up sector count in its 512-byte boot sector, and
+rejects zero or more than 120 before INT 13h. For images built by the current
+Makefile, the kernel occupies LBAs 1–120 and FAT12 starts at LBA 121 (data LBA
+125); `FAT12_DISK_LBA` is derived from the same Make variable. Phase 1 packages
+and the P2.5 Phase 2 ZIP retain their original 112-sector/LBA-113 images and
+remain unchanged. `make -C kernel check` passes the original ABI/smoke suite,
+exact 61,440-byte guard acceptance and one-byte-over rejection, QEMU boot at
+the full 120-sector load count, QEMU rejection of count 121 before kernel
+entry, and the 16/32/64 MiB high-page allocator tests. Syscall 1–34 and legacy
+smoke traces remain unchanged.
 
-The separate [Phase 2 UTM package](FadalOS-Phase2-UTM-iOS.zip) has SHA-256
+The frozen P2.5 [Phase 2 UTM package](FadalOS-Phase2-UTM-iOS.zip) has SHA-256
 `7856305f788f26ce93a4d407696615c9b51919224eb5ed7b15b2c8bbdc1365f5`; the UEFI
-and BIOS disk hashes are recorded in that archive and in
-`docs/PHASE2_RELEASE.md`. Both staged images booted in their documented QEMU
-configurations. The Phase 1 UTM ZIP aliases remain unchanged at SHA-256
+The newer [P2.6 UTM package](FadalOS-Phase2.6-UTM-iOS.zip) is a distinct archive
+with SHA-256 `220d3f185298878a4fc05a076a383dc18f31020ef0f4f098e2b6b429660e3825`.
+Its BIOS disk SHA-256 is `37e10c0376881d389df6364c435271d0adbcdfb01ada3160656d3f6e210aa77f`,
+and its UEFI disk SHA-256 is `537cee4bb9dbb7ee16993d92e83873b75a2c77245b57833ace047c3c8ffd86da`.
+Both images extracted from this ZIP booted under QEMU at 128 MiB `pc` and under
+OVMF with focus/keyboard regression respectively. Its archive and internal image
+checksums passed. The Phase 1 UTM ZIP aliases remain unchanged at SHA-256
 `bd1b433309cce3671f9a206f56629db8d7db8268a0167a378696db705c362fab`. The
-BIOS payload is 57,273/57,344 bytes, leaving only 71 bytes in the fixed 112-sector
-loader budget. **Next:** P2.6 should increase BIOS loader capacity safely with
-an explicit maximum image-size contract and QEMU over-limit negative-control
-test before further BIOS kernel growth. Persistent command history remains out
-of scope until storage permissions and privacy semantics are explicitly
-designed.
+current BIOS payload is 57,273/61,440 bytes, leaving 4,167 bytes in the new
+120-sector window; this figure does not describe the frozen P2.5 ZIP.
+**Next:** choose the next bounded BIOS or UEFI runtime feature; preserve the new
+loader ceiling and rerun full validation before any further release packaging.
+Persistent command history remains out of scope until storage permissions and
+privacy semantics are explicitly designed.
 
 The persistent-home view is backed by the ESP's `FADALHOME` directory through
 validated loader callbacks. `ls`, `cat PATH`, `write PATH TEXT`, `mkdir PATH`,

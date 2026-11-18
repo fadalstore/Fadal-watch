@@ -233,13 +233,21 @@ persistent-home startup; both targets passed when run alone. At the P2.7
 checkpoint, the BIOS payload was 61,305/61,440 bytes, leaving 135 bytes. The
 P2.6 ZIP and Phase 1 archives remain frozen and do not include P2.7.
 
-**P2.8 complete (source checkpoint):** the BIOS default compiler optimization
-is now `-Os` instead of `-O2`. The binary is 47,609/61,440 bytes, saving 13,696
-bytes and leaving 13,831 bytes of loader headroom; the boot sector records 93
-sectors while the existing 120-sector ceiling and LBA-121 FAT12 layout remain
-unchanged. `make -C kernel check` and `scripts/validate-repo.sh --uefi` passed.
-No UTM archive was regenerated; the frozen P2.6 and Phase 1 artifacts remain
-unchanged. See the Somali [P2.8 progress note](docs/HORUMAR_P2_8.md).
+**P2.8 complete (source + separately versioned UTM package):** the BIOS default
+compiler optimization is now `-Os` instead of `-O2`. The binary is
+47,609/61,440 bytes, saving 13,696 bytes and leaving 13,831 bytes of loader
+headroom; the boot sector records 93 sectors while the existing 120-sector
+ceiling and LBA-121 FAT12 layout remain unchanged. `make -C kernel check` and
+`scripts/validate-repo.sh --uefi` passed. The new
+`FadalOS-Phase2.8-UTM-iOS.zip` is 159,288 bytes with SHA-256
+`b2f421d86f641a9bbec185cc6a5189cbff4ce8d7b5246bec3eb6af0bd2ac151a`; its UEFI
+and BIOS disk SHA-256 values are `14d518b61d7b8deb4af45eb9244d552c565a799996cd5f94dc65207eb5dbe4a2`
+and `e7e559013566b64090e1e3580adb4ac2463ef8ddd949311557606cbe9da68b88`.
+Archive checksums, internal image hashes, BIOS QEMU boot, UEFI OVMF
+window-controls/focus, and EFI page-protection tests passed. P2.6 and Phase 1
+archives remain unchanged. Source commit `f97422e` and the P2.8 package follow-up
+are pushed to GitHub `main`. See the Somali [P2.8 progress note](docs/HORUMAR_P2_8.md)
+and [release record](docs/PHASE2_RELEASE.md).
 
 **Next (P2.9):** design and test a direct ring-3 write-to-code negative control.
 Recover only a precisely matched probe fault (user privilege, CR2, write/protect

@@ -51,6 +51,24 @@ sha256sum -c FadalOS-Phase2.6-UTM-iOS.zip.sha256
 
 The Phase 2.6 packager stages fresh profile copies, keeps the BIOS SeaBIOS/`pc` image separate from the UEFI ESP image, writes per-image and archive checksums, and outputs the separately versioned `FadalOS-Phase2.6-UTM-iOS.zip`. It does not overwrite the P2.5 ZIP or alter either Phase 1 archive, installer hash, or manifest. Its default BIOS profile has 128 MiB guest RAM; the BIOS allocator maps at most 64 MiB and remains capped at 16 MiB if E820 is unavailable. The current BIOS image reserves up to 120 kernel sectors and moves its FAT12 volume to LBA 121. Do not overwrite `Data/fadal-uefi.img` with the BIOS disk.
 
+To build the separately versioned P2.8 package without replacing the P2.6 archive, build both images and pass an explicit output ZIP plus the matching versioned README:
+
+```sh
+make -C kernel check
+make -C kernel/uefi clean check payload
+make -C kernel uefi-image \
+  UEFI_BOOTLOADER="$PWD/kernel/uefi/out/BOOTX64.EFI" \
+  UEFI_KERNEL="$PWD/kernel/uefi/out/fadal-uefi.krn"
+PACKAGE_README="$PWD/docs/PHASE2.8_PACKAGE_README.md" \
+  scripts/package-phase2-utm.sh \
+  "$PWD/kernel/out/fadal-kernel.img" \
+  "$PWD/kernel/out/fadal-uefi.img" \
+  "$PWD/FadalOS-Phase2.8-UTM-iOS.zip"
+sha256sum -c FadalOS-Phase2.8-UTM-iOS.zip.sha256
+```
+
+The packager accepts `PACKAGE_README` as an optional environment override; its default README and output remain the historical P2.6 values. Keep Phase 1, P2.5, and P2.6 archives frozen.
+
 The same boot check runs the independent HTTP/1 response parser tests even if no
 NIC is available. They cover fixed-length and close-delimited bodies, chunked
 transfer with trailers, a `100 Continue` interim response, split input, framing

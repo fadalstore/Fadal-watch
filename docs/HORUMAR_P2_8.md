@@ -2,7 +2,7 @@
 
 **Taariikh:** 18 Nofeembar 2026
 **Branch la baaray:** `main`
-**Commit-kii ugu dambeeyey:** `d270cfe` — *Add BIOS kernel write protection*
+**Commit-ka source-ka P2.8:** `f97422e` — *Reduce BIOS kernel size for loader headroom* (waa la push-gareeyey GitHub). Isbeddellada laga helay bilowga waxay ku jireen `d270cfe`.
 
 ## Isbeddellada laga helay kaydka ilaa shaqadii hore
 
@@ -31,7 +31,18 @@ scripts/validate-repo.sh --uefi
 
 Tijaabooyinku waxay xaqiijiyeen BIOS smoke/ABI, size guard-ka xadka saxda ah iyo hal-byte-over, QEMU boot-ka 120-sector, diidmada tirada 121 ka hor kernel entry, memory-window-ka 16/32/64 MiB, CR0.WP recovery iyo mapping checks, iyo UEFI loader/payload/page-protection build. Intii validation-ka la diyaarinayey waxaa sandbox-ka lagu rakibay QEMU, GNU-EFI iyo OVMF; waxba laguma rakibin ama laguma darin guest-ka FadalOS.
 
-**Wax UTM archive ah dib looma baakadeeyn.** P2.6 iyo Phase 1 waxay ahaanayaan artifacts taariikhi ah oo frozen ah; isbeddelkan waa source checkpoint oo keliya.
+## UTM ZIP-ga P2.8
+
+Waxaa la sameeyey [FadalOS-Phase2.8-UTM-iOS.zip](../FadalOS-Phase2.8-UTM-iOS.zip), cabbirkiisuna waa **159,288 bytes**. SHA-256-ga archive-ka waa `b2f421d86f641a9bbec185cc6a5189cbff4ce8d7b5246bec3eb6af0bd2ac151a`; checksum-ku wuxuu kaloo ku jiraa [sidecar-ka](../FadalOS-Phase2.8-UTM-iOS.zip.sha256).
+
+Hashes-ka labada disk ee gudaha ZIP-ga waa:
+
+- UEFI ESP: `14d518b61d7b8deb4af45eb9244d552c565a799996cd5f94dc65207eb5dbe4a2`
+- BIOS disk: `e7e559013566b64090e1e3580adb4ac2463ef8ddd949311557606cbe9da68b88`
+
+`unzip -t`, checksum-ka sidecar-ka, internal `SHA256SUMS`, iyo byte-for-byte isbarbardhigga images-ka gudaha waa gudbeen. BIOS image-ka ZIP-ga laga soo saaray wuxuu QEMU ku gaaray `FADAL KERNEL ONLINE` iyadoo la adeegsanayo 128 MiB RAM. UEFI ESP-ga la soo saaray wuxuu OVMF ku gudbay focus/window-controls iyo Files/System/Browser; EFI page-protection self-test gooni ahna wuxuu qabtay NX/read-only faults-kii la filayey. Hash-yada archives-kii hore isma beddelin: P2.6 `220d3f185298878a4fc05a076a383dc18f31020ef0f4f098e2b6b429660e3825`, P2.5 `7856305f788f26ce93a4d407696615c9b51919224eb5ed7b15b2c8bbdc1365f5`, iyo Phase 1 `bd1b433309cce3671f9a206f56629db8d7db8268a0167a378696db705c362fab`.
+
+P2.6 iyo Phase 1 waa la ilaaliyey; ZIP-ga cusub waa nooc gooni ah.
 
 ## Shaqada xigta
 

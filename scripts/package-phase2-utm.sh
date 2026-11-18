@@ -7,7 +7,7 @@ UEFI_IMAGE="${2:-$ROOT/kernel/out/fadal-uefi.img}"
 OUT_ZIP="${3:-$ROOT/FadalOS-Phase2.6-UTM-iOS.zip}"
 BIOS_SOURCE="$ROOT/utm/FadalWatch-BIOS.utm"
 UEFI_SOURCE="$ROOT/utm/FadalWatch-UEFI.utm"
-PACKAGE_README="$ROOT/docs/PHASE2_PACKAGE_README.md"
+PACKAGE_README="${PACKAGE_README:-$ROOT/docs/PHASE2_PACKAGE_README.md}"
 
 fail() { echo "error: $*" >&2; exit 1; }
 [[ -s "$BIOS_IMAGE" ]] || fail "BIOS image not found: $BIOS_IMAGE"

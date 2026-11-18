@@ -41,3 +41,15 @@ The separately versioned [P2.6 UTM package](../FadalOS-Phase2.6-UTM-iOS.zip) is 
 - BIOS disk: `37e10c0376881d389df6364c435271d0adbcdfb01ada3160656d3f6e210aa77f`
 
 The package passed `unzip -t`, external archive checksum verification, and its internal per-image hashes. Both images extracted from the ZIP were boot-tested: the BIOS profile under QEMU `pc` with 128 MiB RAM reached `FADAL KERNEL ONLINE` and passed the 64 MiB allocator trace; the UEFI ESP under OVMF passed the keyboard-focus regression. The full UEFI QEMU/OVMF matrix passed, including page protection, terminal input/selection/history, window controls/resizing, and persistent-home checks. The original Phase 1 ZIP aliases still have SHA-256 `bd1b433309cce3671f9a206f56629db8d7db8268a0167a378696db705c362fab`; the P2.5 ZIP retains SHA-256 `7856305f788f26ce93a4d407696615c9b51919224eb5ed7b15b2c8bbdc1365f5`.
+
+
+## P2.8 — source iyo UTM package (18 Nofeembar 2026)
+
+[UTM ZIP-ga P2.8](../FadalOS-Phase2.8-UTM-iOS.zip) waa 159,288 bytes, SHA-256-giisuna waa `b2f421d86f641a9bbec185cc6a5189cbff4ce8d7b5246bec3eb6af0bd2ac151a`. Sidecar-ku waa [`FadalOS-Phase2.8-UTM-iOS.zip.sha256`](../FadalOS-Phase2.8-UTM-iOS.zip.sha256). Hashes-ka images-ka ku jira waa:
+
+- UEFI ESP: `14d518b61d7b8deb4af45eb9244d552c565a799996cd5f94dc65207eb5dbe4a2`
+- BIOS disk: `e7e559013566b64090e1e3580adb4ac2463ef8ddd949311557606cbe9da68b88`
+
+`make -C kernel check` iyo `scripts/validate-repo.sh --uefi` way gudbeen. `unzip -t`, sidecar checksum, gudaha `SHA256SUMS`, iyo byte equality-ga images-ka ZIP-ga ku jira waa la xaqiijiyey. BIOS disk-ka la soo saaray wuxuu QEMU ku boot-gareeyey 128 MiB RAM; UEFI disk-ka la soo saaray wuxuu OVMF ku gudbay keyboard focus, Files/System/Browser, mouse/window controls. EFI page-protection test-ka goonida ahi wuxuu qabtay NX iyo read-only page faults-kii la filayey.
+
+Commit-ka source-ka `f97422e` waa la push-gareeyey `main`-ka GitHub. P2.5 (`7856305f788f26ce93a4d407696615c9b51919224eb5ed7b15b2c8bbdc1365f5`), P2.6 (`220d3f185298878a4fc05a076a383dc18f31020ef0f4f098e2b6b429660e3825`), iyo Phase 1 (`bd1b433309cce3671f9a206f56629db8d7db8268a0167a378696db705c362fab`) archives-koodii isma beddelin.

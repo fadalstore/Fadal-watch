@@ -16,10 +16,11 @@ UEFI_BOOTLOADER ?= $(OUT)/BOOTX64.EFI
 UEFI_KERNEL ?= $(OUT)/fadal-uefi.krn
 INSTALL_DIR ?= ../install
 
+# Keep the BIOS image well below its fixed loader window as kernel features grow.
 CFLAGS := -m32 -ffreestanding -fno-pie -fno-stack-protector -fno-builtin \
 	-mno-sse -mno-sse2 -mno-mmx -msoft-float -fno-tree-vectorize \
 	-fno-asynchronous-unwind-tables -fno-unwind-tables -DFAT12_DISK_LBA=$(FAT12_LBA) \
-	-Wall -Wextra -Werror -O2 -nostdinc
+	-Wall -Wextra -Werror -Os -nostdinc
 LDFLAGS := -m elf_i386 -T linker.ld -nostdlib
 
 .PHONY: all clean check test-memory-window test-kernel-size test-loader-limit independence run run-vga install uefi-image phase1b-objects

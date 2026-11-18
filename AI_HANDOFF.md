@@ -229,16 +229,24 @@ matrix, 120-sector loader guards, expected CR0.WP fault, and process mapping
 checks; `scripts/validate-repo.sh --uefi` also passes. Every UEFI QEMU/OVMF
 target passed across the serial suite and targeted reruns. The first aggregate
 run had transient HMP/focus timing failures in terminal-history and the
-persistent-home startup; both targets passed when run alone. Current BIOS
-payload size is 61,305/61,440 bytes, leaving 135 bytes. The P2.6 ZIP and Phase 1
-archives remain frozen and do not include P2.7.
+persistent-home startup; both targets passed when run alone. At the P2.7
+checkpoint, the BIOS payload was 61,305/61,440 bytes, leaving 135 bytes. The
+P2.6 ZIP and Phase 1 archives remain frozen and do not include P2.7.
 
-**Next (P2.8):** resolve the BIOS image-capacity constraint before adding more
-kernel code. Measure size-reduction options or design and test a safe loader
-window extension; then consider a direct ring-3 write-to-code negative control.
-Do not overwrite any versioned UTM archive. Persistent command history remains
-out of scope until storage permissions and privacy semantics are explicitly
-designed.
+**P2.8 complete (source checkpoint):** the BIOS default compiler optimization
+is now `-Os` instead of `-O2`. The binary is 47,609/61,440 bytes, saving 13,696
+bytes and leaving 13,831 bytes of loader headroom; the boot sector records 93
+sectors while the existing 120-sector ceiling and LBA-121 FAT12 layout remain
+unchanged. `make -C kernel check` and `scripts/validate-repo.sh --uefi` passed.
+No UTM archive was regenerated; the frozen P2.6 and Phase 1 artifacts remain
+unchanged. See the Somali [P2.8 progress note](docs/HORUMAR_P2_8.md).
+
+**Next (P2.9):** design and test a direct ring-3 write-to-code negative control.
+Recover only a precisely matched probe fault (user privilege, CR2, write/protect
+bits, faulting EIP, and resume EIP), confirm the read-only code byte is unchanged,
+and keep every unrelated page fault fail-closed. Do not overwrite versioned UTM
+archives. Persistent command history remains out of scope until storage
+permissions and privacy semantics are explicitly designed.
 
 The persistent-home view is backed by the ESP's `FADALHOME` directory through
 validated loader callbacks. `ls`, `cat PATH`, `write PATH TEXT`, `mkdir PATH`,

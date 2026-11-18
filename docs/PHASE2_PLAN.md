@@ -1,6 +1,6 @@
 # FadalOS Phase 2 — Work Plan
 
-**Status:** P2.1–P2.7 complete; the P2.6 package remains a frozen historical artifact
+**Status:** P2.1–P2.8 complete; the P2.6 package remains a frozen historical artifact
 **Baseline:** Phase 1 UTM release at commit `1d50d1d`
 **Purpose:** define a staged, boot-testable path from the Phase 1 freestanding kernel and UEFI desktop prototype toward a more reliable, inspectable FadalOS runtime.
 
@@ -57,6 +57,14 @@ The BIOS linker now defines a page-aligned read-only `.text`/`.rodata` range and
 
 **Verified:** `make -C kernel check` passes the existing BIOS smoke/ABI contract, 16/32/64 MiB memory matrix, exact/over-size guards, maximum 120-sector load and 121-sector rejection controls, the CR0.WP expected-fault recovery, and both process-space mapping checks. `scripts/validate-repo.sh --uefi` passes. All eight UEFI QEMU/OVMF regression targets (page protection, focus, terminal editing, selection, history, window controls, resize, and persistent-home) passed across the complete serial run and targeted reruns. One aggregate run exposed transient HMP/focus timing failures in history and the persistent-home startup focus check; each affected target passed when rerun alone. The BIOS binary is 61,305/61,440 bytes, leaving only 135 bytes. No UTM archive was regenerated: P2.6 and Phase 1 packages remain frozen and do not contain this P2.7 source change.
 
+### P2.8 — BIOS image headroom by size optimization *(complete; source checkpoint only)*
+
+P2.7 left only 135 bytes in the fixed 120-sector BIOS kernel window. Before adding more kernel code, the default freestanding BIOS C optimization was changed from `-O2` to `-Os`; the loader ceiling, 120-sector guard, raw-disk layout, BIOS ABI, and guest runtime dependencies were not changed.
+
+**Natiijo la xaqiijiyey:** kernel binary-gu wuxuu ka yaraaday 61,305 bytes ilaa 47,609 bytes, taas oo badbaadisay 13,696 bytes kana tagtay 13,831 bytes oo headroom ah gudaha xadka 61,440-byte. Boot sector-ku wuxuu ku dhex-daray tirada dhabta ah ee 93 sectors; xadka loader-ku weli waa 120 sectors, FAT12-na weli wuxuu ka bilaabmaa LBA 121. `make -C kernel check` iyo `scripts/validate-repo.sh --uefi` labaduba way gudbeen, oo ay ku jiraan BIOS smoke/ABI, xadka saxda ah iyo over-limit, QEMU boot-ka 120-sector, diidmada 121-sector, 16/32/64 MiB memory-window, CR0.WP, iyo UEFI build/page-protection checks. Wax UTM archive ah lama cusboonaysiin; P2.6 iyo Phase 1 waa la qaboojiyey.
+
+Direct ring-3 store-to-code negative control wali lama hirgelin. Waxaa loo raray P2.9 si loo naqshadeeyo recovery gaar ah oo si sax ah u xaqiijiya user privilege, CR2, error bits, faulting EIP, iyo byte aan isbeddelin, iyadoo #PF kasta oo kale uu sii ahaanayo fail-closed.
+
 ## Immediate work queue
 
 1. P2.1 is complete: the UEFI `history` output and exact-order QEMU regression are in place.
@@ -66,7 +74,8 @@ The BIOS linker now defines a page-aligned read-only `.text`/`.rodata` range and
 5. P2.5 is complete: the Phase 2 artifact is separate, boot-verified, checksummed, and documented; Phase 1 archives remain frozen.
 6. P2.6 is complete: the 120-sector load window and byte ceiling have exact-limit and QEMU 121-sector rejection controls.
 7. P2.7 is complete: BIOS `.text`/`.rodata` are supervisor read-only under CR0.WP, an intentional write fault is precisely recovered, and process-space permissions are checked.
-8. Next proposed milestone (P2.8): resolve the BIOS image-capacity constraint before adding more kernel code. The current image has only 135 bytes of headroom; measure size-reduction opportunities or design and test a safe loader-window extension, then consider a direct ring-3 write-to-code negative control. Keep P2.6/Phase 1 ZIPs unchanged until a separate release gate.
+8. P2.8 is complete at source level: the BIOS default uses `-Os`, the kernel is 47,609/61,440 bytes, and the full BIOS plus UEFI validation command passes. No archive was regenerated.
+9. Next proposed milestone (P2.9): add a direct ring-3 write-to-code negative control with narrowly matched #PF recovery, and preserve fail-closed handling for every unrelated fault. Keep P2.6/Phase 1 ZIPs unchanged until a separate release gate.
 
 ## Out of scope for this plan
 

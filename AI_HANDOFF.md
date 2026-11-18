@@ -186,7 +186,8 @@ The persistent-home guest and host checks use the exact same image.
 Phase 2 is tracked in `docs/PHASE2_PLAN.md`. P2.1 (the bounded UEFI `history`
 builtin), P2.2 (test-suite reliability), P2.3 (BIOS runtime architecture
 decision), P2.4 (bounded BIOS memory-window proof), P2.5 (release checkpoint),
-and P2.6 (bounded BIOS loader capacity) are complete. [ADR 0001](docs/adr/0001-bios-runtime-architecture.md)
+P2.6 (bounded BIOS loader capacity), and P2.7 (BIOS supervisor write
+protection) are complete. [ADR 0001](docs/adr/0001-bios-runtime-architecture.md)
 keeps the existing i386 BIOS runtime and defers a separate x86-64 BIOS path.
 The BIOS identity map is 64 MiB, backed only by E820 type-1 pages; when E820 is
 unavailable, allocator access stays capped at 16 MiB. User mappings remain
@@ -215,10 +216,29 @@ checksums passed. The Phase 1 UTM ZIP aliases remain unchanged at SHA-256
 `bd1b433309cce3671f9a206f56629db8d7db8268a0167a378696db705c362fab`. The
 current BIOS payload is 57,273/61,440 bytes, leaving 4,167 bytes in the new
 120-sector window; this figure does not describe the frozen P2.5 ZIP.
-**Next:** choose the next bounded BIOS or UEFI runtime feature; preserve the new
-loader ceiling and rerun full validation before any further release packaging.
-Persistent command history remains out of scope until storage permissions and
-privacy semantics are explicitly designed.
+
+P2.7 adds page-aligned BIOS `.text`/`.rodata` read-only mappings and a separate
+writable `.data`/BSS range. The kernel enables `CR0.WP` only after paging, GDT,
+and IDT setup; its page-fault handler recovers only the exact controlled
+supervisor store to a harmless read-only byte. Both process address spaces are
+checked for preserved kernel permissions, and syscall copyout rejects the
+read-only user-code page. FSH's mutable buffers and authentication state now
+reside on its writable user stack. This is not NX support: BIOS remains
+32-bit non-PAE. `make -C kernel check` passes the legacy BIOS contract, memory
+matrix, 120-sector loader guards, expected CR0.WP fault, and process mapping
+checks; `scripts/validate-repo.sh --uefi` also passes. Every UEFI QEMU/OVMF
+target passed across the serial suite and targeted reruns. The first aggregate
+run had transient HMP/focus timing failures in terminal-history and the
+persistent-home startup; both targets passed when run alone. Current BIOS
+payload size is 61,305/61,440 bytes, leaving 135 bytes. The P2.6 ZIP and Phase 1
+archives remain frozen and do not include P2.7.
+
+**Next (P2.8):** resolve the BIOS image-capacity constraint before adding more
+kernel code. Measure size-reduction options or design and test a safe loader
+window extension; then consider a direct ring-3 write-to-code negative control.
+Do not overwrite any versioned UTM archive. Persistent command history remains
+out of scope until storage permissions and privacy semantics are explicitly
+designed.
 
 The persistent-home view is backed by the ESP's `FADALHOME` directory through
 validated loader callbacks. `ls`, `cat PATH`, `write PATH TEXT`, `mkdir PATH`,

@@ -100,4 +100,23 @@ page_fault_isr:
     iret
 .size page_fault_isr, .-page_fault_isr
 
+.section .rodata
+.align 4
+.global kernel_write_protect_probe_target
+kernel_write_protect_probe_target:
+    .byte 0x5a
+
+.section .text
+.global kernel_write_protect_probe
+.type kernel_write_protect_probe, @function
+kernel_write_protect_probe:
+    movl 4(%esp), %eax
+.global kernel_write_protect_probe_store
+kernel_write_protect_probe_store:
+    movb $0x90, (%eax)
+.global kernel_write_protect_probe_resume
+kernel_write_protect_probe_resume:
+    ret
+.size kernel_write_protect_probe, .-kernel_write_protect_probe
+
 .section .note.GNU-stack,"",@progbits

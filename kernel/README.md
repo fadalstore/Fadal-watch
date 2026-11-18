@@ -13,7 +13,8 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
 6. The kernel exposes a small PS/2 console with `help`, `info`, and `clear`
    commands.
 7. The kernel reads the BIOS E820 map and uses it to bound its page allocator
-   inside the first 16 MiB identity-mapped window.
+   inside the first 64 MiB identity-mapped window; without E820 it retains the
+   conservative 16 MiB allocator fallback.
 8. The kernel programs the PIT at 100 Hz and owns timer IRQ0 for uptime.
 9. The kernel reserves an `int 0x80` syscall gate with a ring-3 descriptor so
    future userspace does not need to depend on a host operating system.
@@ -60,11 +61,19 @@ targets the x86 BIOS path so the boot chain is easy to inspect and test:
     its entry point in ring 3. The disk executable exercises `read`, `write`,
     `open`, `exec`, `get_ticks`, `get_pid`, and `exit` through `int 0x80`.
     Kernel handlers validate user buffers and VFS paths before accessing them.
-21. Paging now uses named x86 flags: kernel mappings are present/writable but
-    supervisor-only, the FSH code page is user-readable, and user stacks are
-    user-writable. IDT vector `0x0e` is connected to a page-fault ISR that
-    reads `CR2`, reports the CPU error code, and fails closed after an
-    unhandled kernel or user fault.
+21. Paging uses named x86 flags and the BIOS linker keeps `.text`/`.rodata`
+    page-aligned apart from writable `.data`/BSS. Kernel code and constants map
+    present, supervisor-only, and read-only; mutable kernel state, page tables,
+    page directories, and the IDT remain writable supervisor pages. After the
+    page-fault gate is installed, the kernel sets `CR0.WP` so ring 0 also obeys
+    read-only PTEs. A controlled store to a harmless `.rodata` byte proves the
+    protection fault and recovers only when CR2, error bits, EIP, and privilege
+    match the probe. Process address spaces validate the same kernel mapping
+    permissions. Syscall copyout rejects the read-only FSH code page, and FSH
+    keeps mutable state on its writable user stack. IDT vector `0x0e` still
+    fails closed for every unexpected fault. The 32-bit non-PAE BIOS path does
+    not provide NX; this milestone enforces write protection, not execute
+    protection.
 22. Each process now owns a page directory and private page-table storage. The
     kernel mappings are cloned as supervisor mappings, the FSH code page is
     shared read-only, and each process receives a distinct physical user stack

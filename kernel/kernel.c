@@ -16,6 +16,14 @@ typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned int u32;
 
+extern u8 __kernel_readonly_start[];
+extern u8 __kernel_readonly_end[];
+extern u8 __kernel_data_start[];
+extern const volatile u8 kernel_write_protect_probe_target;
+extern void kernel_write_protect_probe(const volatile void *target);
+extern void kernel_write_protect_probe_store(void);
+extern void kernel_write_protect_probe_resume(void);
+
 #define VGA_WIDTH 80
 #define VGA_HEIGHT 25
 #define VGA_CELLS (VGA_WIDTH * VGA_HEIGHT)
@@ -28,6 +36,7 @@ typedef unsigned int u32;
 #define PAGE_PRESENT 0x001
 #define PAGE_WRITE 0x002
 #define PAGE_USER 0x004
+#define CR0_WRITE_PROTECT 0x00010000
 #define PAGE_KERNEL_FLAGS (PAGE_PRESENT | PAGE_WRITE)
 #define PAGE_USER_RO_FLAGS (PAGE_PRESENT | PAGE_USER)
 #define PAGE_USER_RW_FLAGS (PAGE_PRESENT | PAGE_WRITE | PAGE_USER)
@@ -159,8 +168,10 @@ static struct mutex sync_test_mutex;
 static u8 sync_self_test_passed;
 static u8 net_loopback_buffer[256];
 static u32 net_loopback_length;
-static volatile u8 timer_scheduler_reported;
+static volatile u32 timer_scheduler_reported;
 static volatile u8 page_fault_reported;
+static volatile u8 kernel_write_protect_probe_armed;
+static volatile u8 kernel_write_protect_probe_seen;
 static volatile u8 dhcp_reported;
 static volatile u8 udp_test_state;
 static volatile u32 udp_test_ticks;
@@ -449,6 +460,13 @@ static void paging_init(void) {
         }
         page_directory[table] = ((u32)page_tables[table]) | PAGE_KERNEL_FLAGS;
     }
+    u32 readonly_start = (u32)__kernel_readonly_start / PAGE_SIZE;
+    u32 readonly_end = ((u32)__kernel_readonly_end + PAGE_SIZE - 1) / PAGE_SIZE;
+    if (readonly_start < readonly_end && readonly_end <= PHYSICAL_PAGE_COUNT) {
+        for (u32 page = readonly_start; page < readonly_end; page++) {
+            page_tables[page / 1024][page % 1024] &= ~PAGE_WRITE;
+        }
+    }
     page_tables[USER_CODE_PAGE / 1024][USER_CODE_PAGE % 1024] =
         USER_CODE_ADDRESS | PAGE_USER_RO_FLAGS;
     page_tables[USER_STACK_PAGE / 1024][USER_STACK_PAGE % 1024] =
@@ -471,6 +489,73 @@ static void paging_init(void) {
         :
         : "r"(directory)
         : "eax", "memory");
+}
+
+static u8 kernel_writable_supervisor_page(const u32 *table_entries, u32 address,
+                                          u32 private_limit) {
+    u32 page = address / PAGE_SIZE;
+    return page < private_limit / PAGE_SIZE &&
+        (table_entries[page] & (PAGE_PRESENT | PAGE_WRITE | PAGE_USER)) ==
+            (PAGE_PRESENT | PAGE_WRITE);
+}
+
+static u8 kernel_protection_flags_valid(const u32 *table_entries) {
+    u32 readonly_start = (u32)__kernel_readonly_start;
+    u32 readonly_end = (u32)__kernel_readonly_end;
+    u32 data_start = (u32)__kernel_data_start;
+    u32 private_limit = PRIVATE_PAGE_TABLE_COUNT * 1024 * PAGE_SIZE;
+    if (readonly_start >= readonly_end || readonly_end > data_start ||
+        (readonly_start & (PAGE_SIZE - 1)) != 0 ||
+        (data_start & (PAGE_SIZE - 1)) != 0 || data_start >= private_limit) {
+        return 0;
+    }
+    u32 first_page = readonly_start / PAGE_SIZE;
+    u32 end_page = (readonly_end + PAGE_SIZE - 1) / PAGE_SIZE;
+    u32 data_page = data_start / PAGE_SIZE;
+    if (end_page > private_limit / PAGE_SIZE || data_page >= private_limit / PAGE_SIZE) {
+        return 0;
+    }
+    for (u32 page = first_page; page < end_page; page++) {
+        if ((table_entries[page] & (PAGE_PRESENT | PAGE_WRITE | PAGE_USER)) !=
+            PAGE_PRESENT) {
+            return 0;
+        }
+    }
+    if (!kernel_writable_supervisor_page(table_entries, data_start, private_limit)) {
+        return 0;
+    }
+    u32 page_tables_start = (u32)page_tables / PAGE_SIZE;
+    u32 page_tables_end = ((u32)page_tables + sizeof(page_tables) + PAGE_SIZE - 1) /
+        PAGE_SIZE;
+    u32 page_directory_start = (u32)page_directory / PAGE_SIZE;
+    u32 page_directory_end = ((u32)page_directory + sizeof(page_directory) + PAGE_SIZE - 1) /
+        PAGE_SIZE;
+    u32 idt_start = (u32)idt / PAGE_SIZE;
+    u32 idt_end = ((u32)idt + sizeof(idt) + PAGE_SIZE - 1) / PAGE_SIZE;
+    if (page_tables_end > private_limit / PAGE_SIZE ||
+        page_directory_end > private_limit / PAGE_SIZE ||
+        idt_end > private_limit / PAGE_SIZE) {
+        return 0;
+    }
+    for (u32 page = page_tables_start; page < page_tables_end; page++) {
+        if (!kernel_writable_supervisor_page(table_entries, page * PAGE_SIZE,
+                                             private_limit)) {
+            return 0;
+        }
+    }
+    for (u32 page = page_directory_start; page < page_directory_end; page++) {
+        if (!kernel_writable_supervisor_page(table_entries, page * PAGE_SIZE,
+                                             private_limit)) {
+            return 0;
+        }
+    }
+    for (u32 page = idt_start; page < idt_end; page++) {
+        if (!kernel_writable_supervisor_page(table_entries, page * PAGE_SIZE,
+                                             private_limit)) {
+            return 0;
+        }
+    }
+    return 1;
 }
 
 static void load_address_space(struct address_space *space) {
@@ -530,7 +615,9 @@ static u8 address_spaces_isolated(struct address_space *first,
         (second_stack & PAGE_USER_RW_FLAGS) == PAGE_USER_RW_FLAGS &&
         (first_code & ~0xfff) == (second_code & ~0xfff) &&
         (first->page_directory[USER_STACK_PAGE / 1024] & PAGE_USER) != 0 &&
-        (second->page_directory[USER_STACK_2_PAGE / 1024] & PAGE_USER) != 0;
+        (second->page_directory[USER_STACK_2_PAGE / 1024] & PAGE_USER) != 0 &&
+        kernel_protection_flags_valid(first->page_tables) &&
+        kernel_protection_flags_valid(second->page_tables);
 }
 
 static void address_space_destroy(u32 slot, struct address_space *space) {
@@ -1055,6 +1142,15 @@ static u8 user_range_valid(u32 address, u32 length) {
         end <= USER_HEAP_ADDRESS + process->heap_pages * PAGE_SIZE;
 }
 
+static u8 user_range_writable(u32 address, u32 length) {
+    if (!user_range_valid(address, length)) {
+        return 0;
+    }
+    u32 end = address + length;
+    return length == 0 || address >= USER_CODE_ADDRESS + PAGE_SIZE ||
+        end <= USER_CODE_ADDRESS;
+}
+
 static u8 user_path_is_kernel(const char *path, u32 length) {
     static const char expected[] = "KERNEL.TXT";
     if (length != sizeof(expected) - 1 || !user_range_valid((u32)path, length)) {
@@ -1336,9 +1432,18 @@ static __attribute__((noreturn)) void page_fault_halt(void) {
     }
 }
 
-void page_fault_interrupt_handler(const u32 *register_frame) {
+void page_fault_interrupt_handler(u32 *register_frame) {
     u32 error_code = register_frame[8];
     u32 address = read_cr2();
+    if (kernel_write_protect_probe_armed &&
+        address == (u32)&kernel_write_protect_probe_target && error_code == 0x3 &&
+        register_frame[9] == (u32)kernel_write_protect_probe_store &&
+        (register_frame[10] & 0x3) == 0) {
+        register_frame[9] = (u32)kernel_write_protect_probe_resume;
+        kernel_write_protect_probe_armed = 0;
+        kernel_write_protect_probe_seen = 1;
+        return;
+    }
     serial_write("page fault: int 0x0e address ");
     write_u32(address);
     serial_write(" error ");
@@ -1362,12 +1467,28 @@ static u8 paging_flags_valid(void) {
     u32 code_entry = page_tables[USER_CODE_PAGE / 1024][USER_CODE_PAGE % 1024];
     u32 stack_entry = page_tables[USER_STACK_PAGE / 1024][USER_STACK_PAGE % 1024];
     u32 code_directory = page_directory[USER_CODE_PAGE / 1024];
-    return (kernel_entry & PAGE_USER) == 0 &&
+    return kernel_protection_flags_valid(page_tables[0]) &&
+        (kernel_entry & PAGE_USER) == 0 &&
         (code_entry & (PAGE_PRESENT | PAGE_USER)) == (PAGE_PRESENT | PAGE_USER) &&
         (code_entry & PAGE_WRITE) == 0 &&
         (stack_entry & (PAGE_PRESENT | PAGE_WRITE | PAGE_USER)) ==
             (PAGE_PRESENT | PAGE_WRITE | PAGE_USER) &&
         (code_directory & PAGE_USER) != 0;
+}
+
+static u8 kernel_write_protect_self_test(void) {
+    u32 cr0;
+    __asm__ volatile ("mov %%cr0, %0" : "=r"(cr0));
+    if ((cr0 & CR0_WRITE_PROTECT) == 0 ||
+        !kernel_protection_flags_valid(page_tables[0])) {
+        return 0;
+    }
+    kernel_write_protect_probe_seen = 0;
+    kernel_write_protect_probe_armed = 1;
+    kernel_write_protect_probe((void *)&kernel_write_protect_probe_target);
+    kernel_write_protect_probe_armed = 0;
+    return kernel_write_protect_probe_seen &&
+        kernel_write_protect_probe_target == 0x5a;
 }
 
 static void idt_init(void) {
@@ -1387,6 +1508,13 @@ static void idt_init(void) {
         .base = (u32)idt,
     };
     lidt(&pointer);
+}
+
+static void enable_kernel_write_protection(void) {
+    u32 cr0;
+    __asm__ volatile ("mov %%cr0, %0" : "=r"(cr0));
+    cr0 |= CR0_WRITE_PROTECT;
+    __asm__ volatile ("mov %0, %%cr0" : : "r"(cr0) : "memory");
 }
 
 static void pic_init(void) {
@@ -1607,7 +1735,7 @@ static u32 net_loopback_send(const u8 *data, u32 length) {
 }
 
 static u32 net_loopback_receive(u8 *data, u32 capacity) {
-    if (capacity == 0 || !user_range_valid((u32)data, capacity)) {
+    if (capacity == 0 || !user_range_writable((u32)data, capacity)) {
         return 0xffffffff;
     }
     spin_lock(&net_lock);
@@ -2150,7 +2278,7 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
             serial_write("syscall: exit dispatch; process marked exited\n");
         }
     } else if (frame->eax == SYSCALL_READ) {
-        if (user_range_valid(frame->ebx, frame->ecx) && frame->ecx != 0) {
+        if (user_range_writable(frame->ebx, frame->ecx) && frame->ecx != 0) {
             frame->eax = frame->edx >= 3 ?
                 fd_read_file(frame->edx, (u8 *)frame->ebx, frame->ecx) :
                 tty_read_available((u8 *)frame->ebx, frame->ecx);
@@ -2204,7 +2332,7 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
         struct file_stat *result = (struct file_stat *)frame->edx;
         u32 file_size = 0;
         u8 valid = user_path_is_kernel((const char *)frame->ebx, frame->ecx) &&
-            vfs_is_mounted() && user_range_valid(frame->edx, sizeof(*result)) &&
+            vfs_is_mounted() && user_range_writable(frame->edx, sizeof(*result)) &&
             vfs_read_file("KERNEL.TXT", file_read_buffer,
                           sizeof(file_read_buffer), &file_size);
         if (valid) {
@@ -2225,7 +2353,7 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
             serial_write("syscall: seek dispatch; file offset validated\n");
         }
     } else if (frame->eax == SYSCALL_WAIT) {
-        if (user_range_valid(frame->ecx, sizeof(u32))) {
+        if (user_range_writable(frame->ecx, sizeof(u32))) {
             frame->eax = process_wait_child(frame->ebx, (u32 *)frame->ecx);
         } else {
             frame->eax = 0xffffffff;
@@ -2236,7 +2364,7 @@ void syscall_interrupt_handler(struct syscall_frame *frame) {
         }
     } else if (frame->eax == SYSCALL_LISTDIR) {
         if (vfs_is_mounted() && frame->ecx != 0 &&
-            user_range_valid(frame->ebx, frame->ecx)) {
+            user_range_writable(frame->ebx, frame->ecx)) {
             frame->eax = vfs_list_root((char *)frame->ebx, frame->ecx);
         } else {
             frame->eax = 0xffffffff;
@@ -2523,6 +2651,12 @@ void kernel_main(void) {
     tss_init();
     gdt_init();
     idt_init();
+    enable_kernel_write_protection();
+    if (kernel_write_protect_self_test()) {
+        kernel_write("memory: CR0.WP blocked supervisor write to kernel read-only page\n");
+    } else {
+        kernel_write("memory: kernel write-protection self-test failed\n");
+    }
     process_manager_init();
     u32 init_pid = process_create(USER_CODE_ADDRESS, USER_STACK_ADDRESS + PAGE_SIZE);
     u32 worker_pid = process_create(USER_CODE_ADDRESS, USER_STACK_2_ADDRESS + PAGE_SIZE);
@@ -2536,6 +2670,12 @@ void kernel_main(void) {
             kernel_write("memory: per-process address-space isolation verified\n");
         } else {
             kernel_write("memory: per-process address-space isolation failed\n");
+        }
+        if (kernel_protection_flags_valid(process_table[0]->address_space->page_tables) &&
+            kernel_protection_flags_valid(process_table[1]->address_space->page_tables)) {
+            kernel_write("memory: read-only kernel mappings preserved in process spaces\n");
+        } else {
+            kernel_write("memory: process kernel mapping protection failed\n");
         }
         if (scheduler_round_robin_self_test(init_pid, worker_pid)) {
             kernel_write("scheduler: round-robin ready selection passed\n");

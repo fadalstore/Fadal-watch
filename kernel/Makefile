@@ -213,6 +213,7 @@ check: clean independence $(OUT)/fadal-kernel.img
 	@$(MAKE) --no-print-directory test-kernel-size
 	@$(MAKE) --no-print-directory test-loader-limit QEMU="$(QEMU)"
 	@$(MAKE) --no-print-directory test-memory-window QEMU="$(QEMU)"
+	@$(MAKE) --no-print-directory test-write-protection
 
 test-kernel-size:
 	@set -eu; tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
@@ -227,6 +228,11 @@ test-kernel-size:
 
 test-loader-limit: $(OUT)/fadal-kernel.img $(OUT)/boot.o
 	@../scripts/test-bios-loader-limit.sh $(OUT)/fadal-kernel.img $(OUT)/boot.o $(KERNEL_MAX_SECTORS) "$(QEMU)"
+
+test-write-protection:
+	@grep -q "memory: CR0.WP blocked supervisor write to kernel read-only page" $(OUT)/smoke.log
+	@grep -q "memory: read-only kernel mappings preserved in process spaces" $(OUT)/smoke.log
+	@echo "PASS: BIOS CR0.WP fault recovery and process mapping checks passed."
 
 test-memory-window: $(OUT)/fadal-kernel.img
 	@command -v $(QEMU) >/dev/null || \

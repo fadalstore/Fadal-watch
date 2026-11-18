@@ -1,6 +1,6 @@
 # FadalOS Phase 2 — Work Plan
 
-**Status:** P2.1–P2.6 complete; separate P2.6 package boot-verified
+**Status:** P2.1–P2.7 complete; the P2.6 package remains a frozen historical artifact
 **Baseline:** Phase 1 UTM release at commit `1d50d1d`
 **Purpose:** define a staged, boot-testable path from the Phase 1 freestanding kernel and UEFI desktop prototype toward a more reliable, inspectable FadalOS runtime.
 
@@ -51,6 +51,12 @@ Raise the current BIOS build's reserved kernel window from 112 to 120 sectors (6
 
 **Verified:** `make -C kernel check` passes the unchanged BIOS serial contract, an exact-61,440-byte size acceptance and 61,441-byte rejection, a QEMU positive control that boots with the maximum 120-sector load count, a QEMU negative control that changes the embedded count to 121 and requires the bootloader rejection marker with no kernel-entry trace, and the existing 16/32/64 MiB memory-window matrix. `scripts/validate-repo.sh --uefi` and the full UEFI QEMU/OVMF matrix also pass. The new `FadalOS-Phase2.6-UTM-iOS.zip` boots from both extracted profiles; its UEFI and BIOS disk images are checksum-verified. The Phase 1 packages and P2.5 Phase 2 ZIP remain byte-for-byte unchanged. See [ADR 0001](adr/0001-bios-runtime-architecture.md), [build instructions](BUILD.md), and [release record](PHASE2_RELEASE.md) for the new raw-disk layout and hashes.
 
+### P2.7 — BIOS supervisor write protection *(complete; source checkpoint only)*
+
+The BIOS linker now defines a page-aligned read-only `.text`/`.rodata` range and a separate writable `.data`/BSS range. Paging removes `PAGE_WRITE` from the kernel read-only pages; after paging, GDT, and IDT initialization, the kernel sets `CR0.WP` so supervisor writes obey those PTEs. A dedicated `.rodata` byte is used for a controlled ring-0 store probe. The page-fault handler recovers only when CR2, the write/protection error bits, saved EIP, and privilege level match that exact probe; every other fault retains the fail-closed path. Runtime checks verify writable supervisor mappings for `.data`, BSS-backed page tables/page directories, and the IDT, and verify that both process address spaces preserve the kernel's read-only mappings. Syscall copyout paths reject the read-only user-code page; FSH's mutable command, file, and authentication state now lives on its writable user stack. This is supervisor write protection, not NX support: the 32-bit non-PAE BIOS path still cannot mark pages non-executable.
+
+**Verified:** `make -C kernel check` passes the existing BIOS smoke/ABI contract, 16/32/64 MiB memory matrix, exact/over-size guards, maximum 120-sector load and 121-sector rejection controls, the CR0.WP expected-fault recovery, and both process-space mapping checks. `scripts/validate-repo.sh --uefi` passes. All eight UEFI QEMU/OVMF regression targets (page protection, focus, terminal editing, selection, history, window controls, resize, and persistent-home) passed across the complete serial run and targeted reruns. One aggregate run exposed transient HMP/focus timing failures in history and the persistent-home startup focus check; each affected target passed when rerun alone. The BIOS binary is 61,305/61,440 bytes, leaving only 135 bytes. No UTM archive was regenerated: P2.6 and Phase 1 packages remain frozen and do not contain this P2.7 source change.
+
 ## Immediate work queue
 
 1. P2.1 is complete: the UEFI `history` output and exact-order QEMU regression are in place.
@@ -59,7 +65,8 @@ Raise the current BIOS build's reserved kernel window from 112 to 120 sectors (6
 4. P2.4 is complete: 16/32/64 MiB QEMU controls validate the bounded non-PAE memory window.
 5. P2.5 is complete: the Phase 2 artifact is separate, boot-verified, checksummed, and documented; Phase 1 archives remain frozen.
 6. P2.6 is complete: the 120-sector load window and byte ceiling have exact-limit and QEMU 121-sector rejection controls.
-7. Next proposed milestone: select the next bounded BIOS or UEFI runtime feature; retain the new 120-sector ceiling and run the full regression suite before any further release packaging.
+7. P2.7 is complete: BIOS `.text`/`.rodata` are supervisor read-only under CR0.WP, an intentional write fault is precisely recovered, and process-space permissions are checked.
+8. Next proposed milestone (P2.8): resolve the BIOS image-capacity constraint before adding more kernel code. The current image has only 135 bytes of headroom; measure size-reduction opportunities or design and test a safe loader-window extension, then consider a direct ring-3 write-to-code negative control. Keep P2.6/Phase 1 ZIPs unchanged until a separate release gate.
 
 ## Out of scope for this plan
 

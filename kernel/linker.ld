@@ -11,6 +11,7 @@ SECTIONS
 {
     . = 0x10000;
 
+    __kernel_readonly_start = .;
     .text : ALIGN(16)
     {
         KEEP(*(.text.entry))
@@ -22,6 +23,9 @@ SECTIONS
         *(.rodata*)
     } :rodata
 
+    __kernel_readonly_end = .;
+    . = ALIGN(0x1000);
+    __kernel_data_start = .;
     .data : ALIGN(16)
     {
         *(.data*)

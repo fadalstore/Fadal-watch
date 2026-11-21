@@ -72,6 +72,7 @@ static EFI_GUID gFadalHttpProtocolGuid = {
 static EFI_GUID gFadalHttpBindingGuid = {
     0xbdc8e6af, 0xd9bc, 0x4379, {0xa7, 0x2a, 0xe0, 0xc4, 0xe7, 0x5d, 0xae, 0x1c}
 };
+static EFI_GUID gFadalSimpleNetworkGuid = EFI_SIMPLE_NETWORK_PROTOCOL_GUID;
 static EFI_GUID gFadalFileInfoGuid = EFI_FILE_INFO_ID;
 typedef struct _FADAL_SERVICE_BINDING FADAL_SERVICE_BINDING;
 typedef EFI_STATUS (EFIAPI *FADAL_CREATE_CHILD)(FADAL_SERVICE_BINDING *, EFI_HANDLE *);
@@ -91,6 +92,8 @@ static EFI_FILE_HANDLE g_fadal_root;
 static EFI_FILE_HANDLE g_fadal_home;
 static EFI_HTTP_PROTOCOL *g_fadal_http;
 static EFI_HANDLE g_fadal_http_child;
+static UINTN g_fadal_snp_interface_count;
+static BOOLEAN g_fadal_http_binding_available;
 static fadal_net_u32 fadal_home_path(const char *path, CHAR16 wide_path[128],
                                      int allow_empty) {
     UINTN input = 0;
@@ -405,6 +408,17 @@ static fadal_net_u32 fadal_home_mkdir(const char *path) {
 
 static char fadal_ascii_lower(char value) {
     return value >= 'A' && value <= 'Z' ? (char)(value - 'A' + 'a') : value;
+}
+
+static UINTN fadal_protocol_handle_count(EFI_GUID *protocol_guid) {
+    EFI_HANDLE *handles = NULL;
+    UINTN count = 0;
+    EFI_STATUS status = uefi_call_wrapper(BS->LocateHandleBuffer, 5,
+                                          ByProtocol, protocol_guid, NULL,
+                                          &count, &handles);
+    if (EFI_ERROR(status)) return 0;
+    if (handles != NULL) uefi_call_wrapper(BS->FreePool, 1, handles);
+    return count;
 }
 
 static fadal_net_u32 fadal_http_download(const char *url, const char *name) {
@@ -737,6 +751,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
     EFI_LOADED_IMAGE *loaded_image = NULL;
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *filesystem = NULL;
     EFI_FILE_HANDLE root = NULL;
+    FADAL_SERVICE_BINDING *http_binding = NULL;
     EFI_STATUS status;
     VOID *payload = NULL;
     UINTN payload_size = 0;
@@ -798,22 +813,32 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
     } else {
         Print(L"persistent home unavailable; file commands disabled\r\n");
     }
+    g_fadal_snp_interface_count =
+        fadal_protocol_handle_count(&gFadalSimpleNetworkGuid);
+    Print(L"UEFI network audit: SNP interfaces=%lu\r\n",
+          g_fadal_snp_interface_count);
     g_fadal_http = NULL;
     g_fadal_http_child = NULL;
+    g_fadal_http_binding_available = FALSE;
     status = uefi_call_wrapper(BS->LocateProtocol, 3, &gFadalHttpProtocolGuid, NULL,
                                (VOID **)&g_fadal_http);
-    if (EFI_ERROR(status) || g_fadal_http == NULL) {
-        FADAL_SERVICE_BINDING *binding = NULL;
-        status = uefi_call_wrapper(BS->LocateProtocol, 3, &gFadalHttpBindingGuid, NULL,
-                                   (VOID **)&binding);
-        if (!EFI_ERROR(status) && binding != NULL &&
-            !EFI_ERROR(binding->CreateChild(binding, &g_fadal_http_child))) {
-            status = uefi_call_wrapper(BS->OpenProtocol, 6, g_fadal_http_child,
-                                       &gFadalHttpProtocolGuid, (VOID **)&g_fadal_http,
-                                       image, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL);
-        }
+    if (EFI_ERROR(status)) g_fadal_http = NULL;
+    status = uefi_call_wrapper(BS->LocateProtocol, 3, &gFadalHttpBindingGuid, NULL,
+                               (VOID **)&http_binding);
+    if (EFI_ERROR(status)) http_binding = NULL;
+    g_fadal_http_binding_available = http_binding != NULL;
+    Print(L"UEFI network audit: HTTP service binding=%s\r\n",
+          g_fadal_http_binding_available ? L"available" : L"unavailable");
+    if (g_fadal_http == NULL && http_binding != NULL &&
+        !EFI_ERROR(http_binding->CreateChild(http_binding, &g_fadal_http_child))) {
+        status = uefi_call_wrapper(BS->OpenProtocol, 6, g_fadal_http_child,
+                                   &gFadalHttpProtocolGuid, (VOID **)&g_fadal_http,
+                                   image, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL);
+        if (EFI_ERROR(status)) g_fadal_http = NULL;
     }
-    if (EFI_ERROR(status) || g_fadal_http == NULL) {
+    Print(L"UEFI network audit: EFI_HTTP protocol=%s; hostname lookup delegated to EFI_HTTP when available\r\n",
+          g_fadal_http != NULL ? L"available" : L"unavailable");
+    if (g_fadal_http == NULL) {
         g_fadal_http = NULL;
         Print(L"HTTP service unavailable; desktop downloads disabled\r\n");
     } else {
@@ -852,6 +877,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
     services.home_delete = fadal_home_delete;
     services.home_is_directory = fadal_home_is_directory;
     services.home_mkdir = fadal_home_mkdir;
+    services.simple_network_available = g_fadal_snp_interface_count != 0;
+    services.http_binding_available = g_fadal_http_binding_available;
     entry = (FADAL_UEFI_ENTRY)((UINT8 *)payload + entry_offset);
     entry(&framebuffer, &services);
     return EFI_SUCCESS;

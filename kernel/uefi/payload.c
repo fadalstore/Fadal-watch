@@ -1039,7 +1039,18 @@ static void desktop_app_render(void) {
                 desktop_services != NULL && desktop_services->http_available != 0 ?
                 "UEFI HTTP: AVAILABLE" : "UEFI HTTP: UNAVAILABLE",
                 0x00d8eaff, 1);
-        fb_text(left + 28, top + 248, "NETWORK: FIRMWARE SERVICE DEPENDENT", 0x00d8eaff, 1);
+        fb_text(left + 28, top + 248,
+                desktop_services != NULL && desktop_services->simple_network_available != 0 ?
+                "UEFI SNP INTERFACE: EXPOSED" : "UEFI SNP INTERFACE: NOT EXPOSED",
+                0x00d8eaff, 1);
+        fb_text(left + 28, top + 282,
+                desktop_services != NULL && desktop_services->http_binding_available != 0 ?
+                "HTTP SERVICE BINDING: AVAILABLE" : "HTTP SERVICE BINDING: UNAVAILABLE",
+                0x00d8eaff, 1);
+        fb_text(left + 28, top + 316, "HOSTNAME/DNS: EFI_HTTP HANDLES LOOKUP WHEN AVAILABLE",
+                0x00d8eaff, 1);
+        fb_text(left + 28, top + 350, "NATIVE FADAL64 DNS CLIENT: NOT IMPLEMENTED",
+                0x00d8eaff, 1);
         fb_text(left + 28, top + height - 32, "ESC TO CLOSE - TAB RETURNS TO TERMINAL", 0x0097aac8, 1);
     } else {
         u32 source = 0;
@@ -2514,9 +2525,16 @@ static void run_command(char *line) {
     } else if (f_streq(line, "drivers")) {
         console_write("drivers: GOP framebuffer, PS/2 keyboard, PS/2 mouse, UART16550, RTL8139 (kernel)\r\n");
     } else if (f_streq(line, "net")) {
+        console_write(desktop_services != NULL && desktop_services->simple_network_available != 0 ?
+            "network: UEFI SNP interface exposed\r\n" :
+            "network: UEFI SNP interface not exposed\r\n");
+        console_write(desktop_services != NULL && desktop_services->http_binding_available != 0 ?
+            "network: HTTP service binding available\r\n" :
+            "network: HTTP service binding unavailable\r\n");
         console_write(desktop_services != NULL && desktop_services->http_available != 0 ?
-            "network: UEFI HTTP service available\r\n" :
-            "network: UEFI HTTP service unavailable\r\n");
+            "network: UEFI HTTP protocol available\r\n" :
+            "network: UEFI HTTP protocol unavailable\r\n");
+        console_write("network: hostname lookup delegated to EFI_HTTP when available; native DNS absent\r\n");
     } else if (f_starts(line, "download ")) {
         char *separator = line + 9;
         while (*separator != '\0' && *separator != ' ') separator++;

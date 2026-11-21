@@ -298,6 +298,22 @@ an HTTP driver is detected at boot and the command reports that the service is
 unavailable. OVMF's default firmware generally lacks this protocol; this is a
 firmware capability limitation, not a host-side download fallback.
 
+To audit the network protocols actually exposed by the firmware, run:
+
+```sh
+make -C kernel/uefi test-network-audit
+```
+
+This regression compares SNP handle, HTTP Service Binding, and EFI_HTTP status
+from the loader with the UEFI shell's `net` command, then captures the System
+panel at `kernel/uefi/out/network-audit-system.ppm`. On the tested QEMU 8.2.2 and
+OVMF 2024.02-2ubuntu0.10 setup, three SNP protocol handles and HTTP Service
+Binding were reported, but EFI_HTTP was unavailable. The 1280×800 System panel
+was visually inspected. This is a capability audit only: it sends no DNS query
+or HTTP GET and does not prove Internet access. Hostname lookup would be handled
+by firmware EFI_HTTP when available; the Fadal64 payload has no native DNS
+client or fallback. See [the P2.10 progress note](HORUMAR_P2_10.md).
+
 ## Termux
 
 The supported Android workflow installs the verified BIOS artifact and a launcher:

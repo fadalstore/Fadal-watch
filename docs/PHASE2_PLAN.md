@@ -1,6 +1,6 @@
 # FadalOS Phase 2 — Work Plan
 
-**Status:** P2.1–P2.9 complete; P2.6/P2.8 packages remain historical artifacts
+**Status:** P2.1–P2.9 complete; P2.10 capability audit verified, live HTTP fixture blocked by test firmware; P2.6/P2.8 packages remain historical artifacts
 **Baseline:** Phase 1 UTM release at commit `1d50d1d`
 **Purpose:** define a staged, boot-testable path from the Phase 1 freestanding kernel and UEFI desktop prototype toward a more reliable, inspectable FadalOS runtime.
 
@@ -69,6 +69,14 @@ FSH wuxuu sameeyaa store toos ah isagoo ku jira ring-3, isaga oo isku dayaya inu
 
 **La xaqiijiyey:** `make -C kernel check` wuxuu gudbay BIOS/QEMU boot smoke, loader ceiling/121-sector rejection, 16/32/64 MiB memory matrix iyo P2.7/P2.9 write-protection checks. `scripts/validate-repo.sh --uefi` sidoo kale wuu gudbay. Serial output-ku wuxuu xaqiijiyey near-match gate-ka, byte aan isbeddelin iyo in FSH dib ugu laabtay bilowgiisa. BIOS kernel-ku waa 48,953/61,440 bytes (12,487 bytes oo headroom ah); FSH.BIN waa 3,873/4,096 bytes (223 bytes oo headroom ah). P2.9 waa source/runtime checkpoint; ZIP cusub lama samayn, P2.6 iyo Phase 1 artifacts-na lama beddelin. Warbixinta Somali-ga: [HORUMAR_P2_9](HORUMAR_P2_9.md).
 
+### P2.10 — UEFI network capability audit *(audit verified; live HTTP fixture blocked)*
+
+UEFI loader-ku wuxuu tirinayaa handles-ka EFI Simple Network Protocol (SNP), wuxuuna ogaadaa HTTP Service Binding iyo EFI_HTTP protocol-ka. Awoodaha la helay waxa loo gudbiyaa Fadal64; System panel-ka iyo `net` command-ku waxay soo bandhigaan xaalad isku mid ah. Hostname lookup waxa firmware-ka u qaban lahaa EFI_HTTP marka la helo; native Fadal64 DNS client/fallback lama hirgelin.
+
+**La xaqiijiyey:** `make -C kernel/uefi test-network-audit` wuxuu boot-gareeyey QEMU 8.2.2/OVMF 2024.02-2ubuntu0.10 isagoo wata e1000 iyo user networking xaddidan. Loader-ku wuxuu arkay 3 SNP protocol handles, HTTP Service Binding waa la helay, laakiin EFI_HTTP protocol-ku ma furnayn. `net` command-ku wuxuu la jaanqaaday xogta loader-ka; framebuffer-ka System panel-ka ee 1280×800 waa la kormeeray. `scripts/validate-repo.sh --uefi` wuu gudbay.
+
+**Xaddidaad:** tani waa capability audit oo keliya. Ma jirin live HTTP GET ama DNS query la tijaabiyey, mana jiro caddeyn Internet ama HTTPS/TLS. P2.10 wali ma dhamma; tallaabada xigta waa firmware UEFI oo EFI_HTTP shaqaynaya bixiya, kadibna GET plaintext ah oo loo diro HTTP fixture maxalli ah oo xaddidan. Faahfaahinta Somali-ga: [HORUMAR_P2_10](HORUMAR_P2_10.md).
+
 ## Immediate work queue
 
 1. P2.1 is complete: the UEFI `history` output and exact-order QEMU regression are in place.
@@ -80,7 +88,7 @@ FSH wuxuu sameeyaa store toos ah isagoo ku jira ring-3, isaga oo isku dayaya inu
 7. P2.7 is complete: BIOS `.text`/`.rodata` are supervisor read-only under CR0.WP, an intentional write fault is precisely recovered, and process-space permissions are checked.
 8. P2.8 is complete: the BIOS default uses `-Os`, the kernel is 47,609/61,440 bytes, and the separately versioned P2.8 UTM ZIP passed checksum and boot tests. The P2.6 and Phase 1 archives remain unchanged.
 9. P2.9 waa complete: FSH ring-3 wuxuu tijaabiyaa store-to-code; kernel-ku wuxuu soo celiyaa oo keliya fault-ka si sax ah u waafaqa, wuxuuna diidaa near-matches. QEMU/validator tests way gudbeen; archives-kii hore waa la ilaaliyey.
-10. P2.10 ee la soo jeediyey: samee audit UEFI networking ah, kadib DNS4/hostname iyo live HTTP fixture gudaha QEMU/OVMF. HTTPS lama sheegan doono ilaa TLS, entropy iyo certificate validation la naqshadeeyo lana tijaabiyo. Himilada luqadaha, akoonnada shakhsiga ah iyo desktop-ka UTM waxaa lagu diiwaangeliyey [roadmap-ka Somali-ga](ROADMAP_FADALWATCH_SO.md).
+10. P2.10 wali waa socda: capability audit-ka SNP/HTTP waa la xaqiijiyey, laakiin OVMF-ga la tijaabiyey ma bixin EFI_HTTP; live DNS/HTTP fixture wali lama samayn. Hel firmware awood u leh ama qorshee backend native oo tijaabooyin leh. HTTPS lama sheegan doono ilaa TLS, entropy iyo certificate validation la naqshadeeyo lana tijaabiyo. Himilada luqadaha, akoonnada shakhsiga ah iyo desktop-ka UTM waxaa lagu diiwaangeliyey [roadmap-ka Somali-ga](ROADMAP_FADALWATCH_SO.md).
 
 ## Out of scope for this plan
 

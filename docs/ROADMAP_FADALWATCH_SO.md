@@ -14,7 +14,7 @@ P2.9 wuxuu tijaabiyey in code-ka FSH ee ring-3 aanu wax ka qori karin boggiisa r
 
 ### 2. Internet-ka browser-ka
 
-Marka hore la caddeeyo waxa firmware-ka UEFI bixiyo; ka dib loo dhiso ama loo tijaabiyo DNS/hostname resolution iyo jid HTTP ah oo xadidan gudaha OVMF/UTM. Browser-ka hadda jira waa text-only; HTTPS/TLS, JavaScript, CSS, sawirro iyo redirects ma aha wax la qaadan karo inay shaqeeyaan. HTTPS waa in la bilaabaa oo keliya marka la diyaariyo entropy ammaan ah, certificate validation/root store, TLS parsing iyo tijaabooyin diidmo oo cad. BIOS TCP/IP/Git groundwork looma qaadan karo browser Internet oo dhammaystiran.
+P2.10 capability audit-kiisu wuxuu helay SNP handles iyo HTTP Service Binding, balse OVMF/QEMU-ga la tijaabiyey ma bixin EFI_HTTP protocol-ka. Sidaas darteed live DNS lookup ama HTTP GET wali lama xaqiijin. Marka EFI_HTTP la heli karo, firmware-ka ayaa qaban lahaa hostname lookup; Fadal64 native DNS client/fallback ma leh. Tallaabada xigta waa UEFI firmware leh EFI_HTTP shaqaynaya iyo HTTP fixture maxalli ah oo xaddidan, iyadoo DNS iyo GET si gooni ah loo tijaabinayo. Browser-ka hadda jira waa text-only; HTTPS/TLS, JavaScript, CSS, sawirro iyo redirects ma aha wax la qaadan karo inay shaqeeyaan. HTTPS waa in la bilaabaa oo keliya marka la diyaariyo entropy ammaan ah, certificate validation/root store, TLS parsing iyo tijaabooyin diidmo oo cad. BIOS TCP/IP/Git groundwork looma qaadan karo browser Internet oo dhammaystiran. Faahfaahinta audit-ka: [HORUMAR P2.10](HORUMAR_P2_10.md).
 
 ### 3. Aqoonsi iyo password ammaan ah
 
@@ -41,9 +41,9 @@ BIOS iyo UEFI UTM profiles-ku gooni ha ahaadaan. Isbeddel kasta oo sii-dayn ah w
 ## Xaaladda hadda
 
 - BIOS: kernel 32-bit freestanding ah, FSH ring-3 shell, FAT12/ATA, networking foundation iyo P2.9 write-protection negative control.
-- UEFI: Fadal64 desktop, Files/System iyo browser qoraal ah oo adeegga HTTP-ga firmware-ka ku tiirsan; awoodda HTTPS/TLS iyo hostname resolution lama xaqiijin inay diyaar yihiin.
+- UEFI: Fadal64 desktop, Files/System iyo browser qoraal ah oo adeegga EFI_HTTP firmware-ka ku tiirsan. OVMF/QEMU-ga la tijaabiyey wuxuu leeyahay HTTP Service Binding balse ma muujiyo EFI_HTTP; native DNS iyo fallback ma jiraan, live DNS/HTTP lama xaqiijin.
 - UTM: profiles-ka BIOS iyo UEFI waa kala gaar; touch/pointer behavior waa shuruud tijaabo joogto ah.
 
 ## Tallaabada xigta ee la soo jeediyey
 
-**P2.10:** samee audit kooban oo UEFI networking ah, kadib ku dar DNS4/hostname resolution ama caddee habka fallback-ka la taageerayo, kuna xaqiiji live HTTP fixture gudaha QEMU/OVMF. Ha u magacaabin HTTPS ilaa TLS, entropy iyo certificate validation la hirgeliyo.
+**P2.10 (socda):** capability audit-ka UEFI waa la tijaabiyey; HTTP Service Binding waa jiraa, laakiin EFI_HTTP protocol-ku kama muuqan OVMF-ga la adeegsaday. Hel firmware leh EFI_HTTP shaqaynaya, kadib tijaabi plaintext GET oo ku socda fixture maxalli ah oo xaddidan; DNS hostname lookup si gaar ah u xaqiiji ama go'aan ka gaar native resolver. Ha u magacaabin HTTPS ilaa TLS, entropy iyo certificate validation la hirgeliyo.

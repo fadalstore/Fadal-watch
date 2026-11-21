@@ -31,6 +31,8 @@ PF_TEST_IMAGE ?= $(OUT)/page-protection.img
 FOCUS_TEST_SCRIPT ?= ../../scripts/test-uefi-keyboard-focus.py
 FOCUS_TEST_IMAGE ?= ../out/fadal-uefi.img
 HOME_TEST_IMAGE ?= $(OUT)/persistent-home.img
+NETWORK_AUDIT_IMAGE ?= $(OUT)/network-audit.img
+NETWORK_AUDIT_SCRIPT ?= ../../scripts/test-uefi-network-audit.py
 FOCUS_TEST_SCREEN ?= $(OUT)/keyboard-focus.ppm
 TERMINAL_SCROLL_SCREEN ?= $(OUT)/terminal-scrollback.ppm
 TERMINAL_TAIL_SCREEN ?= $(OUT)/terminal-tail.ppm
@@ -75,7 +77,7 @@ OBJCOPY_FLAGS := \
 
 .PHONY: all check check-toolchain payload image page-protection-efi \
 	test-page-protection test-keyboard-focus test-terminal-input test-terminal-selection \
-	test-window-controls test-window-resize test-persistent-home clean help
+	test-window-controls test-window-resize test-persistent-home test-network-audit clean help
 
 all: $(BOOT_EFI)
 
@@ -105,7 +107,7 @@ check-toolchain:
 	@command -v $(OBJCOPY) >/dev/null || \
 		(echo "error: objcopy not found: $(OBJCOPY)" >&2; exit 1)
 
-$(BOOT_OBJ): $(BOOT_C) page_tables.h | check-toolchain $(OUT)
+$(BOOT_OBJ): $(BOOT_C) page_tables.h net.h | check-toolchain $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(PAGE_TABLES_OBJ): page_tables.c page_tables.h | check-toolchain $(OUT)
@@ -120,7 +122,7 @@ $(BOOT_EFI): $(BOOT_SO) | $(OUT)
 	@test "$$($(FILE) -b $@ | grep -E -i 'PE32\\+.*x86-64|EFI application')" != "" || \
 		(echo "error: $@ is not a PE32+ x86_64 EFI application" >&2; exit 1)
 
-$(PAYLOAD_OBJ): $(PAYLOAD_C) | $(OUT)
+$(PAYLOAD_OBJ): $(PAYLOAD_C) net.h | $(OUT)
 	$(CC) -O2 -ffreestanding -fPIC -fno-stack-protector -fno-asynchronous-unwind-tables \
 		-fno-unwind-tables -mno-red-zone -m64 -Wall -Wextra -Werror -c -o $@ $<
 
@@ -248,6 +250,15 @@ test-persistent-home: check payload
 	mdir -i "$(abspath $(HOME_TEST_IMAGE))@@1048576" ::/FADALHOME/GUARDDIR/CHILD >/dev/null
 	@echo "PASS: the persistent home subdirectory remains on the raw ESP."
 
+test-network-audit: check payload
+	@rm -f "$(NETWORK_AUDIT_IMAGE)" "$(OUT)/network-audit-system.ppm"
+	UEFI_IMAGE="$(abspath $(NETWORK_AUDIT_IMAGE))" \
+		$(MAKE) image UEFI_KERNEL="$(abspath $(PAYLOAD_BIN))"
+	python3 "$(NETWORK_AUDIT_SCRIPT)" --image "$(abspath $(NETWORK_AUDIT_IMAGE))" \
+		--qemu "$(QEMU)" --ovmf-code "$(OVMF_CODE)" \
+		--ovmf-vars "$(OVMF_VARS)" \
+		--screenshot "$(abspath $(OUT)/network-audit-system.ppm)"
+
 check: $(BOOT_EFI)
 	@$(OBJDUMP) -f $(BOOT_EFI) | grep -E -q 'pei-x86-64|pe-x86-64' || \
 		(echo "error: $(BOOT_EFI) has the wrong object format" >&2; exit 1)
@@ -270,8 +281,9 @@ help:
 	@echo "make test-terminal-input  test line editing and scrollback in QEMU/OVMF"
 	@echo "make test-terminal-selection test mouse text selection and guest copy/paste"
 	@echo "make test-window-controls test terminal window controls with QEMU/OVMF mouse"
-	@echo "make test-window-resize   test terminal edge/corner resize with QEMU/OVMF mouse"
+	@echo "make test-window-resize   test terminal edge/corner resize with QEMU/OVMF"
 	@echo "make test-persistent-home test ESP-backed home files across a QEMU/OVMF reboot"
+	@echo "make test-network-audit test UEFI SNP/HTTP capability reporting with QEMU/OVMF"
 	@echo "EFI_INC=... EFI_CRT=... EFI_LDSCRIPT=... EFI_LIBDIR=... override GNU-EFI paths"
 
 clean:

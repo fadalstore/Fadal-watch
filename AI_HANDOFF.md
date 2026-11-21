@@ -86,10 +86,16 @@ the kernel and 3,873/4,096 bytes for FSH.BIN. No new UTM ZIP was generated and
 existing release archives were not changed. See [P2.9 progress](docs/HORUMAR_P2_9.md)
 and [the Somali product roadmap](docs/ROADMAP_FADALWATCH_SO.md).
 
-**Next proposal (P2.10):** audit UEFI network service availability, then prove
-DNS/hostname resolution or document a supported fallback and run a bounded live
-HTTP fixture under QEMU/OVMF. Do not claim HTTPS until TLS, entropy, and
-certificate validation are implemented and tested.
+**P2.10 in progress:** the UEFI loader audits SNP handles, HTTP Service Binding,
+and EFI_HTTP availability; the System panel and `net` command report matching
+results. `make -C kernel/uefi test-network-audit` passed under QEMU/OVMF: three
+SNP protocol handles and HTTP Service Binding were present, but EFI_HTTP was
+unavailable. Hostname lookup would be handled by firmware EFI_HTTP when
+available; Fadal64 has no native DNS client/fallback. No live HTTP GET or DNS
+query was verified. See [P2.10 progress](docs/HORUMAR_P2_10.md). Next: obtain or
+build UEFI firmware with a working EFI_HTTP protocol and run a bounded plaintext
+HTTP fixture. Do not claim HTTPS until TLS, entropy, and certificate validation
+are implemented and tested.
 
 **Files** ee Start hadda waxa uu furaa browser framebuffer ah oo adeegsada
 home-list iyo read callbacks-ka ESP. Wuxuu taxaa `/home/root`, wuxuu geli karaa
@@ -133,7 +139,8 @@ The established regression commands are `scripts/validate-repo.sh --uefi`,
 `make -C kernel/uefi test-terminal-history`,
 `make -C kernel/uefi test-window-controls`,
 `make -C kernel/uefi test-window-resize`, and
-`make -C kernel/uefi test-persistent-home`. The focus regression boots the
+`make -C kernel/uefi test-persistent-home`, and
+`make -C kernel/uefi test-network-audit`. The focus regression boots the
 production ESP under QEMU/OVMF, proves desktop-focused typing does not reach the
 shell, then returns focus and executes `help`. The terminal-input regression
 reconstructs commands through cursor editing and verifies that PageUp/PageDown

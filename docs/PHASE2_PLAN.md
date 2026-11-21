@@ -1,6 +1,6 @@
 # FadalOS Phase 2 — Work Plan
 
-**Status:** P2.1–P2.8 complete; the P2.6 package remains a frozen historical artifact
+**Status:** P2.1–P2.9 complete; P2.6/P2.8 packages remain historical artifacts
 **Baseline:** Phase 1 UTM release at commit `1d50d1d`
 **Purpose:** define a staged, boot-testable path from the Phase 1 freestanding kernel and UEFI desktop prototype toward a more reliable, inspectable FadalOS runtime.
 
@@ -63,7 +63,11 @@ P2.7 left only 135 bytes in the fixed 120-sector BIOS kernel window. Before addi
 
 **Natiijo la xaqiijiyey:** kernel binary-gu wuxuu ka yaraaday 61,305 bytes ilaa 47,609 bytes, taas oo badbaadisay 13,696 bytes kana tagtay 13,831 bytes oo headroom ah gudaha xadka 61,440-byte. Boot sector-ku wuxuu ku dhex-daray tirada dhabta ah ee 93 sectors; xadka loader-ku weli waa 120 sectors, FAT12-na weli wuxuu ka bilaabmaa LBA 121. `make -C kernel check` iyo `scripts/validate-repo.sh --uefi` labaduba way gudbeen. Waxaa la sameeyey `FadalOS-Phase2.8-UTM-iOS.zip` oo gaar ah; checksum-ka, hashes-ka gudaha, QEMU BIOS boot-ka, UEFI OVMF window-controls/focus, iyo EFI page-protection runtime test way gudbeen. P2.6 iyo Phase 1 archives waa la ilaaliyey oo lama beddelin. Faahfaahinta hashes-ka iyo tijaabooyinka waxay ku jiraan [release record](PHASE2_RELEASE.md) iyo [warbixinta Somali-ga](HORUMAR_P2_8.md).
 
-Direct ring-3 store-to-code negative control wali lama hirgelin. Waxaa loo raray P2.9 si loo naqshadeeyo recovery gaar ah oo si sax ah u xaqiijiya user privilege, CR2, error bits, faulting EIP, iyo byte aan isbeddelin, iyadoo #PF kasta oo kale uu sii ahaanayo fail-closed.
+### P2.9 — Tijaabada ring-3 ee code-page read-only *(complete; source/runtime checkpoint)*
+
+FSH wuxuu sameeyaa store toos ah isagoo ku jira ring-3, isaga oo isku dayaya inuu wax ka beddelo byte ku jira boggiisa code-ka ee read-only. Probe-ku wuxuu ku jiraa slot go'an oo linker-ku ilaaliyo gudaha xadka hal bog ee FSH.BIN; wuxuu ordaa oo keliya PID 1. Handler-ku wuxuu aqbalaa oo keliya CR2, error code `0x7`, faulting EIP, CS `0x1b`, PID iyo mapping-ka read-only ee la filayo. Ka hor inta uusan EIP u leexin resume label-ka FSH, wuxuu xaqiijiyaa in byte-gii code-ku aanu isbeddelin. Fault kasta oo kale wuxuu sii raacayaa fail-closed path-ka. Diagnostics-ku ESP-ga user-ka waxay akhriyaan oo keliya marka saved CS caddeeyo privilege ring-3.
+
+**La xaqiijiyey:** `make -C kernel check` wuxuu gudbay BIOS/QEMU boot smoke, loader ceiling/121-sector rejection, 16/32/64 MiB memory matrix iyo P2.7/P2.9 write-protection checks. `scripts/validate-repo.sh --uefi` sidoo kale wuu gudbay. Serial output-ku wuxuu xaqiijiyey near-match gate-ka, byte aan isbeddelin iyo in FSH dib ugu laabtay bilowgiisa. BIOS kernel-ku waa 48,953/61,440 bytes (12,487 bytes oo headroom ah); FSH.BIN waa 3,873/4,096 bytes (223 bytes oo headroom ah). P2.9 waa source/runtime checkpoint; ZIP cusub lama samayn, P2.6 iyo Phase 1 artifacts-na lama beddelin. Warbixinta Somali-ga: [HORUMAR_P2_9](HORUMAR_P2_9.md).
 
 ## Immediate work queue
 
@@ -75,7 +79,8 @@ Direct ring-3 store-to-code negative control wali lama hirgelin. Waxaa loo raray
 6. P2.6 is complete: the 120-sector load window and byte ceiling have exact-limit and QEMU 121-sector rejection controls.
 7. P2.7 is complete: BIOS `.text`/`.rodata` are supervisor read-only under CR0.WP, an intentional write fault is precisely recovered, and process-space permissions are checked.
 8. P2.8 is complete: the BIOS default uses `-Os`, the kernel is 47,609/61,440 bytes, and the separately versioned P2.8 UTM ZIP passed checksum and boot tests. The P2.6 and Phase 1 archives remain unchanged.
-9. Next proposed milestone (P2.9): add a direct ring-3 write-to-code negative control with narrowly matched #PF recovery, and preserve fail-closed handling for every unrelated fault. Keep P2.6/Phase 1 ZIPs unchanged until a separate release gate.
+9. P2.9 waa complete: FSH ring-3 wuxuu tijaabiyaa store-to-code; kernel-ku wuxuu soo celiyaa oo keliya fault-ka si sax ah u waafaqa, wuxuuna diidaa near-matches. QEMU/validator tests way gudbeen; archives-kii hore waa la ilaaliyey.
+10. P2.10 ee la soo jeediyey: samee audit UEFI networking ah, kadib DNS4/hostname iyo live HTTP fixture gudaha QEMU/OVMF. HTTPS lama sheegan doono ilaa TLS, entropy iyo certificate validation la naqshadeeyo lana tijaabiyo. Himilada luqadaha, akoonnada shakhsiga ah iyo desktop-ka UTM waxaa lagu diiwaangeliyey [roadmap-ka Somali-ga](ROADMAP_FADALWATCH_SO.md).
 
 ## Out of scope for this plan
 

@@ -1,0 +1,13 @@
+#ifndef FADAL_FSH_PROBE_ABI_H
+#define FADAL_FSH_PROBE_ABI_H
+
+/* Fixed one-page FSH layout contract shared by the BIOS kernel and FSH. */
+#define FSH_PROBE_SLOT_OFFSET 0x00000f00
+#define FSH_PROBE_TARGET_OFFSET 0x00000000
+#define FSH_PROBE_STORE_OFFSET 0x00000009
+#define FSH_PROBE_RESUME_OFFSET 0x00000020
+#define FSH_PROBE_INITIAL_BYTE 0xe8
+#define FSH_PROBE_ATTEMPT_BYTE 0x90
+#define FSH_PROBE_INIT_PID 1
+
+#endif

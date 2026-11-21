@@ -1,5 +1,9 @@
+#include "fsh_probe_abi.h"
+
 typedef unsigned char u8;
 typedef unsigned int u32;
+
+extern void fsh_ring3_write_probe(void);
 
 #define SYSCALL_EXIT 3
 #define SYSCALL_GET_TICKS 1
@@ -220,6 +224,9 @@ void fsh_entry(void) {
     u32 child_status = 0;
     struct fsh_state state = {0};
     u8 prompt_pending = 1;
+    if (fsh_syscall3(SYSCALL_GET_PID, 0, 0, 0) == FSH_PROBE_INIT_PID) {
+        fsh_ring3_write_probe();
+    }
     fsh_write(banner);
     u32 boot_fd = fsh_syscall3(SYSCALL_OPEN, (u32)path, sizeof(path) - 1, 0);
     if (boot_fd != 0xffffffff) {

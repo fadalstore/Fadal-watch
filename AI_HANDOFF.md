@@ -76,6 +76,21 @@ updates the saved-under cursor instead of repainting the entire GOP desktop.
 `test-window-controls` checks that moving a held pointer over Start does not
 repeatedly toggle the menu.
 
+**P2.9 complete (source/runtime checkpoint):** the BIOS FSH ring-3 probe attempts
+to write its own read-only code byte. Recovery is permitted only for the exact
+PID 1 / CS `0x1b` / error `0x7` / CR2 / store-EIP match, with the process mapping
+verified read-only and the target byte unchanged; unrelated faults remain
+fail-closed. The near-match self-test and post-recovery FSH banner are required
+by `make -C kernel check`. The final validated sizes were 48,953/61,440 bytes for
+the kernel and 3,873/4,096 bytes for FSH.BIN. No new UTM ZIP was generated and
+existing release archives were not changed. See [P2.9 progress](docs/HORUMAR_P2_9.md)
+and [the Somali product roadmap](docs/ROADMAP_FADALWATCH_SO.md).
+
+**Next proposal (P2.10):** audit UEFI network service availability, then prove
+DNS/hostname resolution or document a supported fallback and run a bounded live
+HTTP fixture under QEMU/OVMF. Do not claim HTTPS until TLS, entropy, and
+certificate validation are implemented and tested.
+
 **Files** ee Start hadda waxa uu furaa browser framebuffer ah oo adeegsada
 home-list iyo read callbacks-ka ESP. Wuxuu taxaa `/home/root`, wuxuu geli karaa
 folder-hoosaadyo kana soo noqon karaa parent-ka, wuxuuna soo bandhigaa labada sadar
@@ -249,12 +264,10 @@ archives remain unchanged. Source commit `f97422e` and the P2.8 package follow-u
 are pushed to GitHub `main`. See the Somali [P2.8 progress note](docs/HORUMAR_P2_8.md)
 and [release record](docs/PHASE2_RELEASE.md).
 
-**Next (P2.9):** design and test a direct ring-3 write-to-code negative control.
-Recover only a precisely matched probe fault (user privilege, CR2, write/protect
-bits, faulting EIP, and resume EIP), confirm the read-only code byte is unchanged,
-and keep every unrelated page fault fail-closed. Do not overwrite versioned UTM
-archives. Persistent command history remains out of scope until storage
-permissions and privacy semantics are explicitly designed.
+**Checkpoint note:** P2.9 is complete as described above. Keep versioned UTM
+archives unchanged unless a separate release gate is approved. Persistent command
+history remains out of scope until storage permissions and privacy semantics are
+explicitly designed.
 
 The persistent-home view is backed by the ESP's `FADALHOME` directory through
 validated loader callbacks. `ls`, `cat PATH`, `write PATH TEXT`, `mkdir PATH`,

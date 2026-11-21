@@ -11,6 +11,7 @@
 #include "http.h"
 #include "identity.h"
 #include "auth.h"
+#include "fsh_probe_abi.h"
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -172,6 +173,7 @@ static volatile u32 timer_scheduler_reported;
 static volatile u8 page_fault_reported;
 static volatile u8 kernel_write_protect_probe_armed;
 static volatile u8 kernel_write_protect_probe_seen;
+static volatile u8 ring3_write_protect_probe_armed;
 static volatile u8 dhcp_reported;
 static volatile u8 udp_test_state;
 static volatile u32 udp_test_ticks;
@@ -1432,9 +1434,61 @@ static __attribute__((noreturn)) void page_fault_halt(void) {
     }
 }
 
+static u8 ring3_probe_code_mapping_read_only(u32 pid) {
+    u32 slot = process_slot_for_pid(pid);
+    if (slot >= MAX_PROCESSES || process_table[slot] == (struct process *)0 ||
+        process_table[slot]->address_space == (struct address_space *)0) {
+        return 0;
+    }
+    u32 entry = process_table[slot]->address_space->page_tables[USER_CODE_PAGE];
+    return (entry & 0xfffff000) == USER_CODE_ADDRESS &&
+        (entry & (PAGE_PRESENT | PAGE_WRITE | PAGE_USER)) ==
+            (PAGE_PRESENT | PAGE_USER);
+}
+
+static u8 ring3_probe_fault_matches(u32 address, u32 error_code, u32 eip,
+                                    u32 cs, u32 pid, u8 armed) {
+    return armed && pid == FSH_PROBE_INIT_PID && cs == 0x1b &&
+        address == USER_CODE_ADDRESS + FSH_PROBE_SLOT_OFFSET +
+            FSH_PROBE_TARGET_OFFSET &&
+        error_code == 0x7 &&
+        eip == USER_CODE_ADDRESS + FSH_PROBE_SLOT_OFFSET +
+            FSH_PROBE_STORE_OFFSET &&
+        ring3_probe_code_mapping_read_only(pid);
+}
+
+static u8 ring3_probe_fault_gate_self_test(u32 pid) {
+    u32 address = USER_CODE_ADDRESS + FSH_PROBE_SLOT_OFFSET +
+        FSH_PROBE_TARGET_OFFSET;
+    u32 eip = USER_CODE_ADDRESS + FSH_PROBE_SLOT_OFFSET +
+        FSH_PROBE_STORE_OFFSET;
+    ring3_write_protect_probe_armed = 1;
+    u8 passed = ring3_probe_fault_matches(address, 0x7, eip, 0x1b,
+                                           pid, 1) &&
+        !ring3_probe_fault_matches(address + PAGE_SIZE, 0x7, eip, 0x1b,
+                                    pid, 1) &&
+        !ring3_probe_fault_matches(address, 0x3, eip, 0x1b,
+                                    pid, 1) &&
+        !ring3_probe_fault_matches(address, 0x5, eip, 0x1b,
+                                    pid, 1) &&
+        !ring3_probe_fault_matches(address, 0x6, eip, 0x1b,
+                                    pid, 1) &&
+        !ring3_probe_fault_matches(address, 0x7, eip + 1, 0x1b,
+                                    pid, 1) &&
+        !ring3_probe_fault_matches(address, 0x7, eip, 0x08,
+                                    pid, 1) &&
+        !ring3_probe_fault_matches(address, 0x7, eip, 0x1b,
+                                    pid + 1, 1) &&
+        !ring3_probe_fault_matches(address, 0x7, eip, 0x1b,
+                                    pid, 0);
+    ring3_write_protect_probe_armed = 0;
+    return passed;
+}
+
 void page_fault_interrupt_handler(u32 *register_frame) {
     u32 error_code = register_frame[8];
     u32 address = read_cr2();
+    u32 saved_cs = register_frame[10];
     if (kernel_write_protect_probe_armed &&
         address == (u32)&kernel_write_protect_probe_target && error_code == 0x3 &&
         register_frame[9] == (u32)kernel_write_protect_probe_store &&
@@ -1444,6 +1498,19 @@ void page_fault_interrupt_handler(u32 *register_frame) {
         kernel_write_protect_probe_seen = 1;
         return;
     }
+    if (ring3_probe_fault_matches(address, error_code, register_frame[9],
+                                  saved_cs, current_pid,
+                                  ring3_write_protect_probe_armed)) {
+        u32 probe_target = USER_CODE_ADDRESS + FSH_PROBE_SLOT_OFFSET +
+            FSH_PROBE_TARGET_OFFSET;
+        if (*(volatile const u8 *)probe_target == FSH_PROBE_INITIAL_BYTE) {
+            register_frame[9] = USER_CODE_ADDRESS + FSH_PROBE_SLOT_OFFSET +
+                FSH_PROBE_RESUME_OFFSET;
+            ring3_write_protect_probe_armed = 0;
+            serial_write("memory: ring-3 write to read-only FSH code blocked; byte unchanged\n");
+            return;
+        }
+    }
     serial_write("page fault: int 0x0e address ");
     write_u32(address);
     serial_write(" error ");
@@ -1451,9 +1518,11 @@ void page_fault_interrupt_handler(u32 *register_frame) {
     serial_write((error_code & 0x4) != 0 ? " user eip " : " kernel eip ");
     write_u32(register_frame[9]);
     serial_write(" cs ");
-    write_u32(register_frame[10]);
-    serial_write(" esp ");
-    write_u32(register_frame[12]);
+    write_u32(saved_cs);
+    if ((saved_cs & 0x3) == 0x3) {
+        serial_write(" user esp ");
+        write_u32(register_frame[12]);
+    }
     serial_write("\n");
     if (!page_fault_reported) {
         page_fault_reported = 1;
@@ -2784,6 +2853,16 @@ void kernel_main(void) {
     kernel_write("keyboard: PS/2 IRQ1 interactive shell online\n");
     kernel_write("shell: FSH disk executable selected\n");
     shell_init();
+    u8 ring3_probe_context_ready = init_pid == FSH_PROBE_INIT_PID &&
+        process_set_running(init_pid);
+    u8 ring3_probe_gate_passed = ring3_probe_context_ready &&
+        ring3_probe_fault_gate_self_test(init_pid);
+    if (ring3_probe_gate_passed) {
+        kernel_write("memory: ring-3 fault match gate rejects near-matches\n");
+    } else {
+        kernel_write("memory: ring-3 fault match gate self-test failed\n");
+    }
+    ring3_write_protect_probe_armed = ring3_probe_gate_passed;
     enable_interrupts();
     enter_user_mode();
 }

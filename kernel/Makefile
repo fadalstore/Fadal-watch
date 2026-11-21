@@ -37,7 +37,7 @@ $(OUT)/boot.o: boot.S $(OUT)/kernel.bin | $(OUT)
 		--defsym KERNEL_SECTORS=$$sectors -o $@ $<; \
 	echo "BIOS boot sector embeds $$sectors kernel sectors (maximum $(KERNEL_MAX_SECTORS))"
 
-$(OUT)/kernel.o: kernel.c fat12.h ata.h ramdisk.h slab.h vfs.h rtl8139.h fnet.h gitpack.h http.h identity.h auth.h | $(OUT)
+$(OUT)/kernel.o: kernel.c fat12.h ata.h ramdisk.h slab.h vfs.h rtl8139.h fnet.h gitpack.h http.h identity.h auth.h fsh_probe_abi.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(OUT)/fat12.o: fat12.c fat12.h | $(OUT)
@@ -83,11 +83,14 @@ $(OUT)/http.o: http.c http.h | $(OUT)
 $(OUT)/auth.o: auth.c auth.h gitpack.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(OUT)/fsh.o: fsh.c | $(OUT)
+$(OUT)/fsh.o: fsh.c fsh_probe_abi.h | $(OUT)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(OUT)/fsh.elf: $(OUT)/fsh.o fsh.ld
-	$(LD) -m elf_i386 -T fsh.ld -nostdlib -o $@ $(OUT)/fsh.o
+$(OUT)/fsh_probe.o: fsh_probe.S fsh_probe_abi.h | $(OUT)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(OUT)/fsh.elf: $(OUT)/fsh.o $(OUT)/fsh_probe.o fsh.ld
+	$(LD) -m elf_i386 -T fsh.ld -nostdlib -o $@ $(OUT)/fsh.o $(OUT)/fsh_probe.o
 
 $(OUT)/fsh.bin: $(OUT)/fsh.elf
 	$(OBJCOPY) -O binary $< $@
@@ -232,8 +235,11 @@ test-loader-limit: $(OUT)/fadal-kernel.img $(OUT)/boot.o
 
 test-write-protection:
 	@grep -q "memory: CR0.WP blocked supervisor write to kernel read-only page" $(OUT)/smoke.log
+	@grep -q "memory: ring-3 fault match gate rejects near-matches" $(OUT)/smoke.log
+	@grep -q "memory: ring-3 write to read-only FSH code blocked; byte unchanged" $(OUT)/smoke.log
+	@grep -q "fsh: disk executable online" $(OUT)/smoke.log
 	@grep -q "memory: read-only kernel mappings preserved in process spaces" $(OUT)/smoke.log
-	@echo "PASS: BIOS CR0.WP fault recovery and process mapping checks passed."
+	@echo "PASS: BIOS supervisor/user write protection and fail-closed fault checks passed."
 
 test-memory-window: $(OUT)/fadal-kernel.img
 	@command -v $(QEMU) >/dev/null || \

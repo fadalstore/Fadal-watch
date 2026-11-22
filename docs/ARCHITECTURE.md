@@ -99,16 +99,25 @@ and can be opened through its Downloads shortcut in Files; each download is
 limited to 64 KiB and the page preview reads up to 4 KiB. It is intentionally a
 text-only HTTP browser: HTTPS/TLS, scripts, styles, images, clickable links,
 redirect handling, and modern browser features are not implemented. The
-firmware must publish UEFI HTTP for network actions; the default QEMU/OVMF setup
-does not, so UI tests verify the explicit unavailable path and do not claim a
-live Internet fetch. The QEMU/OVMF `test-window-controls` regression checks app
-launch, Files keyboard selection, 20-entry scrolling, Home/End, preview and
-return-to-parent, URL keyboard editing, HTML-to-text self-test, and Downloads.
-The separate `test-network-audit` regression reports SNP protocol handles,
-HTTP Service Binding, and EFI_HTTP availability, then compares loader diagnostics
-with the shell's `net` output. Hostname lookup is delegated to firmware EFI_HTTP
-when available; Fadal64 has no native DNS client or fallback. This capability
-audit does not send a DNS query or HTTP request.
+`test-window-controls` runs without a NIC and verifies the explicit unavailable
+path. The separate `test-network-audit` boot attaches QEMU `e1000` with
+`restrict=on`, audits SNP/HTTP protocols, and compares loader diagnostics with
+the shell's `net` output. On the tested OVMF, `LocateProtocol(EFI_HTTP)` was
+`Not Found`, but HTTP Service Binding was present and `CreateChild` plus
+`OpenProtocol` succeeded, yielding an EFI_HTTP child. EFI_IP4_CONFIG2 DHCP
+configuration acquired station `10.0.2.15/24` during the HTTP run. A bounded
+plaintext `GET /fixture.txt` to numeric `10.0.2.100` reached QEMU `guestfwd`,
+returned `FADAL_UEFI_HTTP_FIXTURE_OK`, and was read back from the guest file.
+This proves only the local HTTP fixture path, not general Internet access.
+
+Hostname lookup is delegated to the firmware HTTP path when used, but Fadal64
+has no native DNS client or fallback. A separate attempt to download the same
+fixture through `10.0.2.100.nip.io` failed, and the fixture observed no request.
+That result does not distinguish DNS failure from connection failure, so DNS and
+hostname resolution remain **unverified**. The `--hostname-url` probe is optional
+and reported separately from the numeric-IP fixture regression. Neither protocol
+availability, a DHCP address, nor the local fixture GET proves Internet access.
+TLS, certificate validation, and HTTPS remain unimplemented and untested.
 
 The graphical terminal renders console output and keyboard echo into the GOP framebuffer, with a bounded 64-row by 160-character scrollback. Desktop clicks are triggered only on the left-button press edge, so a held touch does not repeat menu/window actions; unchanged PS/2 packets are ignored, and ordinary pointer motion restores and redraws only the cursor save-under pixels instead of repainting the whole GOP frame. Its single-line editor supports Left/Right, Home/End, insertion at the cursor, Backspace, and Delete; commands are bounded to 95 characters, while the visible prompt slice scrolls horizontally to keep the cursor visible when the window is narrow. Up/Down navigate a fixed eight-command ring containing non-empty submitted commands; the first Up saves the in-progress draft, and Down from the newest recalled entry restores that draft. History is guest-local volatile memory and is not persisted across reboot. PageUp/PageDown scroll the retained output history, while new output follows the live tail by default. The terminal remains a small desktop shell surface rather than a complete userspace desktop environment. Do not assume that the BIOS shell and UEFI payload share memory, syscall, or filesystem code. They are separate deliverables. The loader passes a small `fadal_uefi_services` ABI from `kernel/uefi/net.h` into the payload. HTTP uses the firmware's EFI HTTP protocol or HTTP Service Binding child and writes bounded responses to the ESP. The shell maintains a bounded current directory (initially `/home/root`), displays it in the prompt, and normalizes absolute and relative paths including `.` and `..` for `pwd`, `cd`, `ls`, `cat`, and `write`. The persistent `/home/root` view is backed by `FADALHOME` on the same ESP; validated EFI callbacks support nested relative paths, directory listing, and creation of one directory at a time when its parent exists. `/etc` exposes read-only virtual files. Boot seeds the default README, motd, and profile only when absent. Files persist across guest restarts, but this is not yet a general VFS or a per-user storage boundary. Home files can be deleted at any depth, while directory removal and journaling are not implemented. The BIOS RTL8139 stack is intentionally not linked into the UEFI payload; this is a firmware-native backend with explicit capability detection.
 

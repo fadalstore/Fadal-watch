@@ -74,6 +74,32 @@ static EFI_GUID gFadalHttpBindingGuid = {
 };
 static EFI_GUID gFadalSimpleNetworkGuid = EFI_SIMPLE_NETWORK_PROTOCOL_GUID;
 static EFI_GUID gFadalFileInfoGuid = EFI_FILE_INFO_ID;
+static EFI_GUID gFadalRngProtocolGuid = EFI_RNG_PROTOCOL_GUID;
+static EFI_GUID gFadalIp4Config2Guid = {
+    0x5b446ed1, 0xe30b, 0x4faa, {0x87, 0x1a, 0x36, 0x54, 0xec, 0xa3, 0x60, 0x80}
+};
+#define FADAL_IP4_CONFIG2_DATA_INTERFACE_INFO 0U
+#define FADAL_IP4_CONFIG2_DATA_POLICY 1U
+#define FADAL_IP4_CONFIG2_POLICY_DHCP 1U
+#define FADAL_HTTP_STATUS_200_OK 3U
+typedef EFI_STATUS (EFIAPI *FADAL_IP4_CONFIG2_SET_DATA)(VOID *, UINT32, UINTN, VOID *);
+typedef EFI_STATUS (EFIAPI *FADAL_IP4_CONFIG2_GET_DATA)(VOID *, UINT32, UINTN *, VOID *);
+typedef struct {
+    FADAL_IP4_CONFIG2_SET_DATA SetData;
+    FADAL_IP4_CONFIG2_GET_DATA GetData;
+    VOID *RegisterDataNotify;
+    VOID *UnregisterDataNotify;
+} FADAL_IP4_CONFIG2_PROTOCOL;
+typedef struct {
+    CHAR16 Name[32];
+    UINT8 IfType;
+    UINT32 HwAddressSize;
+    EFI_MAC_ADDRESS HwAddress;
+    UINT8 StationAddress[4];
+    UINT8 SubnetMask[4];
+    UINT32 RouteTableSize;
+    VOID *RouteTable;
+} FADAL_IP4_CONFIG2_INTERFACE_INFO;
 typedef struct _FADAL_SERVICE_BINDING FADAL_SERVICE_BINDING;
 typedef EFI_STATUS (EFIAPI *FADAL_CREATE_CHILD)(FADAL_SERVICE_BINDING *, EFI_HANDLE *);
 typedef EFI_STATUS (EFIAPI *FADAL_DESTROY_CHILD)(FADAL_SERVICE_BINDING *, EFI_HANDLE);
@@ -92,6 +118,12 @@ static EFI_FILE_HANDLE g_fadal_root;
 static EFI_FILE_HANDLE g_fadal_home;
 static EFI_HTTP_PROTOCOL *g_fadal_http;
 static EFI_HANDLE g_fadal_http_child;
+static FADAL_IP4_CONFIG2_PROTOCOL *g_fadal_ip4_config2;
+static EFI_EVENT g_fadal_http_request_event;
+static EFI_EVENT g_fadal_http_response_event;
+static volatile BOOLEAN g_fadal_http_request_done;
+static volatile BOOLEAN g_fadal_http_response_done;
+static volatile UINT32 g_fadal_http_callback_count;
 static UINTN g_fadal_snp_interface_count;
 static BOOLEAN g_fadal_http_binding_available;
 static fadal_net_u32 fadal_home_path(const char *path, CHAR16 wide_path[128],
@@ -410,6 +442,13 @@ static char fadal_ascii_lower(char value) {
     return value >= 'A' && value <= 'Z' ? (char)(value - 'A' + 'a') : value;
 }
 
+static VOID EFIAPI fadal_http_event_notify(EFI_EVENT event, VOID *context) {
+    (void)context;
+    g_fadal_http_callback_count++;
+    if (event == g_fadal_http_request_event) g_fadal_http_request_done = TRUE;
+    if (event == g_fadal_http_response_event) g_fadal_http_response_done = TRUE;
+}
+
 static UINTN fadal_protocol_handle_count(EFI_GUID *protocol_guid) {
     EFI_HANDLE *handles = NULL;
     UINTN count = 0;
@@ -421,13 +460,76 @@ static UINTN fadal_protocol_handle_count(EFI_GUID *protocol_guid) {
     return count;
 }
 
+static BOOLEAN fadal_ipv4_is_configured(const UINT8 address[4]) {
+    return address[0] != 0 || address[1] != 0 || address[2] != 0 || address[3] != 0;
+}
+
+static EFI_STATUS fadal_ip4_prepare_dhcp(void) {
+    union {
+        UINT64 alignment;
+        UINT8 bytes[512];
+    } interface_buffer = {0};
+    FADAL_IP4_CONFIG2_INTERFACE_INFO *interface_info =
+        (FADAL_IP4_CONFIG2_INTERFACE_INFO *)interface_buffer.bytes;
+    UINT32 policy = FADAL_IP4_CONFIG2_POLICY_DHCP;
+    UINTN data_size = sizeof(interface_buffer.bytes);
+    UINTN attempt;
+    EFI_STATUS status;
+    if (g_fadal_ip4_config2 == NULL) return EFI_NOT_FOUND;
+    status = uefi_call_wrapper(g_fadal_ip4_config2->GetData, 4,
+                               g_fadal_ip4_config2,
+                               FADAL_IP4_CONFIG2_DATA_INTERFACE_INFO,
+                               &data_size, interface_info);
+    if (!EFI_ERROR(status) && fadal_ipv4_is_configured(interface_info->StationAddress)) {
+        Print(L"UEFI IPv4 station already configured: %u.%u.%u.%u\r\n",
+              interface_info->StationAddress[0], interface_info->StationAddress[1],
+              interface_info->StationAddress[2], interface_info->StationAddress[3]);
+        return EFI_SUCCESS;
+    }
+    if (EFI_ERROR(status) && status != EFI_NOT_READY && status != EFI_NOT_FOUND) {
+        Print(L"UEFI IPv4 interface query failed: %r (size=%lu)\r\n", status, data_size);
+        return status;
+    }
+    Print(L"UEFI IPv4 station address absent; requesting DHCP policy\r\n");
+    status = uefi_call_wrapper(g_fadal_ip4_config2->SetData, 4,
+                               g_fadal_ip4_config2, FADAL_IP4_CONFIG2_DATA_POLICY,
+                               sizeof(policy), &policy);
+    Print(L"UEFI IPv4 DHCP policy SetData status=%r\r\n", status);
+    if (EFI_ERROR(status) && status != EFI_NOT_READY) return status;
+    for (attempt = 0; attempt < 100; attempt++) {
+        data_size = sizeof(interface_buffer.bytes);
+        status = uefi_call_wrapper(g_fadal_ip4_config2->GetData, 4,
+                                   g_fadal_ip4_config2,
+                                   FADAL_IP4_CONFIG2_DATA_INTERFACE_INFO,
+                                   &data_size, interface_info);
+        if (!EFI_ERROR(status) && fadal_ipv4_is_configured(interface_info->StationAddress)) {
+            Print(L"UEFI IPv4 DHCP station=%u.%u.%u.%u mask=%u.%u.%u.%u\r\n",
+                  interface_info->StationAddress[0], interface_info->StationAddress[1],
+                  interface_info->StationAddress[2], interface_info->StationAddress[3],
+                  interface_info->SubnetMask[0], interface_info->SubnetMask[1],
+                  interface_info->SubnetMask[2], interface_info->SubnetMask[3]);
+            return EFI_SUCCESS;
+        }
+        if (EFI_ERROR(status) && status != EFI_NOT_READY && status != EFI_NOT_FOUND) {
+            Print(L"UEFI IPv4 DHCP query failed: %r (size=%lu)\r\n", status, data_size);
+            return status;
+        }
+        uefi_call_wrapper(BS->Stall, 1, 100000);
+    }
+    Print(L"UEFI IPv4 DHCP timeout; no station address acquired\r\n");
+    return EFI_TIMEOUT;
+}
+
 static fadal_net_u32 fadal_http_download(const char *url, const char *name) {
     CHAR16 wide_url[256];
     CHAR16 wide_name[128];
     UINTN url_length = 0;
     UINTN name_length = 0;
     UINTN index;
+    UINTN failure_stage = 0;
     EFI_STATUS status;
+    volatile EFI_STATUS *request_status;
+    volatile EFI_STATUS *response_status;
     VOID *buffer = NULL;
     UINTN buffer_size = 65536;
     UINTN write_size;
@@ -450,6 +552,11 @@ static fadal_net_u32 fadal_http_download(const char *url, const char *name) {
     if (fadal_home_path(name, wide_name, 0) != FADAL_HOME_OK) return 0;
     for (index = 0; index < url_length; index++) wide_url[index] = (CHAR16)(UINT8)url[index];
     wide_url[url_length] = 0;
+    status = fadal_ip4_prepare_dhcp();
+    if (EFI_ERROR(status)) {
+        Print(L"UEFI HTTP GET blocked: IPv4 configuration failed: %r\r\n", status);
+        return 0;
+    }
     config_data.HttpVersion = 1;
     config_data.TimeOutMillisec = 5000;
     config_data.LocalAddressIsIPv6 = FALSE;
@@ -466,50 +573,104 @@ static fadal_net_u32 fadal_http_download(const char *url, const char *name) {
     request_message.BodyLength = 0;
     request_message.Body = NULL;
     request_token.Event = NULL;
-    status = uefi_call_wrapper(BS->CreateEvent, 6, EVT_NOTIFY_SIGNAL, TPL_CALLBACK,
-                               NULL, NULL, NULL, &request_token.Event);
-    if (EFI_ERROR(status)) goto cleanup;
-    request_token.Status = EFI_NOT_READY;
-    request_token.Message = &request_message;
+    response_token.Event = NULL;
     response_data.StatusCode = 0;
+    g_fadal_http_request_event = NULL;
+    g_fadal_http_response_event = NULL;
+    g_fadal_http_request_done = FALSE;
+    g_fadal_http_response_done = FALSE;
+    g_fadal_http_callback_count = 0;
+    failure_stage = 1;
+    status = uefi_call_wrapper(BS->CreateEvent, 6, EVT_NOTIFY_SIGNAL, TPL_CALLBACK,
+                               fadal_http_event_notify, NULL,
+                               &request_token.Event);
+    if (EFI_ERROR(status)) goto cleanup;
+    g_fadal_http_request_event = request_token.Event;
+    request_token.Status = EFI_NOT_READY;
+    request_status = &request_token.Status;
+    request_token.Message = &request_message;
     response_message.Data.Response = &response_data;
     response_message.HeaderCount = 0;
     response_message.Headers = NULL;
     response_message.BodyLength = buffer_size;
     response_message.Body = NULL;
-    response_token.Event = NULL;
+    failure_stage = 2;
     status = uefi_call_wrapper(BS->CreateEvent, 6, EVT_NOTIFY_SIGNAL, TPL_CALLBACK,
-                               NULL, NULL, NULL, &response_token.Event);
+                               fadal_http_event_notify, NULL,
+                               &response_token.Event);
     if (EFI_ERROR(status)) goto cleanup;
+    g_fadal_http_response_event = response_token.Event;
     response_token.Status = EFI_NOT_READY;
+    response_status = &response_token.Status;
     response_token.Message = &response_message;
+    failure_stage = 3;
     status = uefi_call_wrapper(BS->AllocatePool, 3, EfiBootServicesData, buffer_size, &buffer);
     if (EFI_ERROR(status)) goto cleanup;
     response_message.Body = buffer;
-    status = g_fadal_http->Configure(g_fadal_http, &config_data);
+    failure_stage = 4;
+    status = uefi_call_wrapper(g_fadal_http->Configure, 2, g_fadal_http, &config_data);
     if (EFI_ERROR(status)) goto cleanup;
-    status = g_fadal_http->Request(g_fadal_http, &request_token);
+    failure_stage = 5;
+    status = uefi_call_wrapper(g_fadal_http->Request, 2, g_fadal_http, &request_token);
     if (EFI_ERROR(status)) goto cleanup;
-    for (index = 0; index < 10000 && request_token.Status == EFI_NOT_READY; index++) {
-        g_fadal_http->Poll(g_fadal_http);
+    failure_stage = 6;
+    for (index = 0; index < 10000 && !g_fadal_http_request_done &&
+         *request_status == EFI_NOT_READY; index++) {
+        uefi_call_wrapper(g_fadal_http->Poll, 1, g_fadal_http);
         uefi_call_wrapper(BS->Stall, 1, 1000);
     }
-    if (EFI_ERROR(request_token.Status)) goto cleanup;
-    status = g_fadal_http->Response(g_fadal_http, &response_token);
+    Print(L"UEFI HTTP Request completion: event=%u callbacks=%u token=%r\r\n",
+          g_fadal_http_request_done, g_fadal_http_callback_count, *request_status);
+    if (*request_status == EFI_NOT_READY) {
+        status = EFI_TIMEOUT;
+        goto cleanup;
+    }
+    if (EFI_ERROR(*request_status)) {
+        status = *request_status;
+        goto cleanup;
+    }
+    failure_stage = 7;
+    status = uefi_call_wrapper(g_fadal_http->Response, 2, g_fadal_http, &response_token);
     if (EFI_ERROR(status)) goto cleanup;
-    for (index = 0; index < 10000 && response_token.Status == EFI_NOT_READY; index++) {
-        g_fadal_http->Poll(g_fadal_http);
+    failure_stage = 8;
+    for (index = 0; index < 10000 && !g_fadal_http_response_done &&
+         *response_status == EFI_NOT_READY; index++) {
+        uefi_call_wrapper(g_fadal_http->Poll, 1, g_fadal_http);
         uefi_call_wrapper(BS->Stall, 1, 1000);
     }
-    if (EFI_ERROR(response_token.Status) || response_data.StatusCode != 200) goto cleanup;
+    Print(L"UEFI HTTP Response completion: event=%u callbacks=%u token=%r HTTP=%u\r\n",
+          g_fadal_http_response_done, g_fadal_http_callback_count, *response_status,
+          response_data.StatusCode);
+    if (*response_status == EFI_NOT_READY) {
+        status = EFI_TIMEOUT;
+        goto cleanup;
+    }
+    if (EFI_ERROR(*response_status)) {
+        status = *response_status;
+        goto cleanup;
+    }
+    if (response_data.StatusCode != FADAL_HTTP_STATUS_200_OK) {
+        failure_stage = 9;
+        status = EFI_SUCCESS;
+        goto cleanup;
+    }
     write_size = response_message.BodyLength;
+    failure_stage = 10;
     if (write_size == 0 || write_size > buffer_size ||
-        fadal_home_write(name, (const char *)buffer, (fadal_net_u32)write_size) != FADAL_HOME_OK) goto cleanup;
+        fadal_home_write(name, (const char *)buffer, (fadal_net_u32)write_size) != FADAL_HOME_OK) {
+        status = EFI_DEVICE_ERROR;
+        goto cleanup;
+    }
     if (request_token.Event != NULL) uefi_call_wrapper(BS->CloseEvent, 1, request_token.Event);
     if (response_token.Event != NULL) uefi_call_wrapper(BS->CloseEvent, 1, response_token.Event);
     uefi_call_wrapper(BS->FreePool, 1, buffer);
+    Print(L"UEFI HTTP GET: HTTP 200, saved %lu bytes\r\n", write_size);
     return (fadal_net_u32)write_size;
 cleanup:
+    if (failure_stage != 0) {
+        Print(L"UEFI HTTP GET diagnostic: stage=%lu status=%r HTTP=%u\r\n",
+              failure_stage, status, response_data.StatusCode);
+    }
     if (request_token.Event != NULL) uefi_call_wrapper(BS->CloseEvent, 1, request_token.Event);
     if (response_token.Event != NULL) uefi_call_wrapper(BS->CloseEvent, 1, response_token.Event);
     if (buffer != NULL) uefi_call_wrapper(BS->FreePool, 1, buffer);
@@ -753,6 +914,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
     EFI_FILE_HANDLE root = NULL;
     FADAL_SERVICE_BINDING *http_binding = NULL;
     EFI_STATUS status;
+    VOID *rng_protocol = NULL;
     VOID *payload = NULL;
     UINTN payload_size = 0;
     UINTN payload_memory_size = 0;
@@ -817,11 +979,22 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
         fadal_protocol_handle_count(&gFadalSimpleNetworkGuid);
     Print(L"UEFI network audit: SNP interfaces=%lu\r\n",
           g_fadal_snp_interface_count);
+    g_fadal_ip4_config2 = NULL;
+    status = uefi_call_wrapper(BS->LocateProtocol, 3, &gFadalIp4Config2Guid, NULL,
+                               (VOID **)&g_fadal_ip4_config2);
+    Print(L"UEFI network audit: EFI_IP4_CONFIG2 handles=%lu LocateProtocol status=%r\r\n",
+          fadal_protocol_handle_count(&gFadalIp4Config2Guid), status);
+    if (EFI_ERROR(status)) g_fadal_ip4_config2 = NULL;
+    status = uefi_call_wrapper(BS->LocateProtocol, 3, &gFadalRngProtocolGuid, NULL,
+                               &rng_protocol);
+    Print(L"UEFI network audit: EFI_RNG protocol=%s\r\n",
+          !EFI_ERROR(status) && rng_protocol != NULL ? L"available" : L"unavailable");
     g_fadal_http = NULL;
     g_fadal_http_child = NULL;
     g_fadal_http_binding_available = FALSE;
     status = uefi_call_wrapper(BS->LocateProtocol, 3, &gFadalHttpProtocolGuid, NULL,
                                (VOID **)&g_fadal_http);
+    Print(L"UEFI network audit: EFI_HTTP LocateProtocol status=%r\r\n", status);
     if (EFI_ERROR(status)) g_fadal_http = NULL;
     status = uefi_call_wrapper(BS->LocateProtocol, 3, &gFadalHttpBindingGuid, NULL,
                                (VOID **)&http_binding);
@@ -829,12 +1002,17 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
     g_fadal_http_binding_available = http_binding != NULL;
     Print(L"UEFI network audit: HTTP service binding=%s\r\n",
           g_fadal_http_binding_available ? L"available" : L"unavailable");
-    if (g_fadal_http == NULL && http_binding != NULL &&
-        !EFI_ERROR(http_binding->CreateChild(http_binding, &g_fadal_http_child))) {
-        status = uefi_call_wrapper(BS->OpenProtocol, 6, g_fadal_http_child,
-                                   &gFadalHttpProtocolGuid, (VOID **)&g_fadal_http,
-                                   image, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL);
-        if (EFI_ERROR(status)) g_fadal_http = NULL;
+    if (g_fadal_http == NULL && http_binding != NULL) {
+        status = uefi_call_wrapper(http_binding->CreateChild, 2, http_binding,
+                                   &g_fadal_http_child);
+        Print(L"UEFI network audit: EFI_HTTP CreateChild status=%r\r\n", status);
+        if (!EFI_ERROR(status)) {
+            status = uefi_call_wrapper(BS->OpenProtocol, 6, g_fadal_http_child,
+                                       &gFadalHttpProtocolGuid, (VOID **)&g_fadal_http,
+                                       image, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL);
+            Print(L"UEFI network audit: EFI_HTTP OpenProtocol status=%r\r\n", status);
+            if (EFI_ERROR(status)) g_fadal_http = NULL;
+        }
     }
     Print(L"UEFI network audit: EFI_HTTP protocol=%s; hostname lookup delegated to EFI_HTTP when available\r\n",
           g_fadal_http != NULL ? L"available" : L"unavailable");

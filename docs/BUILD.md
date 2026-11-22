@@ -295,8 +295,9 @@ download http://host/path FILE
 
 The response is bounded to 64 KiB and is written to the ESP. Firmware without
 an HTTP driver is detected at boot and the command reports that the service is
-unavailable. OVMF's default firmware generally lacks this protocol; this is a
-firmware capability limitation, not a host-side download fallback.
+unavailable. An EFI_HTTP service may also be created through HTTP Service
+Binding when direct `LocateProtocol(EFI_HTTP)` finds no existing instance; this
+is still firmware-provided HTTP, not a host-side download fallback.
 
 To audit the network protocols actually exposed by the firmware, run:
 
@@ -304,15 +305,34 @@ To audit the network protocols actually exposed by the firmware, run:
 make -C kernel/uefi test-network-audit
 ```
 
-This regression compares SNP handle, HTTP Service Binding, and EFI_HTTP status
-from the loader with the UEFI shell's `net` command, then captures the System
-panel at `kernel/uefi/out/network-audit-system.ppm`. On the tested QEMU 8.2.2 and
-OVMF 2024.02-2ubuntu0.10 setup, three SNP protocol handles and HTTP Service
-Binding were reported, but EFI_HTTP was unavailable. The 1280×800 System panel
-was visually inspected. This is a capability audit only: it sends no DNS query
-or HTTP GET and does not prove Internet access. Hostname lookup would be handled
-by firmware EFI_HTTP when available; the Fadal64 payload has no native DNS
-client or fallback. See [the P2.10 progress note](HORUMAR_P2_10.md).
+The regression compares SNP, HTTP Service Binding, and EFI_HTTP diagnostics with
+the `net` command, then tests a bounded HTTP GET to the local fixture with QEMU
+`e1000` and `restrict=on`. On the tested QEMU 8.2.2 / OVMF 2024.02-2ubuntu0.10
+setup, three SNP handles were present. `LocateProtocol(EFI_HTTP)` returned
+`Not Found`, while HTTP Service Binding was available and `CreateChild` and
+`OpenProtocol` both succeeded. DHCP through EFI_IP4_CONFIG2 acquired the guest
+station `10.0.2.15/24`. A numeric-IP GET to `10.0.2.100/fixture.txt` returned and saved
+`FADAL_UEFI_HTTP_FIXTURE_OK`; this proves only the isolated local fixture path.
+The 1280×800 System panel capture is
+`kernel/uefi/out/network-audit-system.ppm` and was visually inspected.
+
+To make a separate hostname-based attempt against the same fixture after the
+audit image has been built, run:
+
+```sh
+python3 scripts/test-uefi-network-audit.py \
+  --image kernel/uefi/out/network-audit.img \
+  --hostname-url http://10.0.2.100.nip.io/fixture.txt \
+  --screenshot kernel/uefi/out/network-audit-dns-probe.ppm
+```
+
+In the recorded attempt, the download failed and the fixture saw no request.
+That does not distinguish a DNS problem from a connection problem, so DNS and
+hostname resolution remain unverified. The Fadal64 payload has no native DNS
+client or fallback. Protocol presence, a DHCP address, and the local HTTP GET
+do not prove general Internet access. HTTPS/TLS and certificate validation are
+not implemented or tested. The test uses `e1000`; `virtio-net-pci` is not part
+of this verified result. See [the P2.10 progress note](HORUMAR_P2_10.md).
 
 ## Termux
 

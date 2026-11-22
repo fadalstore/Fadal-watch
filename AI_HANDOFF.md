@@ -86,16 +86,21 @@ the kernel and 3,873/4,096 bytes for FSH.BIN. No new UTM ZIP was generated and
 existing release archives were not changed. See [P2.9 progress](docs/HORUMAR_P2_9.md)
 and [the Somali product roadmap](docs/ROADMAP_FADALWATCH_SO.md).
 
-**P2.10 in progress:** the UEFI loader audits SNP handles, HTTP Service Binding,
-and EFI_HTTP availability; the System panel and `net` command report matching
-results. `make -C kernel/uefi test-network-audit` passed under QEMU/OVMF: three
-SNP protocol handles and HTTP Service Binding were present, but EFI_HTTP was
-unavailable. Hostname lookup would be handled by firmware EFI_HTTP when
-available; Fadal64 has no native DNS client/fallback. No live HTTP GET or DNS
-query was verified. See [P2.10 progress](docs/HORUMAR_P2_10.md). Next: obtain or
-build UEFI firmware with a working EFI_HTTP protocol and run a bounded plaintext
-HTTP fixture. Do not claim HTTPS until TLS, entropy, and certificate validation
-are implemented and tested.
+**P2.10 in progress:** `make -C kernel/uefi test-network-audit` passed under
+QEMU 8.2.2/OVMF with `e1000` and `restrict=on`. Three SNP handles were present;
+`LocateProtocol(EFI_HTTP)` returned `Not Found`, while HTTP Service Binding,
+`CreateChild`, and `OpenProtocol` succeeded, providing an EFI_HTTP child. DHCP
+acquired station `10.0.2.15/24`. A bounded numeric-IP plaintext GET to the local
+`guestfwd` fixture returned and saved `FADAL_UEFI_HTTP_FIXTURE_OK`. A separate
+`10.0.2.100.nip.io` hostname attempt failed and the fixture saw no request; this
+does not distinguish DNS from connection failure, so DNS/hostname remains
+unverified. General Internet and HTTPS/TLS were not tested. No UTM ZIP was
+created or changed. `scripts/validate-repo.sh --uefi` also passed, including BIOS
+smoke/size/memory-window checks and the UEFI clean build; the network regression
+boot and System framebuffer inspection passed separately. See [P2.10 progress](docs/HORUMAR_P2_10.md). Next: only mark
+hostname resolution verified if a separate hostname request reaches the same
+fixture and returns its marker. Do not claim HTTPS until TLS, entropy, and
+certificate validation are implemented and tested.
 
 **Files** ee Start hadda waxa uu furaa browser framebuffer ah oo adeegsada
 home-list iyo read callbacks-ka ESP. Wuxuu taxaa `/home/root`, wuxuu geli karaa
@@ -117,8 +122,8 @@ HTTP ayuu GET ku sameeyaa, HTML tags-ka caadiga ahna wuxuu uga soo saaraa ASCII
 text preview (xadka akhrisku waa 4 KiB). HTTPS/TLS, JavaScript, CSS, sawirro,
 redirects iyo clickable links ma taageero. Bogga iyo downloads-ka ilaa 64 KiB
 waxaa lagu kaydiyaa `/home/root/Downloads`; badhanka Downloads-ku wuxuu folder-kaas
-ka furaa Files. Haddii firmware-ku aanu bixin UEFI HTTP (sida OVMF ee QEMU-ga
-caadiga ah), app-ku si cad ayuu u muujinayaa in adeeggu maqan yahay.
+ka furaa Files. Boot-ka `test-window-controls` ma laha NIC wuxuuna hubiyaa fariinta
+adeegga maqan; `test-network-audit` waa tijaabada goonida ah ee e1000/HTTP fixture.
 `test-window-controls` hadda wuxuu xaqiijiyaa Files keyboard selection, preview,
 Backspace parent navigation, System panel, Browser launch, keyboard URL edit/Enter,
 HTML-to-text self-test, iyo Downloads shortcut-ka; ma sheeganayo in fetch Internet

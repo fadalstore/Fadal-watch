@@ -94,10 +94,15 @@ acquired station `10.0.2.15/24`. A bounded numeric-IP plaintext GET to the local
 `guestfwd` fixture returned and saved `FADAL_UEFI_HTTP_FIXTURE_OK`. A separate
 `10.0.2.100.nip.io` hostname attempt failed and the fixture saw no request; this
 does not distinguish DNS from connection failure, so DNS/hostname remains
-unverified. General Internet and HTTPS/TLS were not tested. No UTM ZIP was
-created or changed. `scripts/validate-repo.sh --uefi` also passed, including BIOS
-smoke/size/memory-window checks and the UEFI clean build; the network regression
-boot and System framebuffer inspection passed separately. See [P2.10 progress](docs/HORUMAR_P2_10.md). Next: only mark
+unverified. General Internet and HTTPS/TLS were not tested. Earlier UTM archives
+were not changed. A new [P2.10 UTM candidate](FadalOS-Phase2.10-UTM-iOS.zip) is 161,481
+bytes with SHA-256 `87ec98d8163da8ae0653fb7f615473452ad4b152a1617d21174bb94482b10cc9`.
+Its packaging checks passed; the extracted UEFI disk booted under OVMF and passed
+the DHCP/local-fixture regression, while the BIOS disk matched the QEMU-tested
+image byte-for-byte. Earlier Phase 1/P2.5/P2.6/P2.8 archives remain unchanged.
+`scripts/validate-repo.sh --uefi` also passed, including BIOS smoke/size/memory-
+window checks and the UEFI clean build; the network boot and System framebuffer
+inspection passed separately. See [P2.10 progress](docs/HORUMAR_P2_10.md). Next: only mark
 hostname resolution verified if a separate hostname request reaches the same
 fixture and returns its marker. Do not claim HTTPS until TLS, entropy, and
 certificate validation are implemented and tested.

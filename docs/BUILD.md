@@ -67,7 +67,32 @@ PACKAGE_README="$PWD/docs/PHASE2.8_PACKAGE_README.md" \
 sha256sum -c FadalOS-Phase2.8-UTM-iOS.zip.sha256
 ```
 
-The packager accepts `PACKAGE_README` as an optional environment override; its default README and output remain the historical P2.6 values. Keep Phase 1, P2.5, and P2.6 archives frozen.
+The packager accepts `PACKAGE_README` as an optional environment override; its default README and output remain the historical P2.6 values. Keep Phase 1, P2.5, P2.6, and P2.8 archives frozen.
+
+To create the separate P2.10 UTM candidate, use its versioned README and a new
+explicit output filename. The existence guard prevents accidental replacement:
+
+```sh
+test ! -e FadalOS-Phase2.10-UTM-iOS.zip
+test ! -e FadalOS-Phase2.10-UTM-iOS.zip.sha256
+make -C kernel check
+make -C kernel/uefi clean check payload
+make -C kernel uefi-image \
+  UEFI_IMAGE="$PWD/kernel/out/fadal-uefi.img" \
+  UEFI_BOOTLOADER="$PWD/kernel/uefi/out/BOOTX64.EFI" \
+  UEFI_KERNEL="$PWD/kernel/uefi/out/fadal-uefi.krn"
+PACKAGE_README="$PWD/docs/PHASE2.10_PACKAGE_README.md" \
+  scripts/package-phase2-utm.sh \
+  "$PWD/kernel/out/fadal-kernel.img" \
+  "$PWD/kernel/out/fadal-uefi.img" \
+  "$PWD/FadalOS-Phase2.10-UTM-iOS.zip"
+sha256sum -c FadalOS-Phase2.10-UTM-iOS.zip.sha256
+```
+
+The packager checks ZIP integrity, internal image hashes, and byte equality with
+the built images. P2.10's QEMU/OVMF evidence is limited to DHCP and a plaintext
+GET to its bounded local fixture; DNS/hostname, Internet, and HTTPS remain
+unverified. Do not replace any earlier versioned archive.
 
 The same boot check runs the independent HTTP/1 response parser tests even if no
 NIC is available. They cover fixed-length and close-delimited bodies, chunked

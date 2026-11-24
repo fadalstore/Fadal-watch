@@ -53,3 +53,15 @@ The package passed `unzip -t`, external archive checksum verification, and its i
 `make -C kernel check` iyo `scripts/validate-repo.sh --uefi` way gudbeen. `unzip -t`, sidecar checksum, gudaha `SHA256SUMS`, iyo byte equality-ga images-ka ZIP-ga ku jira waa la xaqiijiyey. BIOS disk-ka la soo saaray wuxuu QEMU ku boot-gareeyey 128 MiB RAM; UEFI disk-ka la soo saaray wuxuu OVMF ku gudbay keyboard focus, Files/System/Browser, mouse/window controls. EFI page-protection test-ka goonida ahi wuxuu qabtay NX iyo read-only page faults-kii la filayey.
 
 Commit-ka source-ka `f97422e` waa la push-gareeyey `main`-ka GitHub. P2.5 (`7856305f788f26ce93a4d407696615c9b51919224eb5ed7b15b2c8bbdc1365f5`), P2.6 (`220d3f185298878a4fc05a076a383dc18f31020ef0f4f098e2b6b429660e3825`), iyo Phase 1 (`bd1b433309cce3671f9a206f56629db8d7db8268a0167a378696db705c362fab`) archives-koodii isma beddelin.
+
+
+## P2.10 — UTM candidate package (22 Nofeembar 2026)
+
+[UTM ZIP-ga P2.10](../FadalOS-Phase2.10-UTM-iOS.zip) waa 161,481 bytes, SHA-256-giisuna waa `87ec98d8163da8ae0653fb7f615473452ad4b152a1617d21174bb94482b10cc9`. Sidecar-ku waa [`FadalOS-Phase2.10-UTM-iOS.zip.sha256`](../FadalOS-Phase2.10-UTM-iOS.zip.sha256). Disk-image hashes-ka ku jira `SHA256SUMS` waa:
+
+- UEFI ESP: `c99208003db03f4aa43b0718d3b7cfbc11893425fac054a1310e72dd9e1c3127`
+- BIOS disk: `f4a8ee750ec4868e51f4423ebed6987544d04e433921be1d35d1de304c4635d7`
+
+`make -C kernel check`, `make -C kernel/uefi clean check payload`, iyo `scripts/validate-repo.sh --uefi` way gudbeen. `scripts/package-phase2-utm.sh` wuxuu xaqiijiyey ZIP integrity, gudaha image hashes, iyo byte equality-ga labada image; sidecar checksum-kuna wuu gudbay. BIOS image-ka la baakadeeyey wuxuu la mid yahay raw disk image-kii QEMU smoke test-ka gudbay. UEFI image-ka ZIP-ga laga soo saaray ayaa OVMF hoostiisa boot-gareeyey; `e1000` network audit-ku wuxuu xaqiijiyey DHCP `10.0.2.15/24` iyo GET-ga plaintext ee fixture maxalliga ah, waxaana la kormeeray System framebuffer-ka.
+
+Tani waa **candidate package** oo leh caddayn networking xaddidan. Hostname `10.0.2.100.nip.io` probe-kiisu wuu fashilmay, sababta DNS ama isku-xir si gooni ah looma kala saarin; DNS/hostname waa unverified. Internet guud iyo HTTPS/TLS lama tijaabin. Phase 1, P2.5, P2.6, iyo P2.8 archives-koodii waa la ilaaliyey, checksums-kooduna isma beddelin: Phase 1 `bd1b433309cce3671f9a206f56629db8d7db8268a0167a378696db705c362fab`, P2.5 `7856305f788f26ce93a4d407696615c9b51919224eb5ed7b15b2c8bbdc1365f5`, P2.6 `220d3f185298878a4fc05a076a383dc18f31020ef0f4f098e2b6b429660e3825`, iyo P2.8 `b2f421d86f641a9bbec185cc6a5189cbff4ce8d7b5246bec3eb6af0bd2ac151a`.

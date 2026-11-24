@@ -1,6 +1,6 @@
 # Horumarka P2.10 — UEFI networking
 
-**Xaalad:** capability audit-ka, DHCP station, iyo HTTP GET-ga fixture-ka maxalliga ah waa la xaqiijiyey gudaha QEMU/OVMF. DNS/hostname weli lama xaqiijin; Internet guud iyo HTTPS/TLS lama tijaabin.
+**Xaalad:** capability audit-ka, DHCP station, iyo HTTP GET-ga fixture-ka maxalliga ah waa la xaqiijiyey gudaha QEMU/OVMF. UTM candidate ZIP cusub waa la sameeyey oo la tijaabiyey. DNS/hostname weli lama xaqiijin; Internet guud iyo HTTPS/TLS lama tijaabin.
 
 ## Waxa la xaqiijiyey
 
@@ -29,8 +29,15 @@ python3 scripts/test-uefi-network-audit.py \
 
 Guuldarrada probe-kan kaligeed ma caddaynayso DNS failure; haddii dib loo tijaabiyo waa in fixture-ku helo request isla markaana marker-ka la soo celiyo ka hor inta aan hostname lookup loo aqoonsan mid la xaqiijiyey.
 
-## Waxa aan la xaqiijin
+## UTM candidate package P2.10
+
+[UTM ZIP-ga P2.10](../FadalOS-Phase2.10-UTM-iOS.zip) waa 161,481 bytes, SHA-256-giisuna waa `87ec98d8163da8ae0653fb7f615473452ad4b152a1617d21174bb94482b10cc9`. Sidecar checksum-ku waa `FadalOS-Phase2.10-UTM-iOS.zip.sha256`. Hashes-ka labada disk image ee gudaha waa:
+
+- UEFI ESP: `c99208003db03f4aa43b0718d3b7cfbc11893425fac054a1310e72dd9e1c3127`
+- BIOS disk: `f4a8ee750ec4868e51f4423ebed6987544d04e433921be1d35d1de304c4635d7`
+
+Package builder-ku wuxuu xaqiijiyey ZIP integrity, internal `SHA256SUMS`, iyo byte equality-ga images-ka la dhisay. `sha256sum -c FadalOS-Phase2.10-UTM-iOS.zip.sha256` wuu gudbay. BIOS disk-ka gudaha ZIP-ga wuxuu la mid yahay image-kii `make -C kernel check` ku boot-gareeyey. UEFI disk-ka ZIP-ga laga soo saaray ayaa OVMF hoostiisa boot-gareeyey, wuxuuna mar kale gudbay DHCP iyo local fixture HTTP GET. System panel-ka image-kaas waa [p2.10-package-network-system.png](../kernel/uefi/out/p2.10-package-network-system.png).
 
 Internet guud lama tijaabin. HTTPS/TLS, certificate validation, redirects, iyo browser features kale lama hirgelin ama lama tijaabin. `virtio-net-pci` laguma darin caddaynta; natiijada hadda jirta waxay khusaysaa QEMU `e1000` oo keliya. Helitaanka SNP, HTTP Service Binding, EFI_HTTP child, ama DHCP station midkoodna kaligiis ma caddaynayo awoodahaas.
 
-UTM ZIP-yada versioned-ka ah lama beddelin, archive cusubna lama samayn.
+Archives-ka Phase 1, P2.5, P2.6 iyo P2.8 lama beddelin; hashes-koodii hore ayaa la ilaaliyey. Package cusub oo P2.10 ah ayaa loo sameeyey filename gaar ah.

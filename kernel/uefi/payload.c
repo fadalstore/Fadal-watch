@@ -1047,9 +1047,15 @@ static void desktop_app_render(void) {
                 desktop_services != NULL && desktop_services->http_binding_available != 0 ?
                 "HTTP SERVICE BINDING: AVAILABLE" : "HTTP SERVICE BINDING: UNAVAILABLE",
                 0x00d8eaff, 1);
-        fb_text(left + 28, top + 316, "HOSTNAME/DNS: EFI_HTTP HANDLES LOOKUP WHEN AVAILABLE",
+        fb_text(left + 28, top + 316,
+                desktop_services != NULL && desktop_services->dns4_binding_available != 0 ?
+                "EFI DNS4 SERVICE BINDING: AVAILABLE" : "EFI DNS4 SERVICE BINDING: UNAVAILABLE",
                 0x00d8eaff, 1);
-        fb_text(left + 28, top + 350, "NATIVE FADAL64 DNS CLIENT: NOT IMPLEMENTED",
+        fb_text(left + 28, top + 350,
+                desktop_services != NULL && desktop_services->dns4_protocol_available != 0 ?
+                "EFI DNS4 PROTOCOL INSTANCE: AVAILABLE" : "EFI DNS4 PROTOCOL INSTANCE: UNAVAILABLE",
+                0x00d8eaff, 1);
+        fb_text(left + 28, top + 384, "NATIVE FADAL64 DNS CLIENT: NOT IMPLEMENTED",
                 0x00d8eaff, 1);
         fb_text(left + 28, top + height - 32, "ESC TO CLOSE - TAB RETURNS TO TERMINAL", 0x0097aac8, 1);
     } else {
@@ -2534,7 +2540,13 @@ static void run_command(char *line) {
         console_write(desktop_services != NULL && desktop_services->http_available != 0 ?
             "network: UEFI HTTP protocol available\r\n" :
             "network: UEFI HTTP protocol unavailable\r\n");
-        console_write("network: hostname lookup delegated to EFI_HTTP when available; native DNS absent\r\n");
+        console_write(desktop_services != NULL && desktop_services->dns4_binding_available != 0 ?
+            "network: EFI DNS4 service binding available\r\n" :
+            "network: EFI DNS4 service binding unavailable\r\n");
+        console_write(desktop_services != NULL && desktop_services->dns4_protocol_available != 0 ?
+            "network: EFI DNS4 protocol available\r\n" :
+            "network: EFI DNS4 protocol unavailable\r\n");
+        console_write("network: native Fadal64 DNS client not implemented\r\n");
     } else if (f_starts(line, "download ")) {
         char *separator = line + 9;
         while (*separator != '\0' && *separator != ' ') separator++;

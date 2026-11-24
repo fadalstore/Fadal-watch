@@ -1,6 +1,6 @@
 # FadalOS Phase 2 — Work Plan
 
-**Status:** P2.1–P2.9 complete; P2.10 capability audit verified, live HTTP fixture blocked by test firmware; P2.6/P2.8 packages remain historical artifacts
+**Status:** P2.1–P2.10 complete for their scoped milestones; P2.11 configure-once reuse and two sequential numeric-IP fixture GETs are verified. DNS4 firmware-instance setup and hostname resolution remain unresolved; general Internet and HTTPS remain unverified.
 **Baseline:** Phase 1 UTM release at commit `1d50d1d`
 **Purpose:** define a staged, boot-testable path from the Phase 1 freestanding kernel and UEFI desktop prototype toward a more reliable, inspectable FadalOS runtime.
 
@@ -69,13 +69,19 @@ FSH wuxuu sameeyaa store toos ah isagoo ku jira ring-3, isaga oo isku dayaya inu
 
 **La xaqiijiyey:** `make -C kernel check` wuxuu gudbay BIOS/QEMU boot smoke, loader ceiling/121-sector rejection, 16/32/64 MiB memory matrix iyo P2.7/P2.9 write-protection checks. `scripts/validate-repo.sh --uefi` sidoo kale wuu gudbay. Serial output-ku wuxuu xaqiijiyey near-match gate-ka, byte aan isbeddelin iyo in FSH dib ugu laabtay bilowgiisa. BIOS kernel-ku waa 48,953/61,440 bytes (12,487 bytes oo headroom ah); FSH.BIN waa 3,873/4,096 bytes (223 bytes oo headroom ah). P2.9 waa source/runtime checkpoint; ZIP cusub lama samayn, P2.6 iyo Phase 1 artifacts-na lama beddelin. Warbixinta Somali-ga: [HORUMAR_P2_9](HORUMAR_P2_9.md).
 
-### P2.10 — UEFI network capability audit *(audit verified; live HTTP fixture blocked)*
+### P2.10 — UEFI network capability audit *(scoped DHCP/HTTP fixture verified; DNS unresolved)*
 
 UEFI loader-ku wuxuu tirinayaa handles-ka EFI Simple Network Protocol (SNP), wuxuuna ogaadaa HTTP Service Binding iyo EFI_HTTP protocol-ka. Awoodaha la helay waxa loo gudbiyaa Fadal64; System panel-ka iyo `net` command-ku waxay soo bandhigaan xaalad isku mid ah. Hostname lookup waxa firmware-ka u qaban lahaa EFI_HTTP marka la helo; native Fadal64 DNS client/fallback lama hirgelin.
 
-**La xaqiijiyey:** `make -C kernel/uefi test-network-audit` wuxuu boot-gareeyey QEMU 8.2.2/OVMF 2024.02-2ubuntu0.10 isagoo wata e1000 iyo user networking xaddidan. Loader-ku wuxuu arkay 3 SNP protocol handles, HTTP Service Binding waa la helay, laakiin EFI_HTTP protocol-ku ma furnayn. `net` command-ku wuxuu la jaanqaaday xogta loader-ka; framebuffer-ka System panel-ka ee 1280×800 waa la kormeeray. `scripts/validate-repo.sh --uefi` wuu gudbay.
+**La xaqiijiyey:** `make -C kernel/uefi test-network-audit` wuxuu boot-gareeyey QEMU 8.2.2/OVMF 2024.02-2ubuntu0.10 isagoo wata e1000 iyo user networking xaddidan. Loader-ku wuxuu arkay 3 SNP handles; `LocateProtocol(EFI_HTTP)` wuxuu ahaa `Not Found`, balse HTTP Service Binding, `CreateChild`, iyo `OpenProtocol` way guulaysteen. DHCP wuxuu helay `10.0.2.15/24`. Plaintext GET ku socda numeric IP `10.0.2.100` wuxuu gaaray `guestfwd` fixture-ka, wuxuuna soo celiyey marker-ka `FADAL_UEFI_HTTP_FIXTURE_OK`. `net` command-ku wuxuu la jaanqaaday xogta loader-ka, framebuffer-ka System panel-ka waa la kormeeray, package-ka P2.10-na waa la sameeyey oo la boot-tijaabiyey. `scripts/validate-repo.sh --uefi` wuu gudbay.
 
-**Xaddidaad:** tani waa capability audit oo keliya. Ma jirin live HTTP GET ama DNS query la tijaabiyey, mana jiro caddeyn Internet ama HTTPS/TLS. P2.10 wali ma dhamma; tallaabada xigta waa firmware UEFI oo EFI_HTTP shaqaynaya bixiya, kadibna GET plaintext ah oo loo diro HTTP fixture maxalli ah oo xaddidan. Faahfaahinta Somali-ga: [HORUMAR_P2_10](HORUMAR_P2_10.md).
+**Xaddidaad:** hostname `10.0.2.100.nip.io` probe-gii hore wuu fashilmay markii mar labaad la wacay EFI_HTTP `Configure` (`Already started`, `stage=4`); taasi ma ahayn caddayn DNS failure. P2.11 wuxuu hagaajiyey lifecycle-ka Configure-once, waxaana la xaqiijiyey laba numeric-IP GET oo xiriir ah oo fixture-ka gaaray kuna soo celiyey marker-kooda. Markii hostname probe-ga dib loo tijaabiyey, `EFI_HTTP.Request` wuxuu soo celiyey `Not Found` (`stage=5`, `HTTP=0`), fixture-kuna ma arag request hostname cusub. Pcap-ku wuxuu lahaa eber port 53 ah iyo eber TCP session cusub oo hostname-ka ah, sidaas darteed sababtu wali lagama kala saarin DNS lookup iyo diidmada/maqnaanshaha transport-ka. DNS4 Service Binding waa la helay, laakiin `EFI_DNS4` protocol instance lama helin; child-instance creation iyo `HostNameToIp` wali lama tijaabin. Numeric-IP GET-gu wuxuu ku koobnaa fixture maxalli ah; Internet guud lama tijaabin. HTTPS/TLS lama hirgelin ama lama tijaabin. Faahfaahinta: [HORUMAR P2.10](HORUMAR_P2_10.md), [HORUMAR P2.11](HORUMAR_P2_11.md), iyo [release record](PHASE2_RELEASE.md).
+
+### P2.11 — Dib-u-isticmaalka EFI_HTTP iyo hostname diagnosis *(dib-u-isticmaalka waa la xaqiijiyey; hostname diagnosis wali socda)*
+
+EFI_HTTP hal mar oo keliya configure-garee, kadibna u isticmaal dhowr Request/Response oo isku xiga; ha ugu yeerin Configure mar kale iyadoo session-ku bilowday. Regression-ka laba numeric-IP GET ah waa la hirgeliyey, labaduna fixture-ka way gaareen oo marker-ka way soo celiyeen. Hostname probe-ga dib loo tijaabiyey wuxuu ku dhacay EFI_HTTP `Request` oo soo celiyey `Not Found` (`stage=5`, `HTTP=0`); fixture-ku ma arag request hostname cusub. Pcap-ku ma lahayn DNS port 53 traffic ama TCP connection hostname cusub, sidaas darteed sababta wali lama kala saarin. Loader-ku wuxuu helay DNS4 Service Binding laakiin ma helin `EFI_DNS4` protocol instance. Tallaabada xigta waa in la tijaabiyo abuurista DNS4 child instance, `Configure`, iyo `HostNameToIp` ka hor go'aan native resolver.
+
+**Xaaladda aqbalaadda:** qaybta session reuse way gudubtay: labada sequential numeric-IP GET waxay gaareen fixture-ka, marker-koodana waa la akhriyey. Qaybta hostname diagnosis wali ma gudbin, maaddaama `EFI_HTTP.Request` `Not Found` ku dhammaaday, pcap-kuna aanu muujin DNS ama hostname TCP. Hostname resolution lama sheeganayo ilaa hostname fixture request iyo marker la arko. Internet guud iyo HTTPS/TLS weli waa xuduud ka baxsan P2.11.
 
 ## Immediate work queue
 
@@ -88,7 +94,8 @@ UEFI loader-ku wuxuu tirinayaa handles-ka EFI Simple Network Protocol (SNP), wux
 7. P2.7 is complete: BIOS `.text`/`.rodata` are supervisor read-only under CR0.WP, an intentional write fault is precisely recovered, and process-space permissions are checked.
 8. P2.8 is complete: the BIOS default uses `-Os`, the kernel is 47,609/61,440 bytes, and the separately versioned P2.8 UTM ZIP passed checksum and boot tests. The P2.6 and Phase 1 archives remain unchanged.
 9. P2.9 waa complete: FSH ring-3 wuxuu tijaabiyaa store-to-code; kernel-ku wuxuu soo celiyaa oo keliya fault-ka si sax ah u waafaqa, wuxuuna diidaa near-matches. QEMU/validator tests way gudbeen; archives-kii hore waa la ilaaliyey.
-10. P2.10 wali waa socda: capability audit-ka SNP/HTTP waa la xaqiijiyey, laakiin OVMF-ga la tijaabiyey ma bixin EFI_HTTP; live DNS/HTTP fixture wali lama samayn. Hel firmware awood u leh ama qorshee backend native oo tijaabooyin leh. HTTPS lama sheegan doono ilaa TLS, entropy iyo certificate validation la naqshadeeyo lana tijaabiyo. Himilada luqadaha, akoonnada shakhsiga ah iyo desktop-ka UTM waxaa lagu diiwaangeliyey [roadmap-ka Somali-ga](ROADMAP_FADALWATCH_SO.md).
+10. P2.10 waa dhammaaday xadka la qeexay: DHCP iyo numeric-IP plaintext GET-ga fixture maxalliga ah waa la xaqiijiyey; hostname/DNS, Internet guud iyo HTTPS lama xaqiijin.
+11. P2.11 session reuse-ku waa la xaqiijiyey: labada numeric-IP GET ee xiriirka ah waxay soo celiyeen marker-ka. DNS4 Service Binding waa la helay, balse protocol instance lama helin; hostname probe-ga `EFI_HTTP.Request` ayuu `Not Found` ku fashilmay, pcap-kuna DNS/hostname TCP ma muujin. Xiga waa tijaabada DNS4 child-instance/`HostNameToIp`; hostname, Internet guud iyo HTTPS lama sheeganayo. Faahfaahinta ku jirta [HORUMAR P2.11](HORUMAR_P2_11.md). Himilada luqadaha, akoonnada shakhsiga ah iyo desktop-ka UTM waxaa lagu diiwaangeliyey [roadmap-ka Somali-ga](ROADMAP_FADALWATCH_SO.md).
 
 ## Out of scope for this plan
 

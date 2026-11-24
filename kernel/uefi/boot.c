@@ -75,6 +75,12 @@ static EFI_GUID gFadalHttpBindingGuid = {
 static EFI_GUID gFadalSimpleNetworkGuid = EFI_SIMPLE_NETWORK_PROTOCOL_GUID;
 static EFI_GUID gFadalFileInfoGuid = EFI_FILE_INFO_ID;
 static EFI_GUID gFadalRngProtocolGuid = EFI_RNG_PROTOCOL_GUID;
+static EFI_GUID gFadalDns4ProtocolGuid = {
+    0xae3d28cc, 0xe05b, 0x4fa1, {0xa0, 0x11, 0x7e, 0xb5, 0x5a, 0x3f, 0x14, 0x01}
+};
+static EFI_GUID gFadalDns4BindingGuid = {
+    0xb625b186, 0xe063, 0x44f7, {0x89, 0x05, 0x6a, 0x74, 0xdc, 0x6f, 0x52, 0xb4}
+};
 static EFI_GUID gFadalIp4Config2Guid = {
     0x5b446ed1, 0xe30b, 0x4faa, {0x87, 0x1a, 0x36, 0x54, 0xec, 0xa3, 0x60, 0x80}
 };
@@ -121,6 +127,7 @@ static EFI_HANDLE g_fadal_http_child;
 static FADAL_IP4_CONFIG2_PROTOCOL *g_fadal_ip4_config2;
 static EFI_EVENT g_fadal_http_request_event;
 static EFI_EVENT g_fadal_http_response_event;
+static BOOLEAN g_fadal_http_configured;
 static volatile BOOLEAN g_fadal_http_request_done;
 static volatile BOOLEAN g_fadal_http_response_done;
 static volatile UINT32 g_fadal_http_callback_count;
@@ -607,9 +614,13 @@ static fadal_net_u32 fadal_http_download(const char *url, const char *name) {
     status = uefi_call_wrapper(BS->AllocatePool, 3, EfiBootServicesData, buffer_size, &buffer);
     if (EFI_ERROR(status)) goto cleanup;
     response_message.Body = buffer;
-    failure_stage = 4;
-    status = uefi_call_wrapper(g_fadal_http->Configure, 2, g_fadal_http, &config_data);
-    if (EFI_ERROR(status)) goto cleanup;
+    if (!g_fadal_http_configured) {
+        failure_stage = 4;
+        status = uefi_call_wrapper(g_fadal_http->Configure, 2, g_fadal_http,
+                                   &config_data);
+        if (EFI_ERROR(status)) goto cleanup;
+        g_fadal_http_configured = TRUE;
+    }
     failure_stage = 5;
     status = uefi_call_wrapper(g_fadal_http->Request, 2, g_fadal_http, &request_token);
     if (EFI_ERROR(status)) goto cleanup;
@@ -912,9 +923,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
     EFI_LOADED_IMAGE *loaded_image = NULL;
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *filesystem = NULL;
     EFI_FILE_HANDLE root = NULL;
-    FADAL_SERVICE_BINDING *http_binding = NULL;
-    EFI_STATUS status;
     VOID *rng_protocol = NULL;
+    FADAL_SERVICE_BINDING *http_binding = NULL;
+    VOID *dns4_protocol = NULL;
+    VOID *dns4_binding = NULL;
+    EFI_STATUS status;
     VOID *payload = NULL;
     UINTN payload_size = 0;
     UINTN payload_memory_size = 0;
@@ -989,6 +1002,19 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
                                &rng_protocol);
     Print(L"UEFI network audit: EFI_RNG protocol=%s\r\n",
           !EFI_ERROR(status) && rng_protocol != NULL ? L"available" : L"unavailable");
+    status = uefi_call_wrapper(BS->LocateProtocol, 3, &gFadalDns4BindingGuid, NULL,
+                               &dns4_binding);
+    if (EFI_ERROR(status)) dns4_binding = NULL;
+    Print(L"UEFI network audit: DNS4 service binding=%s handles=%lu\r\n",
+          dns4_binding != NULL ? L"available" : L"unavailable",
+          fadal_protocol_handle_count(&gFadalDns4BindingGuid));
+    status = uefi_call_wrapper(BS->LocateProtocol, 3, &gFadalDns4ProtocolGuid, NULL,
+                               &dns4_protocol);
+    Print(L"UEFI network audit: EFI_DNS4 protocol=%s status=%r\r\n",
+          !EFI_ERROR(status) && dns4_protocol != NULL ? L"available" : L"unavailable",
+          status);
+    services.dns4_binding_available = dns4_binding != NULL;
+    services.dns4_protocol_available = !EFI_ERROR(status) && dns4_protocol != NULL;
     g_fadal_http = NULL;
     g_fadal_http_child = NULL;
     g_fadal_http_binding_available = FALSE;

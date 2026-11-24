@@ -86,26 +86,41 @@ the kernel and 3,873/4,096 bytes for FSH.BIN. No new UTM ZIP was generated and
 existing release archives were not changed. See [P2.9 progress](docs/HORUMAR_P2_9.md)
 and [the Somali product roadmap](docs/ROADMAP_FADALWATCH_SO.md).
 
-**P2.10 in progress:** `make -C kernel/uefi test-network-audit` passed under
-QEMU 8.2.2/OVMF with `e1000` and `restrict=on`. Three SNP handles were present;
-`LocateProtocol(EFI_HTTP)` returned `Not Found`, while HTTP Service Binding,
-`CreateChild`, and `OpenProtocol` succeeded, providing an EFI_HTTP child. DHCP
-acquired station `10.0.2.15/24`. A bounded numeric-IP plaintext GET to the local
-`guestfwd` fixture returned and saved `FADAL_UEFI_HTTP_FIXTURE_OK`. A separate
-`10.0.2.100.nip.io` hostname attempt failed and the fixture saw no request; this
-does not distinguish DNS from connection failure, so DNS/hostname remains
-unverified. General Internet and HTTPS/TLS were not tested. Earlier UTM archives
-were not changed. A new [P2.10 UTM candidate](FadalOS-Phase2.10-UTM-iOS.zip) is 161,481
-bytes with SHA-256 `87ec98d8163da8ae0653fb7f615473452ad4b152a1617d21174bb94482b10cc9`.
-Its packaging checks passed; the extracted UEFI disk booted under OVMF and passed
-the DHCP/local-fixture regression, while the BIOS disk matched the QEMU-tested
-image byte-for-byte. Earlier Phase 1/P2.5/P2.6/P2.8 archives remain unchanged.
-`scripts/validate-repo.sh --uefi` also passed, including BIOS smoke/size/memory-
-window checks and the UEFI clean build; the network boot and System framebuffer
-inspection passed separately. See [P2.10 progress](docs/HORUMAR_P2_10.md). Next: only mark
-hostname resolution verified if a separate hostname request reaches the same
-fixture and returns its marker. Do not claim HTTPS until TLS, entropy, and
-certificate validation are implemented and tested.
+**P2.10 complete for its scoped milestone (hostname remains unverified):**
+`make -C kernel/uefi test-network-audit` passed under QEMU/OVMF with `e1000` and
+`restrict=on`. Three SNP handles were present; `LocateProtocol(EFI_HTTP)` returned
+`Not Found`, while HTTP Service Binding, `CreateChild`, and `OpenProtocol`
+succeeded, providing an EFI_HTTP child. DHCP acquired station `10.0.2.15/24`.
+A bounded numeric-IP plaintext GET to the local `guestfwd` fixture returned and
+saved `FADAL_UEFI_HTTP_FIXTURE_OK`. The initial hostname attempt failed when
+`EFI_HTTP.Configure` returned `Already started` at stage 4; it did not establish
+anything about DNS. General Internet and HTTPS/TLS were not tested. Earlier UTM
+archives were not changed. The [P2.10 UTM candidate](FadalOS-Phase2.10-UTM-iOS.zip)
+is 161,481 bytes with SHA-256
+`87ec98d8163da8ae0653fb7f615473452ad4b152a1617d21174bb94482b10cc9`. Its
+packaging checks passed; the extracted UEFI disk booted under OVMF and passed the
+DHCP/local-fixture regression, while the BIOS disk matched the QEMU-tested image
+byte-for-byte. Earlier Phase 1/P2.5/P2.6/P2.8 archives remain unchanged. Package
+and release record are pushed in commit `6f10c93`. See
+[P2.10 progress](docs/HORUMAR_P2_10.md).
+
+**P2.11 current status:** configure-once was added for the EFI_HTTP child and the
+regression now verifies two sequential numeric-IP GETs; both reached the local
+fixture and returned `FADAL_UEFI_HTTP_FIXTURE_OK`. OVMF reports DNS4 Service
+Binding available but `EFI_DNS4` protocol instance unavailable. The repeated
+`10.0.2.100.nip.io` hostname probe now fails at `EFI_HTTP.Request` with
+`stage=5 status=Not Found HTTP=0`; the fixture saw no new hostname request. The
+30-frame QEMU pcap contains six DHCP UDP frames and no UDP/TCP port 53 or hostname
+TCP session. This does not distinguish an internal DNS failure from an HTTP
+request/transport failure. The System framebuffer was inspected at
+`kernel/uefi/out/network-audit-p2.11-system.png`; the pcap is at
+`kernel/uefi/out/network-audit-p2.11.pcap`. Next, create a DNS4 child through the
+available Service Binding, configure it, and test `HostNameToIp` separately
+before deciding whether a native DNS resolver is required. Hostname/DNS, general
+Internet, and HTTPS/TLS remain unverified. Do not overwrite P2.10 or any earlier
+versioned UTM archive. See [P2.11 progress](docs/HORUMAR_P2_11.md) for commands,
+limits, and source references; the P2.10 release hash remains
+`87ec98d8163da8ae0653fb7f615473452ad4b152a1617d21174bb94482b10cc9`.
 
 **Files** ee Start hadda waxa uu furaa browser framebuffer ah oo adeegsada
 home-list iyo read callbacks-ka ESP. Wuxuu taxaa `/home/root`, wuxuu geli karaa

@@ -28,6 +28,8 @@ typedef struct {
     fadal_home_mkdir_fn home_mkdir;
     fadal_net_u32 simple_network_available;
     fadal_net_u32 http_binding_available;
+    fadal_net_u32 dns4_binding_available;
+    fadal_net_u32 dns4_protocol_available;
 } fadal_uefi_services;
 
 #define FADAL_HTTP_OK 0

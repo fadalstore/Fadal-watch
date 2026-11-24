@@ -33,8 +33,8 @@ def wait_for_any_text(path: Path, texts: tuple[str, ...], start: int,
                       timeout: float) -> str | None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        output = path.read_text(errors="replace") if path.exists() else ""
-        recent = output[start:]
+        data = path.read_bytes() if path.exists() else b""
+        recent = data[start:].decode(errors="replace")
         for text in texts:
             if text in recent:
                 return text
@@ -119,6 +119,8 @@ def main() -> int:
                         help="optional hostname URL for a separate fixture probe; failures remain unverified")
     parser.add_argument("--screenshot", type=Path,
                         default=root / "kernel/uefi/out/network-audit-system.ppm")
+    parser.add_argument("--pcap", type=Path, default=None,
+                        help="optional QEMU network packet capture for DNS/transport diagnosis")
     parser.add_argument("--timeout", type=float, default=25.0)
     args = parser.parse_args()
 
@@ -133,6 +135,9 @@ def main() -> int:
 
     args.screenshot.parent.mkdir(parents=True, exist_ok=True)
     args.screenshot.unlink(missing_ok=True)
+    if args.pcap is not None:
+        args.pcap.parent.mkdir(parents=True, exist_ok=True)
+        args.pcap.unlink(missing_ok=True)
     with tempfile.TemporaryDirectory(prefix="fadal-uefi-net-audit-") as temporary:
         temp = Path(temporary)
         image = temp / "network-audit.img"
@@ -160,6 +165,9 @@ def main() -> int:
             "-global", "isa-debugcon.iobase=0x402",
             "-no-reboot", "-no-shutdown",
         ]
+        if args.pcap is not None:
+            command.extend(["-object",
+                            f"filter-dump,id=fadal_pcap,netdev=net0,file={args.pcap.resolve()}"])
         if args.virtio_rng:
             command.extend(["-device", "virtio-rng-pci"])
         if args.disable_option_rom:
@@ -178,6 +186,8 @@ def main() -> int:
             required = (
                 "UEFI network audit: HTTP service binding=",
                 "UEFI network audit: EFI_RNG protocol=",
+                "UEFI network audit: DNS4 service binding=",
+                "UEFI network audit: EFI_DNS4 protocol=",
                 "UEFI network audit: EFI_HTTP LocateProtocol status=",
                 "UEFI network audit: EFI_HTTP protocol=",
                 "hostname lookup delegated to EFI_HTTP when available",
@@ -194,6 +204,10 @@ def main() -> int:
             http_available = "UEFI network audit: EFI_HTTP protocol=available" in serial
             binding_available = "UEFI network audit: HTTP service binding=available" in serial
             rng_available = "UEFI network audit: EFI_RNG protocol=available" in serial
+            dns4_binding_available = (
+                "UEFI network audit: DNS4 service binding=available" in serial)
+            dns4_protocol_available = (
+                "UEFI network audit: EFI_DNS4 protocol=available" in serial)
             http_locate_status = diagnostic_value(
                 serial, "UEFI network audit: EFI_HTTP LocateProtocol status=")
             http_child_status = diagnostic_value(
@@ -207,7 +221,7 @@ def main() -> int:
             click_mouse(process, mouse, 640, 400)
             send_text(process, "net", serial_log)
             serial = wait_for_text(serial_log,
-                                   "network: hostname lookup delegated to EFI_HTTP when available; native DNS absent",
+                                   "network: native Fadal64 DNS client not implemented",
                                    args.timeout)
             expected_snp = ("network: UEFI SNP interface exposed" if interface_count != 0
                             else "network: UEFI SNP interface not exposed")
@@ -215,7 +229,14 @@ def main() -> int:
                              else "network: UEFI HTTP protocol unavailable")
             expected_binding = ("network: HTTP service binding available" if binding_available
                                 else "network: HTTP service binding unavailable")
-            for expected in (expected_snp, expected_http, expected_binding):
+            expected_dns4_binding = (
+                "network: EFI DNS4 service binding available" if dns4_binding_available
+                else "network: EFI DNS4 service binding unavailable")
+            expected_dns4_protocol = (
+                "network: EFI DNS4 protocol available" if dns4_protocol_available
+                else "network: EFI DNS4 protocol unavailable")
+            for expected in (expected_snp, expected_http, expected_binding,
+                             expected_dns4_binding, expected_dns4_protocol):
                 if expected not in serial:
                     raise RuntimeError(f"net command disagrees with loader audit; missing {expected!r}")
 
@@ -231,6 +252,40 @@ def main() -> int:
                 raise RuntimeError(f"{error}\nHTTP fixture log: {fixture_state}") from error
             send_text(process, f"cat {download_name}", serial_log)
             wait_for_text(serial_log, "FADAL_UEFI_HTTP_FIXTURE_OK", args.timeout)
+
+            second_download_name = "fadal-http-fixture-second.txt"
+            second_fixture_before = (fixture_log.read_bytes().count(b"request-line:")
+                                     if fixture_log.exists() else 0)
+            second_request_offset = serial_log.stat().st_size if serial_log.exists() else 0
+            send_text(process,
+                      f"download http://10.0.2.100/fixture.txt {second_download_name}",
+                      serial_log)
+            second_result = wait_for_any_text(
+                serial_log,
+                ("download: saved under /home/root", "download: failed"),
+                second_request_offset, args.timeout)
+            second_fixture_after = (fixture_log.read_bytes().count(b"request-line:")
+                                    if fixture_log.exists() else second_fixture_before)
+            if (second_result != "download: saved under /home/root" or
+                    second_fixture_after <= second_fixture_before):
+                fixture_state = (fixture_log.read_text(errors="replace")
+                                 if fixture_log.exists() else "fixture process not invoked")
+                raise RuntimeError("second sequential numeric-IP GET did not reach the fixture; "
+                                   f"result={second_result!r}\nHTTP fixture log: {fixture_state}")
+            second_read_offset = serial_log.stat().st_size if serial_log.exists() else 0
+            send_text(process, f"cat {second_download_name}", serial_log)
+            second_marker = wait_for_any_text(
+                serial_log, ("FADAL_UEFI_HTTP_FIXTURE_OK",),
+                second_read_offset, args.timeout)
+            if second_marker is None:
+                serial_state = (serial_log.read_text(errors="replace")
+                                if serial_log.exists() else "serial log unavailable")
+                fixture_state = (fixture_log.read_text(errors="replace")
+                                 if fixture_log.exists() else "fixture log unavailable")
+                raise RuntimeError("second sequential GET did not return the fixture marker"
+                                   f"\nRecent serial output: {serial_state[-2400:]}"
+                                   f"\nHTTP fixture log: {fixture_state}")
+            print("PASS: a second sequential numeric-IP HTTP GET reached the fixture and returned its marker.")
 
             hostname_probe_passed = False
             if args.hostname_url:
@@ -285,6 +340,9 @@ def main() -> int:
             print(f"UEFI network detail: EFI_RNG={'available' if rng_available else 'unavailable'}, "
                   f"EFI_HTTP LocateProtocol={http_locate_status}, "
                   f"CreateChild={http_child_status}, OpenProtocol={http_open_status}")
+            print(f"UEFI DNS4 protocol audit: service binding="
+                  f"{'available' if dns4_binding_available else 'unavailable'}, "
+                  f"protocol instance={'available' if dns4_protocol_available else 'unavailable'}")
             final_serial = serial_log.read_text(errors="replace")
             station_line = next((line.strip() for line in final_serial.splitlines()
                                  if "UEFI IPv4 DHCP station=" in line), "not reported")
@@ -297,9 +355,18 @@ def main() -> int:
                     print("NOTE: only this hostname-to-local-fixture path was confirmed; general DNS, Internet access, and HTTPS/TLS remain unverified.")
                 else:
                     print("NOTE: hostname resolution/reachability remains unverified; Internet access and HTTPS/TLS are also unverified.")
+                    diagnostics = [line.strip() for line in final_serial.splitlines()
+                                   if "UEFI HTTP GET diagnostic:" in line]
+                    if diagnostics:
+                        print("Hostname HTTP failure detail: " + diagnostics[-1].split(
+                            "UEFI HTTP GET diagnostic:", 1)[1].strip())
+                    else:
+                        print("Hostname HTTP failure detail: no EFI_HTTP failure diagnostic was reported.")
             else:
                 print("NOTE: the GET used a numeric address; DNS, Internet access, and HTTPS/TLS remain unverified.")
             print(f"System panel capture: {args.screenshot.resolve()}")
+            if args.pcap is not None:
+                print(f"Network packet capture: {args.pcap.resolve()}")
         finally:
             if process.poll() is None:
                 process.terminate()

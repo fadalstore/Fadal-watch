@@ -188,6 +188,9 @@ def main() -> int:
                 "UEFI network audit: EFI_RNG protocol=",
                 "UEFI network audit: DNS4 service binding=",
                 "UEFI network audit: EFI_DNS4 protocol=",
+                "UEFI network audit: EFI_DNS4 instance=",
+                "UEFI network audit: EFI_DNS4 Configure status=",
+                "UEFI network audit: EFI_DNS4 HostNameToIp submit status=",
                 "UEFI network audit: EFI_HTTP LocateProtocol status=",
                 "UEFI network audit: EFI_HTTP protocol=",
                 "hostname lookup delegated to EFI_HTTP when available",
@@ -207,7 +210,7 @@ def main() -> int:
             dns4_binding_available = (
                 "UEFI network audit: DNS4 service binding=available" in serial)
             dns4_protocol_available = (
-                "UEFI network audit: EFI_DNS4 protocol=available" in serial)
+                "UEFI network audit: EFI_DNS4 instance=available" in serial)
             http_locate_status = diagnostic_value(
                 serial, "UEFI network audit: EFI_HTTP LocateProtocol status=")
             http_child_status = diagnostic_value(
@@ -216,6 +219,14 @@ def main() -> int:
                 serial, "UEFI network audit: EFI_HTTP OpenProtocol status=")
             if binding_available and not http_available and http_child_status == "not reported":
                 raise RuntimeError("HTTP Service Binding was present but CreateChild status was not reported")
+            dns4_child_status = diagnostic_value(
+                serial, "UEFI network audit: EFI_DNS4 CreateChild status=")
+            dns4_open_status = diagnostic_value(
+                serial, "UEFI network audit: EFI_DNS4 OpenProtocol status=")
+            if dns4_binding_available and not dns4_protocol_available:
+                raise RuntimeError("DNS4 Service Binding was present but no final DNS4 instance was reported")
+            if dns4_binding_available and dns4_child_status == "not reported":
+                raise RuntimeError("DNS4 Service Binding was present but CreateChild status was not reported")
 
             mouse = [640, 400]
             click_mouse(process, mouse, 640, 400)
@@ -342,7 +353,8 @@ def main() -> int:
                   f"CreateChild={http_child_status}, OpenProtocol={http_open_status}")
             print(f"UEFI DNS4 protocol audit: service binding="
                   f"{'available' if dns4_binding_available else 'unavailable'}, "
-                  f"protocol instance={'available' if dns4_protocol_available else 'unavailable'}")
+                  f"protocol instance={'available' if dns4_protocol_available else 'unavailable'}, "
+                  f"CreateChild={dns4_child_status}, OpenProtocol={dns4_open_status}")
             final_serial = serial_log.read_text(errors="replace")
             station_line = next((line.strip() for line in final_serial.splitlines()
                                  if "UEFI IPv4 DHCP station=" in line), "not reported")

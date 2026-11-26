@@ -83,6 +83,10 @@ EFI_HTTP hal mar oo keliya configure-garee, kadibna u isticmaal dhowr Request/Re
 
 **Xaaladda aqbalaadda:** qaybta session reuse way gudubtay: labada sequential numeric-IP GET waxay gaareen fixture-ka, marker-koodana waa la akhriyey. Qaybta hostname diagnosis wali ma gudbin, maaddaama `EFI_HTTP.Request` `Not Found` ku dhammaaday, pcap-kuna aanu muujin DNS ama hostname TCP. Hostname resolution lama sheeganayo ilaa hostname fixture request iyo marker la arko. Internet guud iyo HTTPS/TLS weli waa xuduud ka baxsan P2.11.
 
+### P2.12 — DNS4 child instance iyo HostNameToIp audit *(child/configure/query submission waa la xaqiijiyey; DNS transport wali lama xaqiijin)*
+
+Loader-ku hadda wuxuu ka sameeyaa DNS4 Service Binding child protocol instance, wuxuu furaa `EFI_DNS4_PROTOCOL`, wuxuu ku sameeyaa `Configure` iyadoo adeegsanaysa DHCP/default settings, kadibna wuxuu diraa `HostNameToIp`. QEMU/OVMF wuxuu xaqiijiyey child creation, `OpenProtocol`, Configure, iyo query submission. Hostname HTTP probe-gu weli wuxuu ku dhammaaday `EFI_HTTP.Request` `Not Found`, fixture-kuna request ma helin; P2.12 pcap-kuna wuxuu lahaa eber port-53 packets. Sidaas darteed DNS lookup completion iyo DNS transport lama xaqiijin, mana jiro native resolver ama HTTPS/TLS wali. Faahfaahinta: [HORUMAR P2.12](HORUMAR_P2_12.md).
+
 ## Immediate work queue
 
 1. P2.1 is complete: the UEFI `history` output and exact-order QEMU regression are in place.

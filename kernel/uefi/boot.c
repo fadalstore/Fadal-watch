@@ -113,6 +113,47 @@ struct _FADAL_SERVICE_BINDING {
     FADAL_CREATE_CHILD CreateChild;
     FADAL_DESTROY_CHILD DestroyChild;
 };
+typedef struct {
+    UINTN DnsServerListCount;
+    EFI_IPv4_ADDRESS *DnsServerList;
+    BOOLEAN UseDefaultSetting;
+    BOOLEAN EnableDnsCache;
+    UINT8 Protocol;
+    EFI_IPv4_ADDRESS StationIp;
+    EFI_IPv4_ADDRESS SubnetMask;
+    UINT16 LocalPort;
+    UINT32 RetryCount;
+    UINT32 RetryInterval;
+} FADAL_DNS4_CONFIG_DATA;
+typedef struct {
+    UINT32 IpCount;
+    EFI_IPv4_ADDRESS *IpList;
+} FADAL_DNS4_HOST_TO_ADDR_DATA;
+typedef struct {
+    EFI_EVENT Event;
+    EFI_STATUS Status;
+    UINT32 RetryCount;
+    UINT32 RetryInterval;
+    union {
+        FADAL_DNS4_HOST_TO_ADDR_DATA *H2AData;
+        VOID *Other;
+    } RspData;
+} FADAL_DNS4_COMPLETION_TOKEN;
+typedef struct _FADAL_DNS4_PROTOCOL FADAL_DNS4_PROTOCOL;
+typedef EFI_STATUS (EFIAPI *FADAL_DNS4_CONFIGURE)(FADAL_DNS4_PROTOCOL *, FADAL_DNS4_CONFIG_DATA *);
+typedef EFI_STATUS (EFIAPI *FADAL_DNS4_HOST_NAME_TO_IP)(FADAL_DNS4_PROTOCOL *, CHAR16 *,
+                                                         FADAL_DNS4_COMPLETION_TOKEN *);
+typedef EFI_STATUS (EFIAPI *FADAL_DNS4_POLL)(FADAL_DNS4_PROTOCOL *);
+struct _FADAL_DNS4_PROTOCOL {
+    VOID *GetModeData;
+    FADAL_DNS4_CONFIGURE Configure;
+    FADAL_DNS4_HOST_NAME_TO_IP HostNameToIp;
+    VOID *IpToHostName;
+    VOID *GeneralLookUp;
+    VOID *UpdateDnsCache;
+    FADAL_DNS4_POLL Poll;
+    VOID *Cancel;
+};
 typedef void (*FADAL_UEFI_ENTRY)(FADAL_FRAMEBUFFER *, fadal_uefi_services *);
 
 static void __attribute__((unused)) debug_marker(const char *text) {
@@ -128,6 +169,8 @@ static FADAL_IP4_CONFIG2_PROTOCOL *g_fadal_ip4_config2;
 static EFI_EVENT g_fadal_http_request_event;
 static EFI_EVENT g_fadal_http_response_event;
 static BOOLEAN g_fadal_http_configured;
+static FADAL_DNS4_PROTOCOL *g_fadal_dns4;
+static EFI_HANDLE g_fadal_dns4_child;
 static volatile BOOLEAN g_fadal_http_request_done;
 static volatile BOOLEAN g_fadal_http_response_done;
 static volatile UINT32 g_fadal_http_callback_count;
@@ -465,6 +508,75 @@ static UINTN fadal_protocol_handle_count(EFI_GUID *protocol_guid) {
     if (EFI_ERROR(status)) return 0;
     if (handles != NULL) uefi_call_wrapper(BS->FreePool, 1, handles);
     return count;
+}
+
+static EFI_STATUS fadal_dns4_probe(FADAL_SERVICE_BINDING *binding,
+                                   EFI_HANDLE image,
+                                   BOOLEAN *lookup_succeeded) {
+    FADAL_DNS4_CONFIG_DATA config = {0};
+    FADAL_DNS4_COMPLETION_TOKEN token = {0};
+    FADAL_DNS4_HOST_TO_ADDR_DATA result = {0};
+    CHAR16 hostname[] = L"10.0.2.100.nip.io";
+    EFI_STATUS status;
+    UINTN attempt;
+    if (lookup_succeeded == NULL) return EFI_INVALID_PARAMETER;
+    *lookup_succeeded = FALSE;
+    if (g_fadal_dns4 == NULL && binding == NULL) return EFI_NOT_FOUND;
+    if (g_fadal_dns4 == NULL) {
+        status = uefi_call_wrapper(binding->CreateChild, 2, binding,
+                                   &g_fadal_dns4_child);
+        Print(L"UEFI network audit: EFI_DNS4 CreateChild status=%r\r\n", status);
+        if (EFI_ERROR(status)) return status;
+        status = uefi_call_wrapper(BS->OpenProtocol, 6, g_fadal_dns4_child,
+                                   &gFadalDns4ProtocolGuid, (VOID **)&g_fadal_dns4,
+                                   image, NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL);
+        Print(L"UEFI network audit: EFI_DNS4 OpenProtocol status=%r\r\n", status);
+        if (EFI_ERROR(status)) {
+            g_fadal_dns4 = NULL;
+            return status;
+        }
+    }
+    config.DnsServerListCount = 0;
+    config.DnsServerList = NULL;
+    config.UseDefaultSetting = TRUE;
+    config.EnableDnsCache = TRUE;
+    config.Protocol = 17;
+    config.LocalPort = 0;
+    config.RetryCount = 1;
+    config.RetryInterval = 2;
+    status = uefi_call_wrapper(g_fadal_dns4->Configure, 2, g_fadal_dns4, &config);
+    Print(L"UEFI network audit: EFI_DNS4 Configure status=%r (DHCP DNS)\r\n", status);
+    if (EFI_ERROR(status)) return status;
+    status = uefi_call_wrapper(BS->CreateEvent, 6, EVT_NOTIFY_SIGNAL, TPL_CALLBACK,
+                               NULL, NULL, &token.Event);
+    if (EFI_ERROR(status)) return status;
+    token.Status = EFI_NOT_READY;
+    token.RetryCount = 1;
+    token.RetryInterval = 2;
+    token.RspData.H2AData = &result;
+    status = uefi_call_wrapper(g_fadal_dns4->HostNameToIp, 3, g_fadal_dns4,
+                               hostname, &token);
+    Print(L"UEFI network audit: EFI_DNS4 HostNameToIp submit status=%r\r\n", status);
+    if (!EFI_ERROR(status)) {
+        for (attempt = 0; attempt < 8000 && token.Status == EFI_NOT_READY; attempt++) {
+            uefi_call_wrapper(g_fadal_dns4->Poll, 1, g_fadal_dns4);
+            uefi_call_wrapper(BS->Stall, 1, 1000);
+        }
+        Print(L"UEFI network audit: EFI_DNS4 HostNameToIp completion=%r addresses=%u\r\n",
+              token.Status, result.IpCount);
+        if (!EFI_ERROR(token.Status) && result.IpCount != 0 && result.IpList != NULL) {
+            UINT32 index;
+            *lookup_succeeded = TRUE;
+            for (index = 0; index < result.IpCount; index++) {
+                Print(L"UEFI DNS4 result=%u.%u.%u.%u\r\n",
+                      result.IpList[index].Addr[0], result.IpList[index].Addr[1],
+                      result.IpList[index].Addr[2], result.IpList[index].Addr[3]);
+            }
+        }
+    }
+    if (result.IpList != NULL) uefi_call_wrapper(BS->FreePool, 1, result.IpList);
+    uefi_call_wrapper(BS->CloseEvent, 1, token.Event);
+    return status;
 }
 
 static BOOLEAN fadal_ipv4_is_configured(const UINT8 address[4]) {
@@ -925,8 +1037,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
     EFI_FILE_HANDLE root = NULL;
     VOID *rng_protocol = NULL;
     FADAL_SERVICE_BINDING *http_binding = NULL;
-    VOID *dns4_protocol = NULL;
-    VOID *dns4_binding = NULL;
+    FADAL_DNS4_PROTOCOL *dns4_protocol = NULL;
+    FADAL_SERVICE_BINDING *dns4_binding = NULL;
     EFI_STATUS status;
     VOID *payload = NULL;
     UINTN payload_size = 0;
@@ -934,6 +1046,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
     UINT64 entry_offset = 0;
     FADAL_MEMORY_LAYOUT memory_layout;
     BOOLEAN has_memory_layout = FALSE;
+    BOOLEAN dns4_lookup_succeeded = FALSE;
     FADAL_UEFI_ENTRY entry;
     EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
     FADAL_FRAMEBUFFER framebuffer;
@@ -1009,12 +1122,25 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
           dns4_binding != NULL ? L"available" : L"unavailable",
           fadal_protocol_handle_count(&gFadalDns4BindingGuid));
     status = uefi_call_wrapper(BS->LocateProtocol, 3, &gFadalDns4ProtocolGuid, NULL,
-                               &dns4_protocol);
+                               (VOID **)&dns4_protocol);
     Print(L"UEFI network audit: EFI_DNS4 protocol=%s status=%r\r\n",
           !EFI_ERROR(status) && dns4_protocol != NULL ? L"available" : L"unavailable",
           status);
     services.dns4_binding_available = dns4_binding != NULL;
     services.dns4_protocol_available = !EFI_ERROR(status) && dns4_protocol != NULL;
+    g_fadal_dns4 = dns4_protocol;
+    g_fadal_dns4_child = NULL;
+    if (g_fadal_dns4 == NULL && dns4_binding != NULL) {
+        status = fadal_dns4_probe(dns4_binding, image, &dns4_lookup_succeeded);
+    } else if (g_fadal_dns4 != NULL) {
+        status = fadal_dns4_probe(NULL, image, &dns4_lookup_succeeded);
+    } else {
+        status = EFI_NOT_FOUND;
+    }
+    Print(L"UEFI network audit: EFI_DNS4 instance=%s lookup=%s\r\n",
+          g_fadal_dns4 != NULL ? L"available" : L"unavailable",
+          dns4_lookup_succeeded ? L"passed" : L"unverified");
+    services.dns4_protocol_available = g_fadal_dns4 != NULL;
     g_fadal_http = NULL;
     g_fadal_http_child = NULL;
     g_fadal_http_binding_available = FALSE;

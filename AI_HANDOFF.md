@@ -122,6 +122,16 @@ versioned UTM archive. See [P2.11 progress](docs/HORUMAR_P2_11.md) for commands,
 limits, and source references; the P2.10 release hash remains
 `87ec98d8163da8ae0653fb7f615473452ad4b152a1617d21174bb94482b10cc9`.
 
+**P2.12 current status:** the UEFI loader now creates a DNS4 child through the available
+Service Binding when `LocateProtocol(EFI_DNS4)` has no instance, opens the child,
+configures it with DHCP/default DNS settings, and submits a bounded `HostNameToIp`
+probe. QEMU/OVMF verified child creation, Configure, and query submission. The
+hostname HTTP probe still failed at `EFI_HTTP.Request` with `stage=5 status=Not Found
+HTTP=0`; the fixture saw no request and the P2.12 pcap contained zero port-53
+packets. DNS completion/transport, general Internet, and HTTPS/TLS remain unverified.
+The network audit now protects the final direct-or-child DNS4 instance state and
+captures `kernel/uefi/out/network-audit-p2.12.pcap`; see [P2.12 progress](docs/HORUMAR_P2_12.md).
+
 **Files** ee Start hadda waxa uu furaa browser framebuffer ah oo adeegsada
 home-list iyo read callbacks-ka ESP. Wuxuu taxaa `/home/root`, wuxuu geli karaa
 folder-hoosaadyo kana soo noqon karaa parent-ka, wuxuuna soo bandhigaa labada sadar

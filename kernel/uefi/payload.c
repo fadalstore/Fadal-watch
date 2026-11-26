@@ -1104,6 +1104,69 @@ static void desktop_app_render(void) {
     }
 }
 
+static void fb_line(u32 x0, u32 y0, u32 x1, u32 y1, u32 color) {
+    int dx = (int)x1 - (int)x0;
+    int dy = (int)y1 - (int)y0;
+    int absolute_dx = dx < 0 ? -dx : dx;
+    int absolute_dy = dy < 0 ? -dy : dy;
+    int sx = dx < 0 ? -1 : 1;
+    int sy = dy < 0 ? -1 : 1;
+    int error = absolute_dx - absolute_dy;
+    for (;;) {
+        fb_pixel(x0, y0, color);
+        if (x0 == x1 && y0 == y1) break;
+        {
+            int twice = error * 2;
+            if (twice > -absolute_dy) {
+                error -= absolute_dy;
+                x0 = (u32)((int)x0 + sx);
+            }
+            if (twice < absolute_dx) {
+                error += absolute_dx;
+                y0 = (u32)((int)y0 + sy);
+            }
+        }
+    }
+}
+
+static void desktop_draw_dragon(u32 cx, u32 cy) {
+    u32 glow = 0x004c83b8;
+    u32 bright = 0x00a7d8ee;
+    u32 hot = 0x00e6b85c;
+    u32 index;
+    /* A small symmetric mark that remains readable at the native 5x7 font scale. */
+    fb_fill(cx - 38, cy - 38, cx + 39, cy + 39, 0x001b3559);
+    fb_fill(cx - 31, cy - 31, cx + 32, cy + 32, 0x00243f6d);
+    fb_line(cx - 27, cy + 18, cx - 8, cy - 18, glow);
+    fb_line(cx + 27, cy + 18, cx + 8, cy - 18, glow);
+    fb_line(cx - 27, cy + 18, cx - 4, cy + 9, bright);
+    fb_line(cx + 27, cy + 18, cx + 4, cy + 9, bright);
+    fb_line(cx - 20, cy + 24, cx - 5, cy + 12, glow);
+    fb_line(cx + 20, cy + 24, cx + 5, cy + 12, glow);
+    fb_line(cx - 8, cy - 18, cx - 12, cy - 28, bright);
+    fb_line(cx + 8, cy - 18, cx + 12, cy - 28, bright);
+    fb_fill(cx - 9, cy - 17, cx + 10, cy + 11, bright);
+    fb_fill(cx - 5, cy - 23, cx + 6, cy - 17, bright);
+    fb_line(cx - 9, cy - 16, cx - 20, cy - 10, bright);
+    fb_line(cx + 9, cy - 16, cx + 20, cy - 10, bright);
+    fb_pixel(cx - 5, cy - 14, hot);
+    fb_pixel(cx + 4, cy - 14, hot);
+    fb_line(cx - 4, cy + 11, cx - 15, cy + 30, hot);
+    fb_line(cx + 4, cy + 11, cx + 15, cy + 30, hot);
+    for (index = 0; index < 4; index++) {
+        fb_line(cx - 15 + index * 3, cy + 30, cx - 19 + index * 3, cy + 35, hot);
+        fb_line(cx + 15 - index * 3, cy + 30, cx + 19 - index * 3, cy + 35, hot);
+    }
+}
+
+static void desktop_draw_launcher_card(u32 x, u32 y, const char *label,
+                                       const char *detail, u32 accent, int active) {
+    fb_fill(x, y, x + 184, y + 42, active ? 0x002d5f9b : 0x001d3558);
+    fb_fill(x, y, x + 4, y + 42, accent);
+    fb_text(x + 14, y + 8, label, 0x00ffffff, 1);
+    fb_text(x + 14, y + 23, detail, 0x0097aac8, 1);
+}
+
 static void desktop_render(void) {
     u32 width;
     u32 height;
@@ -1114,10 +1177,11 @@ static void desktop_render(void) {
     height = framebuffer->height;
     fb_fill(0, 0, width, height, 0x00111b33);
     fb_fill(0, 0, width, 34, 0x00233b67);
+    fb_fill(0, 33, width, 35, 0x004b83b3);
     fb_fill(0, height - 52, width, height, 0x0015223d);
     fb_fill(18, 58, width - 18, height - 72, 0x00182745);
     fb_fill(32, 78, width - 32, height - 92, 0x001c2f52);
-    fb_fill(52, 98, 250, 230, 0x00243f6d);
+    fb_fill(52, 98, 250, height - 108, 0x001b3559);
     fb_fill(66, 112, 236, 220, 0x002b4d80);
     if (terminal_open != 0 && terminal_minimized == 0) {
         u32 right = terminal_x + terminal_width;
@@ -1134,9 +1198,17 @@ static void desktop_render(void) {
             terminal_open != 0 && terminal_minimized == 0 ? 0x002d5f9b : 0x00243f6d);
     fb_text(18, 11, "FADAL OS", 0x00ffffff, 2);
     fb_text(width - 230, 12, desktop_status, 0x007ed6a7, 1);
-    fb_text(52, 126, "DESKTOP", 0x00d8eaff, 2);
-    fb_text(78, 146, "WELCOME", 0x00ffffff, 2);
-    fb_text(78, 166, "FADAL OS", 0x008dc5ff, 2);
+    desktop_draw_dragon(151, 166);
+    fb_text(78, 218, "FADAL OS", 0x00ffffff, 1);
+    fb_text(77, 231, "WORKSPACE", 0x007ed6a7, 1);
+    desktop_draw_launcher_card(54, 252, "TERMINAL", "SHELL SESSION", 0x00a7d8ee,
+                               terminal_open != 0 && terminal_minimized == 0);
+    desktop_draw_launcher_card(54, 300, "FILES", "PERSISTENT HOME", 0x007ed6a7,
+                               desktop_app == APP_FILES);
+    desktop_draw_launcher_card(54, 348, "SYSTEM", "KERNEL STATUS", 0x00e6b85c,
+                               desktop_app == APP_SYSTEM);
+    desktop_draw_launcher_card(54, 396, "BROWSER", "HTTP TEXT VIEW", 0x009a8de3,
+                               desktop_app == APP_BROWSER);
     fb_text(150, height - 33, "TERMINAL", 0x00ffffff, 1);
     fb_text(38, height - 33, "START", 0x00ffffff, 2);
     fb_text(width - 155, height - 31, "FADAL64", 0x0097aac8, 1);

@@ -65,3 +65,15 @@ Commit-ka source-ka `f97422e` waa la push-gareeyey `main`-ka GitHub. P2.5 (`7856
 `make -C kernel check`, `make -C kernel/uefi clean check payload`, iyo `scripts/validate-repo.sh --uefi` way gudbeen. `scripts/package-phase2-utm.sh` wuxuu xaqiijiyey ZIP integrity, gudaha image hashes, iyo byte equality-ga labada image; sidecar checksum-kuna wuu gudbay. BIOS image-ka la baakadeeyey wuxuu la mid yahay raw disk image-kii QEMU smoke test-ka gudbay. UEFI image-ka ZIP-ga laga soo saaray ayaa OVMF hoostiisa boot-gareeyey; `e1000` network audit-ku wuxuu xaqiijiyey DHCP `10.0.2.15/24` iyo GET-ga plaintext ee fixture maxalliga ah, waxaana la kormeeray System framebuffer-ka.
 
 Tani waa **candidate package** oo leh caddayn networking xaddidan. Hostname `10.0.2.100.nip.io` probe-kiisu wuu fashilmay, sababta DNS ama isku-xir si gooni ah looma kala saarin; DNS/hostname waa unverified. Internet guud iyo HTTPS/TLS lama tijaabin. Phase 1, P2.5, P2.6, iyo P2.8 archives-koodii waa la ilaaliyey, checksums-kooduna isma beddelin: Phase 1 `bd1b433309cce3671f9a206f56629db8d7db8268a0167a378696db705c362fab`, P2.5 `7856305f788f26ce93a4d407696615c9b51919224eb5ed7b15b2c8bbdc1365f5`, P2.6 `220d3f185298878a4fc05a076a383dc18f31020ef0f4f098e2b6b429660e3825`, iyo P2.8 `b2f421d86f641a9bbec185cc6a5189cbff4ce8d7b5246bec3eb6af0bd2ac151a`.
+
+
+## P2.12 — DNS4 child-path UTM candidate package (26 Nofeembar 2026)
+
+[UTM ZIP-ga P2.12](../FadalOS-Phase2.12-UTM-iOS.zip) waa 162,311 bytes, SHA-256-giisuna waa `7853f7de0890328d1ae71f0be19d9383331ca6b5f1831fbd1e216a066957111e`. Sidecar-ku waa [`FadalOS-Phase2.12-UTM-iOS.zip.sha256`](../FadalOS-Phase2.12-UTM-iOS.zip.sha256). Disk-image hashes-ka ku jira `SHA256SUMS` waa:
+
+- UEFI ESP: `8ced2690e0c391645ed3e1efdae742c141eec851e0e57411895a438225d9f559`
+- BIOS disk: `f4a8ee750ec4868e51f4423ebed6987544d04e433921be1d35d1de304c4635d7`
+
+P2.12 source commit-ka `60e48ce` wuxuu ku daray DNS4 Service Binding child creation, `OpenProtocol`, Configure, iyo bounded `HostNameToIp` submission marka direct DNS4 instance uusan jirin. BIOS iyo UEFI images-ka la baakadeeyey waa kuwa build/test-ka la xaqiijiyey. `unzip -t`, sidecar SHA-256, internal `SHA256SUMS`, iyo byte equality-ga labada image way gudbeen. README-ga gaarka ah ee package-ku waa [`docs/PHASE2.12_PACKAGE_README.md`](PHASE2.12_PACKAGE_README.md).
+
+QEMU/OVMF audit-ku wuxuu xaqiijiyey DHCP `10.0.2.15/24`, DNS4 child creation/OpenProtocol/Configure/query submission, iyo numeric-IP HTTP fixture GET. Hostname/DNS wali **lama xaqiijin**: probe-ku wuxuu ku fashilmay `EFI_HTTP.Request` (`stage=5 status=Not Found HTTP=0`), fixture-kuna ma helin hostname request, P2.12 pcap-kuna wuxuu lahaa eber port-53 packets. Internet guud iyo HTTPS/TLS lama tijaabin ama lama hirgelin. Phase 1, P2.5, P2.6, P2.8, iyo P2.10 archives-koodii iyo checksums-koodii lama taaban.

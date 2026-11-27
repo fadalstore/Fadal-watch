@@ -2,6 +2,7 @@
 #define FADAL_UEFI_NET_H
 
 typedef unsigned int fadal_net_u32;
+typedef unsigned char fadal_net_u8;
 
 typedef fadal_net_u32 (*fadal_http_download_fn)(const char *url, const char *name);
 typedef fadal_net_u32 (*fadal_home_list_fn)(const char *path, char *buffer,
@@ -30,6 +31,10 @@ typedef struct {
     fadal_net_u32 http_binding_available;
     fadal_net_u32 dns4_binding_available;
     fadal_net_u32 dns4_protocol_available;
+    fadal_net_u32 snp_interface_count;
+    fadal_net_u32 ipv4_configured;
+    fadal_net_u8 ipv4_address[4];
+    fadal_net_u8 ipv4_subnet_mask[4];
 } fadal_uefi_services;
 
 #define FADAL_HTTP_OK 0

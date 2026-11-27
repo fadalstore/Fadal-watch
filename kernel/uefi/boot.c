@@ -176,6 +176,10 @@ static volatile BOOLEAN g_fadal_http_response_done;
 static volatile UINT32 g_fadal_http_callback_count;
 static UINTN g_fadal_snp_interface_count;
 static BOOLEAN g_fadal_http_binding_available;
+static UINT8 g_fadal_ipv4_station[4];
+static UINT8 g_fadal_ipv4_subnet_mask[4];
+static BOOLEAN g_fadal_ipv4_configured;
+static fadal_uefi_services *g_fadal_services;
 static fadal_net_u32 fadal_home_path(const char *path, CHAR16 wide_path[128],
                                      int allow_empty) {
     UINTN input = 0;
@@ -558,6 +562,23 @@ static BOOLEAN fadal_ipv4_is_configured(const UINT8 address[4]) {
     return address[0] != 0 || address[1] != 0 || address[2] != 0 || address[3] != 0;
 }
 
+static void fadal_record_ipv4(const FADAL_IP4_CONFIG2_INTERFACE_INFO *interface_info) {
+    UINTN index;
+    if (interface_info == NULL || !fadal_ipv4_is_configured(interface_info->StationAddress)) return;
+    for (index = 0; index < 4; index++) {
+        g_fadal_ipv4_station[index] = interface_info->StationAddress[index];
+        g_fadal_ipv4_subnet_mask[index] = interface_info->SubnetMask[index];
+    }
+    g_fadal_ipv4_configured = TRUE;
+    if (g_fadal_services != NULL) {
+        g_fadal_services->ipv4_configured = 1U;
+        for (index = 0; index < 4; index++) {
+            g_fadal_services->ipv4_address[index] = g_fadal_ipv4_station[index];
+            g_fadal_services->ipv4_subnet_mask[index] = g_fadal_ipv4_subnet_mask[index];
+        }
+    }
+}
+
 static EFI_STATUS fadal_ip4_prepare_dhcp(void) {
     union {
         UINT64 alignment;
@@ -575,6 +596,7 @@ static EFI_STATUS fadal_ip4_prepare_dhcp(void) {
                                FADAL_IP4_CONFIG2_DATA_INTERFACE_INFO,
                                &data_size, interface_info);
     if (!EFI_ERROR(status) && fadal_ipv4_is_configured(interface_info->StationAddress)) {
+        fadal_record_ipv4(interface_info);
         Print(L"UEFI IPv4 station already configured: %u.%u.%u.%u\r\n",
               interface_info->StationAddress[0], interface_info->StationAddress[1],
               interface_info->StationAddress[2], interface_info->StationAddress[3]);
@@ -597,6 +619,7 @@ static EFI_STATUS fadal_ip4_prepare_dhcp(void) {
                                    FADAL_IP4_CONFIG2_DATA_INTERFACE_INFO,
                                    &data_size, interface_info);
         if (!EFI_ERROR(status) && fadal_ipv4_is_configured(interface_info->StationAddress)) {
+            fadal_record_ipv4(interface_info);
             Print(L"UEFI IPv4 DHCP station=%u.%u.%u.%u mask=%u.%u.%u.%u\r\n",
                   interface_info->StationAddress[0], interface_info->StationAddress[1],
                   interface_info->StationAddress[2], interface_info->StationAddress[3],
@@ -1019,6 +1042,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
     UINTN payload_size = 0;
     UINTN payload_memory_size = 0;
     UINT64 entry_offset = 0;
+    UINTN service_index;
     FADAL_MEMORY_LAYOUT memory_layout;
     BOOLEAN has_memory_layout = FALSE;
     BOOLEAN dns4_lookup_succeeded = FALSE;
@@ -1184,6 +1208,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
     services.home_mkdir = fadal_home_mkdir;
     services.simple_network_available = g_fadal_snp_interface_count != 0;
     services.http_binding_available = g_fadal_http_binding_available;
+    services.snp_interface_count = (fadal_net_u32)g_fadal_snp_interface_count;
+    services.ipv4_configured = g_fadal_ipv4_configured ? 1U : 0U;
+    for (service_index = 0; service_index < 4; service_index++) {
+        services.ipv4_address[service_index] = g_fadal_ipv4_station[service_index];
+        services.ipv4_subnet_mask[service_index] = g_fadal_ipv4_subnet_mask[service_index];
+    }
+    g_fadal_services = &services;
     entry = (FADAL_UEFI_ENTRY)((UINT8 *)payload + entry_offset);
     entry(&framebuffer, &services);
     return EFI_SUCCESS;

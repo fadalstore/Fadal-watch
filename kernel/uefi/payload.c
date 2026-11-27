@@ -959,6 +959,40 @@ static void browser_open_downloads(void) {
     desktop_redraw();
 }
 
+static u32 desktop_append_ipv4_octet(char *text, u32 offset, fadal_net_u8 value) {
+    if (value >= 100U) text[offset++] = (char)('0' + value / 100U);
+    if (value >= 10U) text[offset++] = (char)('0' + (value / 10U) % 10U);
+    text[offset++] = (char)('0' + value % 10U);
+    return offset;
+}
+
+static void desktop_format_ipv4(const fadal_net_u8 address[4], char *text) {
+    u32 offset = 0;
+    u32 index;
+    for (index = 0; index < 4; index++) {
+        offset = desktop_append_ipv4_octet(text, offset, address[index]);
+        if (index != 3) text[offset++] = '.';
+    }
+    text[offset] = '\0';
+}
+
+static void desktop_format_u32(u32 value, char *text) {
+    char reversed[10];
+    u32 count = 0;
+    u32 index;
+    if (value == 0) {
+        text[0] = '0';
+        text[1] = '\0';
+        return;
+    }
+    while (value != 0 && count < sizeof(reversed)) {
+        reversed[count++] = (char)('0' + value % 10U);
+        value /= 10U;
+    }
+    for (index = 0; index < count; index++) text[index] = reversed[count - index - 1U];
+    text[count] = '\0';
+}
+
 static void desktop_app_render(void) {
     u32 left;
     u32 top;
@@ -1058,6 +1092,20 @@ static void desktop_app_render(void) {
                     0x0097aac8, 1);
         }
     } else if (desktop_app == APP_SYSTEM) {
+        char ipv4_address[16];
+        char ipv4_mask[16];
+        char snp_count[12];
+        static const fadal_net_u8 zero_ipv4[4] = {0, 0, 0, 0};
+        const fadal_net_u8 *address = zero_ipv4;
+        const fadal_net_u8 *mask = zero_ipv4;
+        if (desktop_services != NULL) {
+            address = desktop_services->ipv4_address;
+            mask = desktop_services->ipv4_subnet_mask;
+        }
+        desktop_format_ipv4(address, ipv4_address);
+        desktop_format_ipv4(mask, ipv4_mask);
+        desktop_format_u32(desktop_services != NULL ? desktop_services->snp_interface_count : 0,
+                           snp_count);
         fb_text(left + 28, top + 78, "ARCHITECTURE: X86_64", 0x00d8eaff, 1);
         fb_text(left + 28, top + 112, "BOOT: UEFI FIRMWARE + GOP DISPLAY", 0x00d8eaff, 1);
         fb_text(left + 28, top + 146, "MEMORY: FDL64 V3 W X PROTECTION", 0x00d8eaff, 1);
@@ -1085,8 +1133,17 @@ static void desktop_app_render(void) {
                 desktop_services != NULL && desktop_services->dns4_protocol_available != 0 ?
                 "EFI DNS4 PROTOCOL INSTANCE: AVAILABLE" : "EFI DNS4 PROTOCOL INSTANCE: UNAVAILABLE",
                 0x00d8eaff, 1);
-        fb_text(left + 28, top + 384, "NATIVE FADAL64 DNS CLIENT: NOT IMPLEMENTED",
+        fb_text(left + 28, top + 384, "SNP INTERFACES:",
                 0x00d8eaff, 1);
+        fb_text(left + 170, top + 384, snp_count, 0x00d8eaff, 1);
+        fb_text(left + 28, top + 418,
+                desktop_services != NULL && desktop_services->ipv4_configured != 0 ?
+                "IPV4 DHCP LEASE: CONFIGURED" : "IPV4 DHCP LEASE: NOT CONFIGURED",
+                0x00d8eaff, 1);
+        fb_text(left + 28, top + 452, "IPV4 ADDRESS:", 0x007ed6a7, 1);
+        fb_text(left + 150, top + 452, ipv4_address, 0x00d8eaff, 1);
+        fb_text(left + 28, top + 476, "SUBNET MASK:", 0x007ed6a7, 1);
+        fb_text(left + 150, top + 476, ipv4_mask, 0x00d8eaff, 1);
         fb_text(left + 28, top + height - 32, "ESC TO CLOSE - TAB RETURNS TO TERMINAL", 0x0097aac8, 1);
     } else {
         u32 source = 0;

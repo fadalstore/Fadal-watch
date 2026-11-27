@@ -10,13 +10,15 @@ The UEFI loader now passes the following live network inventory to the Fadal64 p
 - IPv4 DHCP lease state.
 - The active IPv4 station address.
 - The active IPv4 subnet mask.
+- The IPv4 route-table entry count exposed by the firmware configuration protocol.
+- Bounded HTTP request and successful-save counters maintained by the FadalOS service bridge.
 - Existing HTTP binding, HTTP protocol, DNS4 binding, DNS4 protocol, persistent-home, and simple-network capability flags.
 
 When the bounded HTTP client prepares DHCP, the service object is updated in place so later desktop views can see the acquired lease instead of only the boot-time state.
 
 ## Desktop work started
 
-The System floating window now includes an initial network dashboard showing SNP interface count, IPv4 DHCP state, address, and subnet mask alongside the existing HTTP and DNS4 capability report. The existing Terminal `net` command and Browser behavior remain intact.
+The System floating window now includes an initial network dashboard showing SNP interface count, IPv4 route count, DHCP state, address, subnet mask, and bounded HTTP request/success counters alongside the existing HTTP and DNS4 capability report. The Terminal accepts both `net` and `net summary`, and the existing Browser behavior remains intact.
 
 This is an inventory and diagnostics foundation, not a claim that all radios, towers, satellites, mobile devices, or arbitrary networks are supported. Each future hardware family requires an explicit driver and protocol implementation, and network/security operations must remain authorized.
 
@@ -37,4 +39,4 @@ The implementation remains freestanding in the guest. Linux/Ubuntu tools are use
 
 ## Next planned layers
 
-The next network milestones should add a stable FadalOS interface/route query API, packet counters and firewall policy boundaries, then bounded native transport services and explicit USB/Wi-Fi/Bluetooth/SDR driver work where hardware and protocol specifications are available. Each layer will receive a regression target before entering a release archive.
+The next network milestones should add a stable FadalOS interface/route query API over multiple adapters, true packet counters when a native driver owns the data path, and firewall policy boundaries. Those should be followed by bounded native transport services and explicit USB/Wi-Fi/Bluetooth/SDR driver work where hardware and protocol specifications are available. The current HTTP counters are application-level service counters, not packet-level accounting. Each layer will receive a regression target before entering a release archive.

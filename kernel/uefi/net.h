@@ -33,6 +33,9 @@ typedef struct {
     fadal_net_u32 dns4_protocol_available;
     fadal_net_u32 snp_interface_count;
     fadal_net_u32 ipv4_configured;
+    fadal_net_u32 ipv4_route_count;
+    fadal_net_u32 http_request_count;
+    fadal_net_u32 http_success_count;
     fadal_net_u8 ipv4_address[4];
     fadal_net_u8 ipv4_subnet_mask[4];
 } fadal_uefi_services;

@@ -1095,6 +1095,9 @@ static void desktop_app_render(void) {
         char ipv4_address[16];
         char ipv4_mask[16];
         char snp_count[12];
+        char route_count[12];
+        char request_count[12];
+        char success_count[12];
         static const fadal_net_u8 zero_ipv4[4] = {0, 0, 0, 0};
         const fadal_net_u8 *address = zero_ipv4;
         const fadal_net_u8 *mask = zero_ipv4;
@@ -1106,6 +1109,12 @@ static void desktop_app_render(void) {
         desktop_format_ipv4(mask, ipv4_mask);
         desktop_format_u32(desktop_services != NULL ? desktop_services->snp_interface_count : 0,
                            snp_count);
+        desktop_format_u32(desktop_services != NULL ? desktop_services->ipv4_route_count : 0,
+                           route_count);
+        desktop_format_u32(desktop_services != NULL ? desktop_services->http_request_count : 0,
+                           request_count);
+        desktop_format_u32(desktop_services != NULL ? desktop_services->http_success_count : 0,
+                           success_count);
         fb_text(left + 28, top + 78, "ARCHITECTURE: X86_64", 0x00d8eaff, 1);
         fb_text(left + 28, top + 112, "BOOT: UEFI FIRMWARE + GOP DISPLAY", 0x00d8eaff, 1);
         fb_text(left + 28, top + 146, "MEMORY: FDL64 V3 W X PROTECTION", 0x00d8eaff, 1);
@@ -1136,14 +1145,20 @@ static void desktop_app_render(void) {
         fb_text(left + 28, top + 384, "SNP INTERFACES:",
                 0x00d8eaff, 1);
         fb_text(left + 170, top + 384, snp_count, 0x00d8eaff, 1);
-        fb_text(left + 28, top + 418,
+        fb_text(left + 28, top + 408, "IPV4 ROUTES:", 0x007ed6a7, 1);
+        fb_text(left + 170, top + 408, route_count, 0x00d8eaff, 1);
+        fb_text(left + 28, top + 432,
                 desktop_services != NULL && desktop_services->ipv4_configured != 0 ?
                 "IPV4 DHCP LEASE: CONFIGURED" : "IPV4 DHCP LEASE: NOT CONFIGURED",
                 0x00d8eaff, 1);
-        fb_text(left + 28, top + 452, "IPV4 ADDRESS:", 0x007ed6a7, 1);
-        fb_text(left + 150, top + 452, ipv4_address, 0x00d8eaff, 1);
-        fb_text(left + 28, top + 476, "SUBNET MASK:", 0x007ed6a7, 1);
-        fb_text(left + 150, top + 476, ipv4_mask, 0x00d8eaff, 1);
+        fb_text(left + 28, top + 456, "IPV4 ADDRESS:", 0x007ed6a7, 1);
+        fb_text(left + 150, top + 456, ipv4_address, 0x00d8eaff, 1);
+        fb_text(left + 28, top + 480, "SUBNET MASK:", 0x007ed6a7, 1);
+        fb_text(left + 150, top + 480, ipv4_mask, 0x00d8eaff, 1);
+        fb_text(left + 28, top + 504, "HTTP REQUESTS / SUCCESSES:", 0x007ed6a7, 1);
+        fb_text(left + 270, top + 504, request_count, 0x00d8eaff, 1);
+        fb_text(left + 300, top + 504, "/", 0x007ed6a7, 1);
+        fb_text(left + 318, top + 504, success_count, 0x00d8eaff, 1);
         fb_text(left + 28, top + height - 32, "ESC TO CLOSE - TAB RETURNS TO TERMINAL", 0x0097aac8, 1);
     } else {
         u32 source = 0;
@@ -2742,6 +2757,9 @@ static void run_command(char *line) {
         char snp_count[12];
         char ipv4_address[16];
         char ipv4_mask[16];
+        char route_count[12];
+        char request_count[12];
+        char success_count[12];
         static const fadal_net_u8 zero_ipv4[4] = {0, 0, 0, 0};
         const fadal_net_u8 *address = zero_ipv4;
         const fadal_net_u8 *mask = zero_ipv4;
@@ -2753,6 +2771,12 @@ static void run_command(char *line) {
         }
         desktop_format_ipv4(address, ipv4_address);
         desktop_format_ipv4(mask, ipv4_mask);
+        desktop_format_u32(desktop_services != NULL ? desktop_services->ipv4_route_count : 0,
+                           route_count);
+        desktop_format_u32(desktop_services != NULL ? desktop_services->http_request_count : 0,
+                           request_count);
+        desktop_format_u32(desktop_services != NULL ? desktop_services->http_success_count : 0,
+                           success_count);
         console_write(desktop_services != NULL && desktop_services->simple_network_available != 0 ?
             "network: UEFI SNP interface exposed\r\n" :
             "network: UEFI SNP interface not exposed\r\n");
@@ -2766,6 +2790,14 @@ static void run_command(char *line) {
         console_write(ipv4_address);
         console_write(" mask=");
         console_write(ipv4_mask);
+        console_write("\r\n");
+        console_write("network: IPv4 routes=");
+        console_write(route_count);
+        console_write("\r\n");
+        console_write("network: HTTP requests=");
+        console_write(request_count);
+        console_write(" successes=");
+        console_write(success_count);
         console_write("\r\n");
         console_write(desktop_services != NULL && desktop_services->http_binding_available != 0 ?
             "network: HTTP service binding available\r\n" :

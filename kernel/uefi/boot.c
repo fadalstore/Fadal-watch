@@ -179,6 +179,9 @@ static BOOLEAN g_fadal_http_binding_available;
 static UINT8 g_fadal_ipv4_station[4];
 static UINT8 g_fadal_ipv4_subnet_mask[4];
 static BOOLEAN g_fadal_ipv4_configured;
+static UINT32 g_fadal_ipv4_route_count;
+static UINT32 g_fadal_http_request_count;
+static UINT32 g_fadal_http_success_count;
 static fadal_uefi_services *g_fadal_services;
 static fadal_net_u32 fadal_home_path(const char *path, CHAR16 wide_path[128],
                                      int allow_empty) {
@@ -562,21 +565,31 @@ static BOOLEAN fadal_ipv4_is_configured(const UINT8 address[4]) {
     return address[0] != 0 || address[1] != 0 || address[2] != 0 || address[3] != 0;
 }
 
+static void fadal_sync_network_services(void) {
+    UINTN index;
+    if (g_fadal_services == NULL) return;
+    g_fadal_services->ipv4_configured = g_fadal_ipv4_configured ? 1U : 0U;
+    g_fadal_services->ipv4_route_count = (fadal_net_u32)g_fadal_ipv4_route_count;
+    g_fadal_services->http_request_count = (fadal_net_u32)g_fadal_http_request_count;
+    g_fadal_services->http_success_count = (fadal_net_u32)g_fadal_http_success_count;
+    for (index = 0; index < 4; index++) {
+        g_fadal_services->ipv4_address[index] = g_fadal_ipv4_station[index];
+        g_fadal_services->ipv4_subnet_mask[index] = g_fadal_ipv4_subnet_mask[index];
+    }
+}
+
 static void fadal_record_ipv4(const FADAL_IP4_CONFIG2_INTERFACE_INFO *interface_info) {
     UINTN index;
-    if (interface_info == NULL || !fadal_ipv4_is_configured(interface_info->StationAddress)) return;
-    for (index = 0; index < 4; index++) {
-        g_fadal_ipv4_station[index] = interface_info->StationAddress[index];
-        g_fadal_ipv4_subnet_mask[index] = interface_info->SubnetMask[index];
-    }
-    g_fadal_ipv4_configured = TRUE;
-    if (g_fadal_services != NULL) {
-        g_fadal_services->ipv4_configured = 1U;
+    if (interface_info == NULL) return;
+    g_fadal_ipv4_route_count = interface_info->RouteTableSize;
+    if (fadal_ipv4_is_configured(interface_info->StationAddress)) {
         for (index = 0; index < 4; index++) {
-            g_fadal_services->ipv4_address[index] = g_fadal_ipv4_station[index];
-            g_fadal_services->ipv4_subnet_mask[index] = g_fadal_ipv4_subnet_mask[index];
+            g_fadal_ipv4_station[index] = interface_info->StationAddress[index];
+            g_fadal_ipv4_subnet_mask[index] = interface_info->SubnetMask[index];
         }
+        g_fadal_ipv4_configured = TRUE;
     }
+    fadal_sync_network_services();
 }
 
 static EFI_STATUS fadal_ip4_prepare_dhcp(void) {
@@ -667,6 +680,8 @@ static fadal_net_u32 fadal_http_download(const char *url, const char *name) {
         fadal_ascii_lower(url[2]) != 't' || fadal_ascii_lower(url[3]) != 'p' ||
         url[4] != ':' || url[5] != '/' || url[6] != '/') return 0;
     if (fadal_home_path(name, wide_name, 0) != FADAL_HOME_OK) return 0;
+    g_fadal_http_request_count++;
+    fadal_sync_network_services();
     for (index = 0; index < url_length; index++) wide_url[index] = (CHAR16)(UINT8)url[index];
     wide_url[url_length] = 0;
     status = fadal_ip4_prepare_dhcp();
@@ -785,6 +800,8 @@ static fadal_net_u32 fadal_http_download(const char *url, const char *name) {
     if (request_token.Event != NULL) uefi_call_wrapper(BS->CloseEvent, 1, request_token.Event);
     if (response_token.Event != NULL) uefi_call_wrapper(BS->CloseEvent, 1, response_token.Event);
     uefi_call_wrapper(BS->FreePool, 1, buffer);
+    g_fadal_http_success_count++;
+    fadal_sync_network_services();
     Print(L"UEFI HTTP GET: HTTP 200, saved %lu bytes\r\n", write_size);
     return (fadal_net_u32)write_size;
 cleanup:
@@ -1210,6 +1227,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *system_table) {
     services.http_binding_available = g_fadal_http_binding_available;
     services.snp_interface_count = (fadal_net_u32)g_fadal_snp_interface_count;
     services.ipv4_configured = g_fadal_ipv4_configured ? 1U : 0U;
+    services.ipv4_route_count = (fadal_net_u32)g_fadal_ipv4_route_count;
+    services.http_request_count = (fadal_net_u32)g_fadal_http_request_count;
+    services.http_success_count = (fadal_net_u32)g_fadal_http_success_count;
     for (service_index = 0; service_index < 4; service_index++) {
         services.ipv4_address[service_index] = g_fadal_ipv4_station[service_index];
         services.ipv4_subnet_mask[service_index] = g_fadal_ipv4_subnet_mask[service_index];

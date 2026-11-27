@@ -2738,10 +2738,35 @@ static void run_command(char *line) {
         console_write("root (uid 0) active; fadal (uid 1000) model registered\r\n");
     } else if (f_streq(line, "drivers")) {
         console_write("drivers: GOP framebuffer, PS/2 keyboard, PS/2 mouse, UART16550, RTL8139 (kernel)\r\n");
-    } else if (f_streq(line, "net")) {
+    } else if (f_streq(line, "net") || f_streq(line, "net summary")) {
+        char snp_count[12];
+        char ipv4_address[16];
+        char ipv4_mask[16];
+        static const fadal_net_u8 zero_ipv4[4] = {0, 0, 0, 0};
+        const fadal_net_u8 *address = zero_ipv4;
+        const fadal_net_u8 *mask = zero_ipv4;
+        desktop_format_u32(desktop_services != NULL ? desktop_services->snp_interface_count : 0,
+                           snp_count);
+        if (desktop_services != NULL) {
+            address = desktop_services->ipv4_address;
+            mask = desktop_services->ipv4_subnet_mask;
+        }
+        desktop_format_ipv4(address, ipv4_address);
+        desktop_format_ipv4(mask, ipv4_mask);
         console_write(desktop_services != NULL && desktop_services->simple_network_available != 0 ?
             "network: UEFI SNP interface exposed\r\n" :
             "network: UEFI SNP interface not exposed\r\n");
+        console_write("network: SNP interfaces=");
+        console_write(snp_count);
+        console_write("\r\n");
+        console_write(desktop_services != NULL && desktop_services->ipv4_configured != 0 ?
+            "network: IPv4 DHCP lease configured\r\n" :
+            "network: IPv4 DHCP lease not configured\r\n");
+        console_write("network: IPv4 address=");
+        console_write(ipv4_address);
+        console_write(" mask=");
+        console_write(ipv4_mask);
+        console_write("\r\n");
         console_write(desktop_services != NULL && desktop_services->http_binding_available != 0 ?
             "network: HTTP service binding available\r\n" :
             "network: HTTP service binding unavailable\r\n");

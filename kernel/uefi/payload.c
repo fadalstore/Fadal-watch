@@ -200,10 +200,14 @@ static u32 browser_url_cursor;
 static u8 browser_url_editing = 1;
 static u8 browser_page_loaded;
 static u8 input_focus = FOCUS_TERMINAL;
+static u8 desktop_splash = 1;
+static u8 desktop_app_minimized;
+static u8 desktop_app_maximized;
 
 static void cursor_restore(void);
 static void cursor_draw(void);
 static void desktop_redraw(void);
+static void fb_line(u32 x0, u32 y0, u32 x1, u32 y1, u32 color);
 static u32 f_length(const char *text);
 static void files_browser_refresh(void);
 static void files_browser_click(u32 mouse_y);
@@ -683,6 +687,13 @@ static void terminal_draw_window_controls(void) {
 }
 
 static void desktop_app_bounds(u32 *left, u32 *top, u32 *width, u32 *height) {
+    if (desktop_app_maximized != 0) {
+        *left = 18;
+        *top = 44;
+        *width = framebuffer->width - 36;
+        *height = framebuffer->height - 102;
+        return;
+    }
     *width = framebuffer->width > 820 ? 760 : framebuffer->width - 40;
     *height = framebuffer->height > 620 ? 560 : framebuffer->height - 60;
     *left = (framebuffer->width - *width) / 2;
@@ -940,6 +951,8 @@ static void browser_open_downloads(void) {
     }
     for (index = 0; index < sizeof(path); index++) files_browser_path[index] = path[index];
     desktop_app = APP_FILES;
+    desktop_app_minimized = 0;
+    desktop_app_maximized = 0;
     input_focus = FOCUS_FILES;
     files_browser_refresh();
     desktop_status = "DOWNLOADS OPEN";
@@ -955,17 +968,34 @@ static void desktop_app_render(void) {
     u32 index;
     u32 preview_source = 0;
     char browser_url_display[260];
-    if (desktop_app == APP_NONE) return;
+    if (desktop_app == APP_NONE || desktop_app_minimized != 0) return;
     desktop_app_bounds(&left, &top, &width, &height);
     right = left + width;
+    fb_fill(left + 8, top + 8, right + 8, top + height + 8, 0x00091420);
     fb_fill(left, top, right, top + height, 0x000d1528);
     fb_fill(left, top, right, top + 38,
             desktop_app == APP_FILES || desktop_app == APP_BROWSER ?
             0x002d5f9b : 0x00243f6d);
+    fb_fill(left, top + 36, right, top + 38, 0x004b83b3);
     fb_text(left + 16, top + 12, desktop_app == APP_FILES ? "FILES" :
             desktop_app == APP_SYSTEM ? "SYSTEM" : "FADAL BROWSER", 0x00ffffff, 2);
+    fb_fill(right - 94, top + 7, right - 64, top + 31, 0x00334b6a);
+    fb_fill(right - 87, top + 20, right - 71, top + 22, 0x00ffffff);
+    fb_fill(right - 64, top + 7, right - 34, top + 31, 0x00334b6a);
+    if (desktop_app_maximized != 0) {
+        fb_fill(right - 57, top + 12, right - 41, top + 14, 0x00ffffff);
+        fb_fill(right - 57, top + 21, right - 41, top + 23, 0x00ffffff);
+        fb_fill(right - 57, top + 12, right - 55, top + 23, 0x00ffffff);
+        fb_fill(right - 43, top + 12, right - 41, top + 23, 0x00ffffff);
+    } else {
+        fb_fill(right - 57, top + 12, right - 41, top + 14, 0x00ffffff);
+        fb_fill(right - 57, top + 21, right - 41, top + 23, 0x00ffffff);
+        fb_fill(right - 57, top + 12, right - 55, top + 23, 0x00ffffff);
+        fb_fill(right - 43, top + 12, right - 41, top + 23, 0x00ffffff);
+    }
     fb_fill(right - 38, top + 7, right - 8, top + 31, 0x00944755);
-    fb_text(right - 29, top + 12, "X", 0x00ffffff, 1);
+    fb_line(right - 31, top + 13, right - 19, top + 25, 0x00ffffff);
+    fb_line(right - 19, top + 13, right - 31, top + 25, 0x00ffffff);
     if (desktop_app == APP_FILES) {
         u32 source = 0;
         u32 row = 0;
@@ -1175,6 +1205,15 @@ static void desktop_render(void) {
     desktop_mode = 1;
     width = framebuffer->width;
     height = framebuffer->height;
+    if (desktop_splash != 0) {
+        fb_fill(0, 0, width, height, 0x00091420);
+        fb_fill(0, height - 5, width, height, 0x00e6b85c);
+        desktop_draw_dragon(width / 2, height / 2 - 35);
+        fb_text(width / 2 - 96, height / 2 + 48, "FADAL OS", 0x00ffffff, 3);
+        fb_text(width / 2 - 114, height / 2 + 82, "FREESTANDING DESKTOP", 0x007ed6a7, 1);
+        fb_text(width / 2 - 118, height / 2 + 112, "STARTING FADAL64 UEFI", 0x0097aac8, 1);
+        return;
+    }
     fb_fill(0, 0, width, height, 0x00111b33);
     fb_fill(0, 0, width, 34, 0x00233b67);
     fb_fill(0, 33, width, 35, 0x004b83b3);
@@ -1196,6 +1235,12 @@ static void desktop_render(void) {
     fb_fill(26, height - 43, 126, height - 10, 0x002d5f9b);
     fb_fill(142, height - 43, 282, height - 10,
             terminal_open != 0 && terminal_minimized == 0 ? 0x002d5f9b : 0x00243f6d);
+    if (desktop_app != APP_NONE) {
+        fb_fill(290, height - 43, 430, height - 10,
+                desktop_app_minimized == 0 ? 0x002d5f9b : 0x00243f6d);
+        fb_text(304, height - 33, desktop_app == APP_FILES ? "FILES" :
+                desktop_app == APP_SYSTEM ? "SYSTEM" : "BROWSER", 0x00ffffff, 1);
+    }
     fb_text(18, 11, "FADAL OS", 0x00ffffff, 2);
     fb_text(width - 230, 12, desktop_status, 0x007ed6a7, 1);
     desktop_draw_dragon(151, 166);
@@ -1551,12 +1596,36 @@ static void desktop_handle_mouse(const fadal_event *event) {
         u32 app_height;
         if (pressed == 0) return;
         desktop_app_bounds(&app_left, &app_top, &app_width, &app_height);
-        if (mouse_x >= app_left + app_width - 38 && mouse_x < app_left + app_width - 8 &&
-            mouse_y >= app_top + 7 && mouse_y < app_top + 31) {
+        if (mouse_y >= framebuffer->height - 52 && mouse_x >= 290 && mouse_x < 430) {
+            desktop_app_minimized = 0;
+            input_focus = desktop_app == APP_FILES ? FOCUS_FILES :
+                          desktop_app == APP_SYSTEM ? FOCUS_SYSTEM : FOCUS_BROWSER;
+            desktop_status = "APP RESTORED";
+        } else if (desktop_app_minimized != 0) {
+            return;
+        } else if (mouse_x >= app_left + app_width - 38 && mouse_x < app_left + app_width - 8 &&
+                   mouse_y >= app_top + 7 && mouse_y < app_top + 31) {
             desktop_app = APP_NONE;
+            desktop_app_minimized = 0;
+            desktop_app_maximized = 0;
             input_focus = terminal_open != 0 && terminal_minimized == 0 ?
                           FOCUS_TERMINAL : FOCUS_DESKTOP;
             desktop_status = "APP CLOSED";
+        } else if (mouse_x >= app_left + app_width - 94 && mouse_x < app_left + app_width - 64 &&
+                   mouse_y >= app_top + 7 && mouse_y < app_top + 31) {
+            desktop_app_minimized = 1;
+            input_focus = FOCUS_DESKTOP;
+            desktop_status = "APP MINIMIZED";
+        } else if (mouse_x >= app_left + app_width - 64 && mouse_x < app_left + app_width - 34 &&
+                   mouse_y >= app_top + 7 && mouse_y < app_top + 31) {
+            desktop_app_maximized = (u8)!desktop_app_maximized;
+            input_focus = desktop_app == APP_FILES ? FOCUS_FILES :
+                          desktop_app == APP_SYSTEM ? FOCUS_SYSTEM : FOCUS_BROWSER;
+            desktop_status = desktop_app_maximized != 0 ? "APP MAXIMIZED" : "APP RESTORED";
+        } else if (mouse_y >= app_top && mouse_y < app_top + 38) {
+            input_focus = desktop_app == APP_FILES ? FOCUS_FILES :
+                          desktop_app == APP_SYSTEM ? FOCUS_SYSTEM : FOCUS_BROWSER;
+            desktop_status = "APP FOCUSED";
         } else if (mouse_y >= framebuffer->height - 52 && mouse_x >= 142 && mouse_x < 282) {
             desktop_app = APP_NONE;
             terminal_open = 1;
@@ -1729,6 +1798,8 @@ static void desktop_handle_mouse(const fadal_event *event) {
                mouse_y >= framebuffer->height - 198 && mouse_y < framebuffer->height - 154) {
         start_open = 0;
         desktop_app = APP_FILES;
+        desktop_app_minimized = 0;
+        desktop_app_maximized = 0;
         input_focus = FOCUS_FILES;
         {
             const char *root = "/home/root";
@@ -1742,6 +1813,8 @@ static void desktop_handle_mouse(const fadal_event *event) {
                mouse_y >= framebuffer->height - 144 && mouse_y < framebuffer->height - 100) {
         start_open = 0;
         desktop_app = APP_SYSTEM;
+        desktop_app_minimized = 0;
+        desktop_app_maximized = 0;
         input_focus = FOCUS_SYSTEM;
         desktop_status = "SYSTEM INFO";
     } else if (start_open != 0 && mouse_x >= 38 && mouse_x < 278 &&
@@ -1750,6 +1823,8 @@ static void desktop_handle_mouse(const fadal_event *event) {
         u32 index;
         start_open = 0;
         desktop_app = APP_BROWSER;
+        desktop_app_minimized = 0;
+        desktop_app_maximized = 0;
         input_focus = FOCUS_BROWSER;
         for (index = 0; index < sizeof(initial_url); index++) browser_url[index] = initial_url[index];
         browser_url_cursor = f_length(browser_url);
@@ -2379,12 +2454,16 @@ static int desktop_handle_keyboard(const fadal_event *event) {
     if (desktop_app != APP_NONE) {
         if (value == 27) {
             desktop_app = APP_NONE;
+            desktop_app_minimized = 0;
+            desktop_app_maximized = 0;
             input_focus = terminal_open != 0 && terminal_minimized == 0 ?
                           FOCUS_TERMINAL : FOCUS_DESKTOP;
             desktop_status = "APP CLOSED";
             desktop_redraw();
         } else if (value == '\t') {
             desktop_app = APP_NONE;
+            desktop_app_minimized = 0;
+            desktop_app_maximized = 0;
             terminal_open = 1;
             terminal_minimized = 0;
             input_focus = FOCUS_TERMINAL;
@@ -2709,6 +2788,12 @@ void fadal64_entry(fadal_framebuffer *incoming_framebuffer, fadal_uefi_services 
     serial_init();
     desktop_render();
     if (desktop_mode != 0) {
+        {
+            volatile u32 splash_delay;
+            for (splash_delay = 0; splash_delay < 18000000U; splash_delay++)
+                __asm__ volatile ("pause");
+        }
+        desktop_splash = 0;
         mouse_init();
         desktop_redraw();
     }

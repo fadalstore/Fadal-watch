@@ -1,6 +1,6 @@
 # FadalOS Phase 2 — Work Plan
 
-**Status:** P2.1–P2.10 complete for their scoped milestones; P2.11 configure-once reuse and two sequential numeric-IP fixture GETs are verified. DNS4 firmware-instance setup and hostname resolution remain unresolved; general Internet and HTTPS remain unverified.
+**Status:** P2.1–P2.10 complete for their scoped milestones; P2.11 configure-once reuse and two sequential numeric-IP fixture GETs are verified. P2.13 now protects boot liveness by skipping the firmware HostNameToIp call known to block inside OVMF; hostname resolution remains unresolved, and general Internet and HTTPS remain unverified.
 **Baseline:** Phase 1 UTM release at commit `1d50d1d`
 **Purpose:** define a staged, boot-testable path from the Phase 1 freestanding kernel and UEFI desktop prototype toward a more reliable, inspectable FadalOS runtime.
 
@@ -111,4 +111,4 @@ Tijaabada P2.13 waxay kala saartay laba firmware behavior: `UseDefaultSetting=TR
 
 ## P2.13 immediate next step
 
-Native DNS fallback ama firmware adapter waa in lagu sameeyaa design/test gaar ah oo leh timeout, packet-level evidence iyo failure-safe boot behavior; `EFI_DNS4 HostNameToIp` lama wici doono si aan xad lahayn inta laga helayo contract sax ah.
+The boot-liveness guard is complete and verified. A future native DNS fallback or asynchronous firmware adapter must have an explicit timeout, packet-level evidence, and failure-safe boot behavior before any `EFI_DNS4 HostNameToIp` call is re-enabled in production.

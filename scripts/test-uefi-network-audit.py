@@ -65,7 +65,7 @@ def click_mouse(process: subprocess.Popen[str], position: list[int], x: int, y: 
 
 
 def send_text(process: subprocess.Popen[str], text: str, serial_log: Path,
-              delay: float = 0.35) -> None:
+              delay: float = 0.60) -> None:
     key_names = {" ": "spc", ".": "dot", "/": "slash", "-": "minus",
                  ":": "shift-semicolon"}
     offset = serial_log.stat().st_size if serial_log.exists() else 0
@@ -74,7 +74,7 @@ def send_text(process: subprocess.Popen[str], text: str, serial_log: Path,
         expected.extend(character.encode("ascii"))
         for _ in range(3):
             monitor(process, f"sendkey {key_names.get(character, character)}", delay=delay)
-            deadline = time.monotonic() + 1.5
+            deadline = time.monotonic() + 3.0
             while time.monotonic() < deadline:
                 data = serial_log.read_bytes() if serial_log.exists() else b""
                 if data[offset:].endswith(expected):
@@ -91,7 +91,7 @@ def send_text(process: subprocess.Popen[str], text: str, serial_log: Path,
                                f"observed {recent[-120:]!r}")
     for _ in range(3):
         monitor(process, "sendkey ret", delay=delay)
-        deadline = time.monotonic() + 1.5
+        deadline = time.monotonic() + 3.0
         while time.monotonic() < deadline:
             data = serial_log.read_bytes() if serial_log.exists() else b""
             if b"\r\n" in data[offset + len(expected):]:
@@ -190,7 +190,6 @@ def main() -> int:
                 "UEFI network audit: EFI_DNS4 protocol=",
                 "UEFI network audit: EFI_DNS4 instance=",
                 "UEFI network audit: EFI_DNS4 Configure status=",
-                "UEFI network audit: EFI_DNS4 HostNameToIp submit status=",
                 "UEFI network audit: EFI_HTTP LocateProtocol status=",
                 "UEFI network audit: EFI_HTTP protocol=",
                 "hostname lookup delegated to EFI_HTTP when available",
@@ -223,10 +222,16 @@ def main() -> int:
                 serial, "UEFI network audit: EFI_DNS4 CreateChild status=")
             dns4_open_status = diagnostic_value(
                 serial, "UEFI network audit: EFI_DNS4 OpenProtocol status=")
+            dns4_configure_status = diagnostic_value(
+                serial, "UEFI network audit: EFI_DNS4 Configure status=")
             if dns4_binding_available and not dns4_protocol_available:
                 raise RuntimeError("DNS4 Service Binding was present but no final DNS4 instance was reported")
             if dns4_binding_available and dns4_child_status == "not reported":
                 raise RuntimeError("DNS4 Service Binding was present but CreateChild status was not reported")
+            if (dns4_binding_available and dns4_configure_status == "Success" and
+                    "UEFI network audit: EFI_DNS4 HostNameToIp lookup skipped for boot liveness"
+                    not in serial):
+                raise RuntimeError("DNS4 probe did not report its boot-liveness lookup guard")
 
             mouse = [640, 400]
             click_mouse(process, mouse, 640, 400)

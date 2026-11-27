@@ -22,3 +22,9 @@ Tani ma xaqiijinayso DNS transport, mana caddaynayso in firmware-ka uu si sax ah
 ## Go'aanka injineernimada
 
 Looma sheeganayo hostname/DNS inuu shaqeeyo. P2.12 capability audit-ka ayaa weli ah baseline-ka saxda ah: child creation, `OpenProtocol`, Configure/query path diagnostics waa la diiwaangeliyey, laakiin DNS completion/transport lama xaqiijin. Tallaabada xigta waa in la sameeyo native Fadal64 DNS fallback oo leh timeout iyo packet contract, ama adapter firmware oo asynchronous call-ka ku xaddida iyadoo aan loader-ka boot-ka lagu xannibin. Taasi waxay u baahan tahay design/test gaar ah; firmware-specific config aan la xaqiijin lama gelin.
+
+## P2.13 liveness guard — la xaqiijiyey
+
+Tijaabadii xigtay waxay xaqiijisay in timeout lagu wareejiyo `Poll()` uusan ilaalin karin boot-ka marka firmware-ku uu gudaha `EFI_DNS4.HostNameToIp` ku xannibmo ka hor inta uusan call-ku soo noqon. Sidaas darteed `kernel/uefi/boot.c` hadda wuxuu sameeyaa DNS4 child creation iyo Configure audit oo keliya, kadibna wuxuu soo saaraa `HostNameToIp lookup skipped for boot liveness` oo wuxuu u gudbaa HTTP/payload handoff. Lookup result lama sheeganayo inuu shaqeeyo.
+
+`make -C kernel/uefi test-network-audit` wuxuu weli xaqiijiyaa saddex SNP handles, HTTP Service Binding/child/OpenProtocol, DHCP station `10.0.2.15`, laba sequential numeric-IP GET oo marker-kooda soo celiya, iyo in DNS4 Configure marka uu guuleysto uu soo saaro liveness guard. `make -C kernel/uefi test-window-controls` sidoo kale wuu gudbay, oo ay ku jiraan Terminal, Files, System, Browser, focus iyo window controls. DNS hostname, general Internet iyo HTTPS/TLS weli waa unverified. Native bounded resolver ama asynchronous firmware adapter wuxuu u baahan yahay milestone dambe oo leh packet-level contract.

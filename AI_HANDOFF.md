@@ -355,3 +355,9 @@ A milestone is complete only when the source is readable, the relevant build pas
 
 [1]: https://github.com/fadalstore/Fadal-watch "FadalWatch source repository"
 [2]: https://github.com/termux/termux-packages "Termux package definitions and build environment"
+
+## Current release checkpoint — P2.13/P2.15
+
+P2.13's production guard is complete: the UEFI loader audits DNS4 Service Binding, child creation, OpenProtocol, and Configure, then skips `EFI_DNS4.HostNameToIp` because tested OVMF behavior can block inside that call before an asynchronous token returns. The loader prints `HostNameToIp lookup skipped for boot liveness` and continues to HTTP/payload handoff. `make -C kernel/uefi test-network-audit` verifies the guard when Configure succeeds, while unsupported firmware remains a valid capability audit. DNS hostname resolution, general Internet access, and HTTPS/TLS remain unverified. A future native resolver or asynchronous firmware adapter requires an explicit timeout, packet-level evidence, and failure-safe boot contract.
+
+P2.15 is the current separately versioned UTM package. Its release gate passed BIOS `make -C kernel check`, UEFI build/image creation, `make -C kernel/uefi test-network-audit`, and `make -C kernel/uefi test-window-controls`; ZIP integrity, internal image hashes, and the adjacent archive checksum passed. The P2.14 archive remains frozen.

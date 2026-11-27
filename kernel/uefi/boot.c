@@ -514,11 +514,7 @@ static EFI_STATUS fadal_dns4_probe(FADAL_SERVICE_BINDING *binding,
                                    EFI_HANDLE image,
                                    BOOLEAN *lookup_succeeded) {
     FADAL_DNS4_CONFIG_DATA config = {0};
-    FADAL_DNS4_COMPLETION_TOKEN token = {0};
-    FADAL_DNS4_HOST_TO_ADDR_DATA result = {0};
-    CHAR16 hostname[] = L"10.0.2.100.nip.io";
     EFI_STATUS status;
-    UINTN attempt;
     if (lookup_succeeded == NULL) return EFI_INVALID_PARAMETER;
     *lookup_succeeded = FALSE;
     if (g_fadal_dns4 == NULL && binding == NULL) return EFI_NOT_FOUND;
@@ -547,36 +543,15 @@ static EFI_STATUS fadal_dns4_probe(FADAL_SERVICE_BINDING *binding,
     status = uefi_call_wrapper(g_fadal_dns4->Configure, 2, g_fadal_dns4, &config);
     Print(L"UEFI network audit: EFI_DNS4 Configure status=%r (DHCP DNS)\r\n", status);
     if (EFI_ERROR(status)) return status;
-    status = uefi_call_wrapper(BS->CreateEvent, 6, EVT_NOTIFY_SIGNAL, TPL_CALLBACK,
-                               NULL, NULL, &token.Event);
-    if (EFI_ERROR(status)) return status;
-    token.Status = EFI_NOT_READY;
-    token.RetryCount = 1;
-    token.RetryInterval = 2;
-    token.RspData.H2AData = &result;
-    status = uefi_call_wrapper(g_fadal_dns4->HostNameToIp, 3, g_fadal_dns4,
-                               hostname, &token);
-    Print(L"UEFI network audit: EFI_DNS4 HostNameToIp submit status=%r\r\n", status);
-    if (!EFI_ERROR(status)) {
-        for (attempt = 0; attempt < 8000 && token.Status == EFI_NOT_READY; attempt++) {
-            uefi_call_wrapper(g_fadal_dns4->Poll, 1, g_fadal_dns4);
-            uefi_call_wrapper(BS->Stall, 1, 1000);
-        }
-        Print(L"UEFI network audit: EFI_DNS4 HostNameToIp completion=%r addresses=%u\r\n",
-              token.Status, result.IpCount);
-        if (!EFI_ERROR(token.Status) && result.IpCount != 0 && result.IpList != NULL) {
-            UINT32 index;
-            *lookup_succeeded = TRUE;
-            for (index = 0; index < result.IpCount; index++) {
-                Print(L"UEFI DNS4 result=%u.%u.%u.%u\r\n",
-                      result.IpList[index].Addr[0], result.IpList[index].Addr[1],
-                      result.IpList[index].Addr[2], result.IpList[index].Addr[3]);
-            }
-        }
-    }
-    if (result.IpList != NULL) uefi_call_wrapper(BS->FreePool, 1, result.IpList);
-    uefi_call_wrapper(BS->CloseEvent, 1, token.Event);
-    return status;
+    /*
+     * Some firmware implementations can block inside HostNameToIp itself,
+     * before the asynchronous token is returned.  A timeout around Poll()
+     * cannot make that call safe, so the production boot path deliberately
+     * stops after the child/configure audit until a firmware-independent,
+     * bounded resolver contract exists.
+    */
+    Print(L"UEFI network audit: EFI_DNS4 HostNameToIp lookup skipped for boot liveness\r\n");
+    return EFI_NOT_READY;
 }
 
 static BOOLEAN fadal_ipv4_is_configured(const UINT8 address[4]) {

@@ -2716,7 +2716,7 @@ static void terminal_history_print(void) {
 static void run_command(char *line) {
     if (line[0] == '\0') return;
     if (f_streq(line, "help")) {
-        console_write("commands: help clear pwd ls cd cat write mkdir rm whoami id uname fscan user drivers net download restart reboot shutdown poweroff exit history\r\n");
+        console_write("commands: help clear pwd ls cd cat write mkdir rm whoami id uname fscan user drivers net (summary/help) download restart reboot shutdown poweroff exit history\r\n");
     } else if (f_streq(line, "history")) {
         terminal_history_print();
     } else if (f_streq(line, "clear")) {
@@ -2812,6 +2812,12 @@ static void run_command(char *line) {
             "network: EFI DNS4 protocol available\r\n" :
             "network: EFI DNS4 protocol unavailable\r\n");
         console_write("network: native Fadal64 DNS client not implemented\r\n");
+    } else if (f_streq(line, "net help")) {
+        console_write("network commands: net summary | net help\r\n");
+        console_write("network: summary reports UEFI SNP, IPv4, routes and HTTP counters\r\n");
+        console_write("network: HTTP is bounded plaintext transport in this release\r\n");
+        console_write("network: packet firewall enforcement requires a native driver path\r\n");
+        console_write("network: hostname DNS and HTTPS/TLS are not claimed\r\n");
     } else if (f_starts(line, "download ")) {
         char *separator = line + 9;
         while (*separator != '\0' && *separator != ' ') separator++;

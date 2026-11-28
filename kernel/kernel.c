@@ -2816,12 +2816,21 @@ void kernel_main(void) {
         kernel_write(")\n");
         rtl8139_reported = 1;
         if (fnet_init() && fnet_self_test()) {
+            fnet_network_status network_status;
             kernel_write("network: Ethernet II + ARP + IPv4 checksum foundation passed\n");
             kernel_write("network: ARP reply parser and cache self-test passed\n");
             kernel_write("network: IPv4 receive and next-hop routing self-test passed\n");
             kernel_write("network: UDP bind, checksum, receive, and read self-test passed\n");
             kernel_write("network: TCP SYN, SYN-ACK, and ACK handshake self-test passed\n");
             kernel_write("network: TCP buffered stream, HTTP adapter, and Git pkt-line self-test passed\n");
+            if (fnet_get_status(&network_status)) {
+                kernel_write("network: native status snapshot online; IPv4 RX/drop counters=");
+                write_u32(network_status.ipv4_rx_count);
+                kernel_write("/");
+                write_u32(network_status.ipv4_drop_count);
+                kernel_write(network_status.firewall_mode == FNET_FIREWALL_AUDIT_ONLY ?
+                    "; firewall=audit-only\n" : "; firewall=native-enforcement\n");
+            }
             if (fnet_dhcp_discover() != 0) {
                 kernel_write("network: DHCP discover transmitted; waiting for lease\n");
             } else {

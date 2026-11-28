@@ -5,6 +5,24 @@ typedef unsigned char fnet_u8;
 typedef unsigned short fnet_u16;
 typedef unsigned int fnet_u32;
 
+enum fnet_firewall_mode {
+    FNET_FIREWALL_AUDIT_ONLY = 0,
+    FNET_FIREWALL_NATIVE_ENFORCEMENT = 1
+};
+
+typedef struct {
+    fnet_u8 ready;
+    fnet_u8 dhcp_bound;
+    fnet_u8 firewall_mode;
+    fnet_u8 reserved;
+    fnet_u32 local_ip;
+    fnet_u32 gateway_ip;
+    fnet_u32 netmask;
+    fnet_u32 dns_server_ip;
+    fnet_u32 ipv4_rx_count;
+    fnet_u32 ipv4_drop_count;
+} fnet_network_status;
+
 typedef struct {
     fnet_u8 header[4];
     fnet_u8 header_bytes;
@@ -16,6 +34,7 @@ typedef struct {
 } fnet_git_pktline_reader;
 
 fnet_u8 fnet_init(void);
+fnet_u8 fnet_get_status(fnet_network_status *status);
 fnet_u8 fnet_self_test(void);
 fnet_u32 fnet_arp_probe(fnet_u32 target_ip);
 fnet_u8 fnet_arp_receive(const fnet_u8 *frame, fnet_u32 length);

@@ -134,6 +134,20 @@ fnet_u8 fnet_init(void) {
     ready = 1;
     return 1;
 }
+fnet_u8 fnet_get_status(fnet_network_status *status) {
+    if (status == (fnet_network_status *)0) return 0;
+    status->ready = ready;
+    status->dhcp_bound = dhcp_bound;
+    status->firewall_mode = FNET_FIREWALL_AUDIT_ONLY;
+    status->reserved = 0;
+    status->local_ip = local_ip;
+    status->gateway_ip = gateway_ip;
+    status->netmask = netmask;
+    status->dns_server_ip = dns_server_ip;
+    status->ipv4_rx_count = ipv4_rx_count;
+    status->ipv4_drop_count = ipv4_drop_count;
+    return 1;
+}
 fnet_u32 fnet_arp_probe(fnet_u32 target_ip) {
     fnet_u8 frame[FNET_FRAME_MAX];
     if (!ready) return 0;
